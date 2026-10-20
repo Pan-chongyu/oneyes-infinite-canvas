@@ -51,7 +51,7 @@ app.whenReady().then(async () => {
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
                 console.log('ONEYES_CANVAS_SMOKE_OK', JSON.stringify(info)); app.exit(0);
-            } catch { app.exit(1); }
+            } catch (error) { console.error('ONEYES_CANVAS_SMOKE_FAILED', error.message); app.exit(1); }
         });
         void window.loadURL('oneyes-canvas://app/');
     }
