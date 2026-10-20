@@ -1,5 +1,7 @@
 OneYes Canvas 桌面分支，基于 basketikun/infinite-canvas v0.20.0，保留原作者与 MIT 许可。
 
+本次调整：移除顶栏版本号、版本更新弹窗与 GitHub 入口，停止请求上游版本和更新日志。
+
 - 预置 OneYes 渠道，填写自己的 Key 即可接入，支持获取当前 Key 可用模型。
 - OneYes 文生图、参考图编辑使用 SSE 流式传输，生图工作台可显示中间预览。
 - 断流、524 不自动重放付费请求；桌面配置本机 AES-GCM 加密，不调用 macOS 钥匙串。

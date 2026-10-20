@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.20.3
+
++ [调整] 移除顶栏的版本更新与 GitHub 入口，并停止后台版本检查。
+
 ## v0.20.2
 
 + [新增] OneYes 公开分支桌面版，提供 Windows、macOS、Linux 的 x64 / ARM64 安装包。
