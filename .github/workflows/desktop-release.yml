@@ -1,0 +1,118 @@
+name: OneYes Canvas Desktop
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: canvas-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+            arch: x64
+            target: win
+          - os: windows-11-arm
+            platform: Windows
+            arch: arm64
+            target: win
+          - os: macos-15-intel
+            platform: macOS
+            arch: x64
+            target: mac
+          - os: macos-15
+            platform: macOS
+            arch: arm64
+            target: mac
+          - os: ubuntu-22.04
+            platform: Linux
+            arch: x64
+            target: linux
+          - os: ubuntu-24.04-arm
+            platform: Linux
+            arch: arm64
+            target: linux
+    name: ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+      - name: Install Linux packaging tools
+        if: matrix.target == 'linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y rpm libfuse2 xvfb
+      - run: npm ci
+      - run: npm ci --prefix web
+      - name: Validate version and architecture
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'),p=require('./package.json');if(fs.readFileSync('VERSION','utf8').trim()!=='v'+p.version||process.arch!=='${{ matrix.arch }}')process.exit(1)"
+          if [[ "$GITHUB_REF_TYPE" == 'tag' ]]; then test "$GITHUB_REF_NAME" = "$(cat VERSION)"; fi
+      - run: npm test
+      - run: npm --prefix web run typecheck
+      - run: npm run build
+      - name: Package desktop installers
+        run: npm run dist -- --${{ matrix.target }} --${{ matrix.arch }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke test Windows package
+        if: matrix.target == 'win'
+        shell: pwsh
+        run: |
+          $app = Get-ChildItem desktop-dist -Filter 'OneYes Canvas.exe' -Recurse | Select-Object -First 1
+          $run = Start-Process -FilePath $app.FullName -ArgumentList '--smoke-test' -WindowStyle Hidden -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw 'Windows desktop startup failed' }
+      - name: Smoke test macOS package
+        if: matrix.target == 'mac'
+        shell: bash
+        run: |
+          app=$(find desktop-dist -path '*/Contents/MacOS/OneYes Canvas' -type f | head -n 1)
+          codesign --verify --deep --strict "$(dirname "$(dirname "$(dirname "$app")")")"
+          "$app" --smoke-test
+      - name: Smoke test Linux package
+        if: matrix.target == 'linux'
+        shell: bash
+        run: |
+          app=$(find desktop-dist -name oneyes-canvas -type f | head -n 1)
+          xvfb-run -a "$app" --no-sandbox --smoke-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OneYes-Canvas-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            desktop-dist/*.exe
+            desktop-dist/*.dmg
+            desktop-dist/*.zip
+            desktop-dist/*.AppImage
+            desktop-dist/*.deb
+            desktop-dist/*.rpm
+          if-no-files-found: error
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Verify every platform and generate checksums
+        run: node scripts/verify-desktop-release.mjs release
+      - name: Publish public desktop release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --title "OneYes Canvas $GITHUB_REF_NAME · Windows / macOS / Linux" --notes-file docs/DESKTOP_RELEASE.md --latest

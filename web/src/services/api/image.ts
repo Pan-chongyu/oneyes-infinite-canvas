@@ -1,3 +1,4 @@
+import { isOneYes, requestImageStream } from "./image-stream";
 import axios from "axios";
 
 import i18n from "@/i18n";
@@ -95,7 +96,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; onPartial?: (image: string) => void };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
@@ -292,6 +293,7 @@ function readAxiosError(error: unknown, fallback: string) {
         // Fall back to Axios's own error message.
         return error.message || fallback;
     }
+    if (error instanceof DOMException && error.name === "TimeoutError") return apiText("imageTimeout");
     if (error instanceof DOMException && error.name === "AbortError") return apiText("requestCanceled");
     return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;
 }
@@ -725,9 +727,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const requestSize = resolveRequestSize(config.size);
     const background = normalizeBackground(config.background);
     try {
-        const response = await axios.post<ImageApiResponse>(
-            aiApiUrl(requestConfig, "/images/generations"),
-            {
+        const requestBody = {
                 model: requestConfig.model,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 n,
@@ -737,14 +737,13 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 // gpt-image models reject response_format; they always return b64.
                 ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
                 output_format: IMAGE_OUTPUT_FORMAT,
-            },
-            {
-                headers: aiHeaders(requestConfig, "application/json"),
-                signal: options?.signal,
-                timeout: IMAGE_REQUEST_TIMEOUT_MS,
-            },
-        );
-        const images = await parseImagePayload(response.data);
+            };
+        const url = aiApiUrl(requestConfig, "/images/generations");
+        const headers = aiHeaders(requestConfig, "application/json");
+        const payload = isOneYes(requestConfig.baseUrl)
+            ? await requestImageStream(url, requestBody, headers, { ...options, timeoutMs: IMAGE_REQUEST_TIMEOUT_MS })
+            : (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
+        const images = await parseImagePayload(payload);
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
@@ -810,8 +809,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     files.forEach((file) => formData.append(imageField, file));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
-        const images = await parseImagePayload(response.data);
+        const url = aiApiUrl(requestConfig, "/images/edits"), headers = aiHeaders(requestConfig);
+        const payload = isOneYes(requestConfig.baseUrl)
+            ? await requestImageStream(url, formData, headers, { ...options, timeoutMs: IMAGE_REQUEST_TIMEOUT_MS })
+            : (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
+        const images = await parseImagePayload(payload);
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));

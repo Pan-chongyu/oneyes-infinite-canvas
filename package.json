@@ -1,0 +1,83 @@
+{
+  "name": "oneyes-infinite-canvas",
+  "version": "0.20.1",
+  "private": true,
+  "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
+  "author": "OneYes / basketikun",
+  "license": "MIT",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "build": "npm --prefix web run build",
+    "test": "node --test test/*.test.mjs && npm --prefix web run test:oneyes",
+    "desktop": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "44.9.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "ai.oneyes.canvas",
+    "productName": "OneYes Canvas",
+    "artifactName": "OneYes-Canvas-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "desktop-dist",
+      "buildResources": "desktop/resources"
+    },
+    "files": [
+      "desktop/**/*.cjs",
+      "web/dist/**/*",
+      "LICENSE",
+      "NOTICE.md"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": "nsis",
+      "icon": "desktop/resources/icon.ico",
+      "artifactName": "OneYes-Canvas-${version}-Windows-${arch}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "OneYes Canvas"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.graphics-design",
+      "icon": "desktop/resources/icon.icns",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "artifactName": "OneYes-Canvas-${version}-macOS-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "icon": "desktop/resources/icon.png",
+      "category": "Graphics",
+      "maintainer": "OneYes",
+      "executableName": "oneyes-canvas",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "oneyes-canvas"
+        }
+      },
+      "artifactName": "OneYes-Canvas-${version}-Linux-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Pan-chongyu",
+      "repo": "oneyes-infinite-canvas"
+    }
+  }
+}

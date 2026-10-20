@@ -39,6 +39,7 @@ function localPluginsManifest(): Plugin {
 }
 
 export default defineConfig({
+    build: { target: "esnext" },
     base: process.env.VITE_BASE || "/",
     plugins: [react(), localPluginsManifest()],
     resolve: {

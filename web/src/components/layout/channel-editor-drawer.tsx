@@ -83,6 +83,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 </label>
             </div>
 
+            {draft.baseUrl.replace(/\/+$/, "").match(/^https:\/\/api\.oneyes\.ai(?:\/v1)?$/) ? <p className="mt-3 text-xs text-stone-500">OneYes 生图自动使用流式传输；可从 OneYes 客户端「API 密钥」复制 Key，模型权限以该 Key 的分组为准。桌面版配置加密保存在本机。</p> : null}
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
                     <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>

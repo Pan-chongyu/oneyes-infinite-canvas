@@ -38,6 +38,7 @@ type GenerationResult = {
     status: "pending" | "success" | "failed";
     image?: GeneratedImage;
     error?: string;
+    partial?: string;
 };
 
 type GenerationLog = {
@@ -321,7 +322,8 @@ export default function ImagePage() {
     const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
         const itemStartedAt = performance.now();
         try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
+            const options = { onPartial: (partial: string) => setResults(value => updateResultAt(value, index, { partial })) };
+            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, options) : await requestGeneration(snapshot.config, snapshot.text, options);
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
             const stored = await uploadImage(image.dataUrl);
@@ -505,7 +507,7 @@ export default function ImagePage() {
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} />
                                     ) : (
-                                        <PendingImageCard key={result.id} />
+                                        <PendingImageCard key={result.id} partial={result.partial} />
                                     ),
                                 )}
                             </div>
@@ -619,7 +621,7 @@ function ResultImageCard({
     );
 }
 
-function PendingImageCard() {
+function PendingImageCard({ partial }: { partial?: string }) {
     const { t } = useTranslation();
     return (
         <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
@@ -630,6 +632,7 @@ function PendingImageCard() {
                     backgroundSize: "16px 16px",
                 }}
             />
+            {partial ? <img src={partial} alt="流式生成预览，尚未完成" className="absolute inset-0 h-full w-full object-contain opacity-60" /> : null}
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
                 <span>{t("workbench.generating")}</span>

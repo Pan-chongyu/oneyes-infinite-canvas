@@ -1,3 +1,5 @@
+> **OneYes Canvas 公开分支**：基于下方原项目，适配 OneYes API Key 与流式生图，提供 Windows、macOS、Linux 安装包。[下载桌面版](https://github.com/Pan-chongyu/oneyes-infinite-canvas/releases/latest) · [接入与构建说明](docs/ONEYES_DESKTOP.md)。原作者与许可保持不变。
+
 <p align="center">
   <img src="web/public/logo.svg" width="96" alt="infinite-canvas logo">
 </p>

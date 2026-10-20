@@ -8,11 +8,14 @@ import { RouterProvider } from "react-router-dom";
 import { AppProviders } from "@/components/layout/app-providers";
 import "@/i18n";
 import { initAnalytics } from "@/lib/analytics";
+import { useConfigStore } from "@/stores/use-config-store";
 import { router } from "@/router";
 
 initAnalytics();
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
+
+await useConfigStore.persist.rehydrate();
 
 createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
