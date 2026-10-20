@@ -1,5 +1,4 @@
-import { Bot, Menu } from "lucide-react";
-import { Button, Tooltip } from "antd";
+import { Bot, House, Menu } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
@@ -25,6 +24,7 @@ export function AppTopNav() {
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
+    const navigation = [{ slug: "home", icon: House, to: "/" }, ...navigationTools.map((tool) => ({ ...tool, to: `/${tool.slug}` }))];
 
     useEffect(() => {
         if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
@@ -35,61 +35,71 @@ export function AppTopNav() {
     return (
         <>
             {!hideHeader ? (
-                <header className="sticky top-0 z-20 h-14 shrink-0 border-b border-stone-200 bg-background/90 backdrop-blur-xl dark:border-stone-800">
-                    <div className="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-6">
-                        <div className="flex min-w-0 items-center">
-                            <Link to="/" className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
-                                <span
-                                    className="size-5 shrink-0 bg-current"
-                                    style={{
-                                        mask: "url(/logo.svg) center / contain no-repeat",
-                                        WebkitMask: "url(/logo.svg) center / contain no-repeat",
-                                    }}
-                                />
-                                <span className="text-base font-medium">{t("meta.title")}</span>
-                            </Link>
+                <aside className="z-20 flex h-14 shrink-0 items-center justify-between border-b border-border bg-sidebar px-4 md:h-full md:w-[208px] md:flex-col md:items-stretch md:justify-start md:border-b-0 md:border-r md:px-3">
+                    <Link to="/" className="flex min-h-14 items-center gap-2.5 text-sm font-semibold leading-none !text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-20 md:px-3" aria-label="OneYes Canvas">
+                        <span
+                            className="size-6 shrink-0 bg-current"
+                            style={{
+                                mask: "url(/logo.svg) center / contain no-repeat",
+                                WebkitMask: "url(/logo.svg) center / contain no-repeat",
+                            }}
+                        />
+                        <span className="flex flex-col gap-1.5">
+                            <span className="text-[15px] font-semibold">OneYes Canvas</span>
+                            <span className="hidden text-xs font-normal text-muted-foreground md:block">{t("meta.title")}</span>
+                        </span>
+                    </Link>
 
-                            <button
-                                type="button"
-                                className="ml-3 inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 md:hidden dark:text-stone-300 dark:hover:text-white"
-                                onClick={() => setMobileNavOpen(true)}
-                                aria-label={t("topNav.openMenu")}
-                                title={t("topNav.menu")}
-                            >
-                                <Menu className="size-5" />
-                            </button>
+                    <div className="flex items-center gap-1 md:hidden">
+                        <UserStatusActions showConfig={false} />
+                        <button
+                            type="button"
+                            className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+                            onClick={() => setMobileNavOpen(true)}
+                            aria-label={t("topNav.openMenu")}
+                            title={t("topNav.menu")}
+                        >
+                            <Menu className="size-5" />
+                        </button>
+                    </div>
 
-                            <nav className="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
-                                {navigationTools.map((tool) => {
-                                    const Icon = tool.icon;
-                                    const active = tool.slug === activeToolSlug;
-                                    return (
-                                        <Link
-                                            key={tool.slug}
-                                            to={`/${tool.slug}`}
-                                            className={cn(
-                                                "relative flex h-14 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px",
-                                                active
-                                                    ? "font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"
-                                                    : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100",
-                                            )}
-                                        >
-                                            <Icon className="size-4" />
-                                            <span className="truncate">{t(`navigation.${tool.slug}`)}</span>
-                                        </Link>
-                                    );
-                                })}
-                            </nav>
-                        </div>
-
-                        <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            <Tooltip title={t(panelOpen ? "topNav.closeAgent" : "topNav.openAgent")}>
-                                <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label={t(panelOpen ? "topNav.closeAgent" : "topNav.openAgent")} />
-                            </Tooltip>
-                            <UserStatusActions />
+                    <nav className="hidden min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:flex" aria-label={t("topNav.navigation")}>
+                        {navigation.map((tool) => {
+                            const Icon = tool.icon;
+                            const active = tool.to === "/" ? pathname === "/" : tool.slug === activeToolSlug;
+                            return (
+                                <Link
+                                    key={tool.slug}
+                                    to={tool.to}
+                                    aria-current={active ? "page" : undefined}
+                                    className={cn(
+                                        "flex min-h-10 shrink-0 items-center gap-3 rounded-lg px-3 text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                        active ? "!bg-sidebar-accent font-medium !text-sidebar-accent-foreground" : "!text-muted-foreground hover:!bg-sidebar-accent/60 hover:!text-foreground",
+                                    )}
+                                >
+                                    <Icon className="size-4 shrink-0" strokeWidth={active ? 2 : 1.7} />
+                                    <span className="truncate">{t(`navigation.${tool.slug}`)}</span>
+                                </Link>
+                            );
+                        })}
+                    </nav>
+                    <div className="hidden shrink-0 space-y-3 border-t border-border pb-4 pt-3 md:block">
+                        <button
+                            type="button"
+                            onClick={togglePanel}
+                            aria-expanded={panelOpen}
+                            className={cn("flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors hover:bg-sidebar-accent", panelOpen ? "bg-sidebar-accent text-foreground" : "text-muted-foreground")}
+                        >
+                            <Bot className="size-4 shrink-0" />
+                            <span className="flex-1">{t("topNav.assistant")}</span>
+                            {agentConnected ? <span className="size-1.5 rounded-full bg-emerald-500" aria-label={t("agent.status.connected")} /> : null}
+                        </button>
+                        <div className="flex items-center justify-between px-2">
+                            <span className="min-w-0 truncate text-xs text-muted-foreground">{t("home.workspaceLabel")}</span>
+                            <UserStatusActions showConfig={false} />
                         </div>
                     </div>
-                </header>
+                </aside>
             ) : null}
 
             <MobileNavDrawer open={mobileNavOpen} activeToolSlug={activeToolSlug} onClose={() => setMobileNavOpen(false)} />
