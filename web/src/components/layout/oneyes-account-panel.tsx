@@ -83,7 +83,7 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
                         </div>
                         <div className="col-start-2 row-start-1 row-span-2 flex flex-col items-end gap-2.5 sm:col-start-3 sm:row-span-1 sm:flex-row sm:items-center sm:gap-4">
                             <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs" style={{ color: statusColor }} aria-live="polite"><StatusIcon className="size-3.5" aria-hidden="true" />{t(`config.account.status.${code}`)}</span>
-                            <Button disabled={state.busy} icon={<Pencil className="size-3.5" />} aria-label={t("config.account.editService", { name: service.name })} onClick={() => channel ? onEdit(channel.id) : showManual()}>{t(configured ? "common.edit" : "config.account.configure")}</Button>
+                            <Button disabled={state.busy} icon={<Pencil className="size-3.5" />} aria-label={t("config.account.editService", { name: service.name })} onClick={() => channel ? onEdit(channel.id) : showManual()}>{t(configured ? "config.account.manage" : "config.account.configure")}</Button>
                         </div>
                     </div>
                     {needsAttention && <div className="mt-3 flex flex-wrap items-start justify-between gap-2 border-t border-border/60 pt-2.5 pl-8 text-xs leading-relaxed" style={{ color: statusColor }}>
