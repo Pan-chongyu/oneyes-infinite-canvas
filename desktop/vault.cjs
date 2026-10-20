@@ -3,8 +3,9 @@ const { readFile, writeFile, rename, unlink, mkdir } = require('node:fs/promises
 const { join } = require('node:path');
 // AES-GCM local files, without Keychain. A process running as the same OS user
 // can also read the key; this protects files at rest, not a compromised account.
-function createVault(directory) {
-    const keyPath = join(directory, 'config.key'), path = join(directory, 'config.enc');
+function createVault(directory, name = 'config') {
+    if (!['config', 'account'].includes(name)) throw new Error('不支持的存储');
+    const keyPath = join(directory, name + '.key'), path = join(directory, name + '.enc');
     let queue = Promise.resolve();
     const serial = action => { const next = queue.then(action); queue = next.catch(() => {}); return next; };
     async function key(create = false) {

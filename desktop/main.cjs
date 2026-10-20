@@ -2,6 +2,7 @@ const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog } = require('e
 const { join, resolve } = require('node:path');
 const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
+const { createAccount } = require('./account.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 const smoke = process.argv.includes('--smoke-test');
@@ -12,6 +13,7 @@ app.on('second-instance', () => { if (window) { if (window.isMinimized()) window
 app.whenReady().then(async () => {
     const root = resolve(__dirname, '../web/dist'), vault = createVault(app.getPath('userData'));
     await vault.read(); // Refuse to overwrite an unreadable vault.
+    const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: (...args) => net.fetch(...args) });
     protocol.handle('oneyes-canvas', async request => {
         try {
             const target = route(request.url, root);
@@ -33,6 +35,11 @@ app.whenReady().then(async () => {
     ipcMain.handle('config:read', event => { trusted(event); return vault.read(); });
     ipcMain.handle('config:write', (event, value) => { trusted(event); return vault.write(value); });
     ipcMain.handle('config:remove', event => { trusted(event); return vault.remove(); });
+    ipcMain.handle('account:call', async (event, operation, args) => {
+        trusted(event);
+        try { return { data: await account.call(operation, args) }; }
+        catch (error) { return { error: error.message }; }
+    });
     function createWindow() {
         window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#1c1917', icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         window.setMenuBarVisibility(false);

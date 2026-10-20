@@ -10,6 +10,8 @@ import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
+import { OneYesAccountPanel } from "./oneyes-account-panel";
+import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import type { AppLocale } from "@/i18n";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
@@ -60,6 +62,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
+    const accountBusy = useOneYesAccountStore(state => state.busy);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
@@ -73,7 +76,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     useEffect(() => setActiveTab(initialTab), [initialTab]);
 
     const saveConfig = (nextConfig: AiConfig) => {
-        (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
+        useConfigStore.getState().replaceConfig(nextConfig);
     };
 
     const finishConfig = () => {
@@ -87,6 +90,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const loadConfigFile = async (file: File) => {
         try {
             await importAppConfig(file);
+            useOneYesAccountStore.setState({ report: [] });
             message.success(t("config.imported"));
         } catch (error) {
             message.error(error instanceof Error ? error.message : t("config.importFailed"));
@@ -99,6 +103,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
 
     const saveChannel = (channel: ModelChannel) => {
         updateChannels(config.channels.map((item) => (item.id === channel.id ? channel : item)));
+        useOneYesAccountStore.setState({ report: [] });
     };
 
     const testWebdav = async () => {
@@ -156,7 +161,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-3 dark:border-stone-800">
                 <div className="text-xs text-stone-500">{t("config.fileSecurity")}</div>
                 <div className="flex gap-2">
-                    <Button icon={<Upload className="size-4" />} onClick={() => configInputRef.current?.click()}>
+                    <Button disabled={accountBusy} icon={<Upload className="size-4" />} onClick={() => configInputRef.current?.click()}>
                         {t("config.import")}
                     </Button>
                     <Button icon={<Download className="size-4" />} onClick={exportAppConfig}>
@@ -174,6 +179,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         label: t("config.tabs.channels"),
                         children: (
                             <div>
+                                <OneYesAccountPanel />
                                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                                     <div className="text-xs text-stone-500">{t("config.channels.description")}</div>
                                 </div>
@@ -187,7 +193,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                                 </div>
                                             </div>
                                             <div className="flex shrink-0 gap-2">
-                                                <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingChannelId(channel.id)}>
+                                                <Button size="small" disabled={accountBusy} icon={<Pencil className="size-3.5" />} onClick={() => setEditingChannelId(channel.id)}>
                                                     {t("common.edit")}
                                                 </Button>
                                             </div>

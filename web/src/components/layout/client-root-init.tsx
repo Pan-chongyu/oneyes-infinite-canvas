@@ -4,6 +4,7 @@ import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { useConfigStore } from "@/stores/use-config-store";
+import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
@@ -14,6 +15,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     usePromptSourceScheduler();
+    useEffect(() => { if (window.oneYesDesktop?.account) void useOneYesAccountStore.getState().restore(); }, []);
 
     useEffect(() => {
         if (handledConfigParams.current) return;

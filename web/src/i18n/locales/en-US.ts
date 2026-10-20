@@ -362,6 +362,16 @@ export default {
         emptyCanvases: "No canvas projects yet",
     },
     config: {
+        account: {
+            diagnosticHint: "Open Settings → Diagnostics to check whether the key was deleted and repair the connection.",
+            backToLogin: "Back to account sign-in",
+            title: "Connect to OneYes", description: "Sign in to prepare keys and models for Canvas", shared: "Using the OneYes desktop session", signedIn: "Signed in to OneYes", logout: "Disconnect", reuse: "Use desktop session", login: "Sign in to OneYes",
+            email: "Email", password: "Password", code: "Authenticator code", verify: "Verify and sign in", register: "Create an account", forgot: "Forgot password", setup: "Quick setup", diagnose: "Diagnostics", repair: "Repair connection", manual: "Configure keys manually", saveManual: "Save and load models",
+            image: "Images", text: "Text", video: "Video", keyHint: "Reuses or creates Canvas_无限画布 for each website group. Keys and models can also be edited below. Diagnostics only read key status and model lists; no generation is billed.",
+            confirmSetup: "Configure and check", confirmHint: "Reuse Canvas_无限画布 in each platform group, or create it if missing. OpenAI reuses eligible keys first; new keys prefer SVIP, then VIP. Disabled or exhausted keys must be handled on the website. This replaces the affected keys and model lists without retrying generation jobs.",
+            manualHint: "The endpoint is fixed to api.oneyes.ai. Enter a key from each corresponding group. This only loads model lists; models remain editable below. Leave a key blank to leave it unconfigured.",
+            diagnosis: { ok: "Connected", unconfigured: "No key configured", account: "Connect the account that owns this key to check it", accountUnavailable: "Account check unavailable; reconnect and retry", deleted: "Key deleted on the website; repair to create and connect a replacement", inactive: "Key disabled, expired, or exhausted; check the website", groupChanged: "Key group changed; configure again", modelsChanged: "Some models are no longer available; review model settings", unavailable: "Connection failed; check key permissions, balance, and network", setupFailed: "Group setup failed" },
+        },
         title: "Settings & Preferences",
         invalidFile: "The settings file format is invalid",
         description: "OneYes connection, models, sync, and local storage",

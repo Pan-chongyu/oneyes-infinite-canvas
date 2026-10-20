@@ -22,6 +22,7 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    oneYes?: { platform: "openai" | "deepseek" | "minimax"; groupId: number; groupName: string; keyId: number; accountId: number };
 };
 
 export type AiConfig = {
@@ -74,7 +75,7 @@ export type ChannelCredentialsImportResult = {
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
-const OPENAI_BASE_URL = "https://api.oneyes.ai";
+export const OPENAI_BASE_URL = "https://api.oneyes.ai";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
 export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
@@ -142,6 +143,7 @@ type ConfigStore = {
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+    replaceConfig: (config: AiConfig) => void;
     importChannelCredentials: (input: { baseUrl?: string | null; apiKey?: string | null }) => ChannelCredentialsImportResult;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
@@ -225,6 +227,7 @@ export const useConfigStore = create<ConfigStore>()(
                     config: normalizeOneYesConfig({ ...state.config, [key]: value }, state.config),
                 })),
             importChannelCredentials: (input) => {
+                // Credentials imported manually do not claim account ownership.
                 const currentConfig = get().config;
                 const result = upsertChannelCredentials(currentConfig, input);
                 if (result.config !== currentConfig) set({ config: result.config });
@@ -237,6 +240,7 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
+            replaceConfig: (config) => set((state) => ({ config: normalizeOneYesConfig(config, state.config) })),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
             openConfigDialog: (shouldPromptContinue = false, configTab = "channels") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
@@ -308,6 +312,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        ...(channel?.oneYes ? { oneYes: channel.oneYes } : {}),
     };
 }
 
@@ -319,7 +324,7 @@ export function upsertChannelCredentials(config: AiConfig, input: { baseUrl?: st
     const apiKey = input.apiKey?.trim() || "";
     const next = normalizeOneYesConfig(config);
     const channel = next.channels[0];
-    return { status: "updated", channelName: "OneYes", config: normalizeOneYesConfig({ ...next, channels: [{ ...channel, ...(apiKey ? { apiKey } : {}) }] }) };
+    return { status: "updated", channelName: "OneYes", config: normalizeOneYesConfig({ ...next, channels: next.channels.map(item => item.id === channel.id ? { ...item, ...(apiKey ? { apiKey, oneYes: undefined } : {}) } : item) }) };
 }
 
 function normalizedBaseUrlKey(baseUrl: string) {
@@ -400,6 +405,8 @@ export function resolveModelChannel(config: AiConfig, value: string) {
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
+    const decoded = decodeChannelModel(value);
+    if (decoded && !config.channels.some(channel => channel.id === decoded.channelId)) throw new Error("所选模型的 OneYes 分组配置不存在，请重新配置后选择模型");
     const channel = resolveModelChannel(config, value);
     return {
         ...config,
@@ -413,7 +420,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 /** Keep the built-in provider fixed across edits, imports, and stored settings. */
 export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConfig = defaultConfig): AiConfig {
     const config = { ...defaultConfig, ...input };
-    const source = (Array.isArray(input.channels) ? input.channels : []).find((channel) => channel && normalizedBaseUrlKey(channel.baseUrl || "") === OPENAI_BASE_URL);
+    const source = (Array.isArray(input.channels) ? input.channels : []).find((channel) => channel && !["oneyes-deepseek", "oneyes-minimax"].includes(channel.id) && normalizedBaseUrlKey(channel.baseUrl || "") === OPENAI_BASE_URL);
     const channel = createModelChannel({
         ...(source || fallback.channels[0]),
         name: "OneYes",
@@ -422,6 +429,12 @@ export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConf
         ...(!Array.isArray(input.channels) && normalizedBaseUrlKey(config.baseUrl) === OPENAI_BASE_URL ? { apiKey: config.apiKey } : {}),
     });
     const channels = [channel];
+    // Fixed OneYes routing slots, never additional provider endpoints.
+    for (const platform of ["deepseek", "minimax"] as const) {
+        const slot = (input.channels || []).find(item => item.id === `oneyes-${platform}` && normalizedBaseUrlKey(item.baseUrl || "") === OPENAI_BASE_URL);
+        if (slot) channels.push(createModelChannel({ ...slot, name: `OneYes ${platform === "deepseek" ? "DeepSeek" : "MiniMax"}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai" }));
+    }
+    if (channel.oneYes?.platform === "openai") channel.name = "OneYes OpenAI";
     return {
         ...config,
         channelMode: "local",

@@ -58,7 +58,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
             <div className="grid gap-4 md:grid-cols-2">
                 <label className="block">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.name")}</span>
-                    <Input value="OneYes" readOnly />
+                    <Input value={draft.name} readOnly />
                 </label>
                 <label className="block">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.protocol")}</span>
@@ -71,7 +71,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 </label>
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">API Key</span>
-                    <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+                    <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value, oneYes: undefined })} placeholder="sk-..." />
                 </label>
             </div>
 

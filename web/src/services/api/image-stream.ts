@@ -7,7 +7,7 @@ export function isOneYes(baseUrl: string) {
 }
 function failure(status: number) {
     if (status === 524) return "OneYes 上游响应超时（524）。请先在用量记录中确认结果，再手动重试，避免重复扣费。";
-    if (status === 401 || status === 403) return "OneYes API Key 无效或当前分组无权使用此模型，请检查渠道配置。";
+    if (status === 401 || status === 403) return "OneYes API Key 无效或当前分组无权使用此模型，请打开「配置 → 连接诊断」检查 Key 是否被删除，并修复连接。";
     if (status === 429) return "OneYes 请求过于频繁，请稍后再试。";
     return `OneYes 生图请求失败（HTTP ${status}），请检查渠道和模型。`;
 }

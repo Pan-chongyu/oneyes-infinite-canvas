@@ -10,8 +10,10 @@ import "@/i18n";
 import { initAnalytics } from "@/lib/analytics";
 import { useConfigStore } from "@/stores/use-config-store";
 import { router } from "@/router";
+import { initializeDesktopTransport } from "@/services/api/desktop-transport";
 
 initAnalytics();
+initializeDesktopTransport();
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 

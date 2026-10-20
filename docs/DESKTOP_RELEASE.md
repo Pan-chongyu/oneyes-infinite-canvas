@@ -1,6 +1,6 @@
 OneYes Canvas 桌面分支，基于 basketikun/infinite-canvas v0.20.0，保留原作者与 MIT 许可。
 
-本次固定内置 OneYes 渠道，移除新增与删除渠道入口；名称、协议和接口地址不可修改，API Key 与模型仍可配置。配置导入与本地恢复统一约束为 OneYes，保留原有 OneYes Key 与模型。
+本次支持直接登录 OneYes、双重验证和复用 OneYes Desktop v0.1.65 登录态。可一键配置或手动填写 Key，按 OpenAI SVIP/VIP、DeepSeek DeepSeek、MiniMax Video 分组复用或创建 Canvas_无限画布。连接诊断识别误删、停用、分组变更和模型变化，用户确认后修复缺失 Key，不重放付费任务。接口地址仍固定，不提供新增／删除其他渠道。独立登录信息本机加密，密码不保存，登录态复用不交付主客户端令牌。修复桌面自定义协议的 Axios 传输方式。
 
 - 预置 OneYes 渠道，填写自己的 Key 即可接入，支持获取当前 Key 可用模型。
 - OneYes 文生图、参考图编辑使用 SSE 流式传输，生图工作台可显示中间预览。

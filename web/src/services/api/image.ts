@@ -284,6 +284,7 @@ function readAxiosError(error: unknown, fallback: string) {
         if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") return apiText("imageTimeout");
         if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
+        if (error.response?.status === 401 || error.response?.status === 403) return `${readApiErrorMessage(responseData) || apiText("authenticationFailed")} ${i18n.t("config.account.diagnosticHint")}`;
         // Prefer the API error from the response body.
         const apiMsg = readApiErrorMessage(responseData);
         if (apiMsg) return apiMsg;
