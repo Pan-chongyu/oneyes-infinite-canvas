@@ -5,7 +5,7 @@ import {join} from 'node:path';
 const root=process.argv[2], files=(await readdir(root)).filter(v=>!v.endsWith('.txt')).sort();
 const version=JSON.parse(await readFile('package.json','utf8')).version;
 for(const os of ['Windows','macOS','Linux']) for(const arch of ['x64','arm64']) for(const extension of {Windows:['exe'],macOS:['dmg','zip'],Linux:['AppImage','deb','rpm']}[os]) {
-  const packageArch=extension==='rpm'?{x64:'x86_64',arm64:'aarch64'}[arch]:arch;
+  const packageArch=os==='Linux'?{AppImage:{x64:'x86_64',arm64:'arm64'},deb:{x64:'amd64',arm64:'arm64'},rpm:{x64:'x86_64',arm64:'aarch64'}}[extension][arch]:arch;
   const name=`OneYes-Canvas-${version}-${os}-${packageArch}${os==='Windows'?'-Setup':''}.${extension}`;
   if(!files.includes(name))throw new Error(`Missing ${name}`);
 }

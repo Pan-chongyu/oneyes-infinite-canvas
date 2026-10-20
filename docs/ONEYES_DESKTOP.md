@@ -20,7 +20,7 @@ OneYes 的 OpenAI 图像生成及参考图编辑发送 stream=true、partial_ima
 
 Release 文件名明确标注 Windows / macOS / Linux 及 x64 / arm64。Windows 提供 NSIS EXE；macOS 提供 DMG 和 ZIP；Linux 提供 AppImage、DEB、RPM。每包附 SHA256SUMS 验证，应用中心按平台与芯片架构选择。
 
-RPM 沿用 Linux 标准架构名称 x86_64 / aarch64，分别对应 x64 / ARM64；发布校验要求全部十二个原生安装包齐全。
+Linux 沿用各格式的标准架构名称：AppImage 的 x86_64 / arm64、DEB 的 amd64 / arm64、RPM 的 x86_64 / aarch64，分别对应 x64 / ARM64；发布校验要求全部十二个原生安装包齐全。
 
 macOS 当前为 ad-hoc 签名，未 Apple 公证；Windows 未配置商业代码签名，系统首次安装可能显示来源确认。不要把本分支包描述为已通过 Apple 公证或 Microsoft 签名认证。
 

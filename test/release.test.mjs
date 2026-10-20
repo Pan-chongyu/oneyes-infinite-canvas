@@ -9,9 +9,9 @@ test('release requires all twelve native installers and hashes RPM architecture 
   try {
     const {version}=JSON.parse(await readFile('package.json','utf8'));
     const files=[];
-    for(const os of ['Windows','macOS','Linux'])for(const arch of ['x64','arm64'])for(const ext of {Windows:['exe'],macOS:['dmg','zip'],Linux:['AppImage','deb','rpm']}[os]) {
-      const packageArch=ext==='rpm'?{x64:'x86_64',arm64:'aarch64'}[arch]:arch;
-      const name=`OneYes-Canvas-${version}-${os}-${packageArch}${os==='Windows'?'-Setup':''}.${ext}`;
+    // Actual electron-builder filenames, including target-specific Linux aliases.
+    for(const suffix of ['Windows-x64-Setup.exe','Windows-arm64-Setup.exe','macOS-x64.dmg','macOS-x64.zip','macOS-arm64.dmg','macOS-arm64.zip','Linux-x86_64.AppImage','Linux-amd64.deb','Linux-x86_64.rpm','Linux-arm64.AppImage','Linux-arm64.deb','Linux-aarch64.rpm']) {
+      const name=`OneYes-Canvas-${version}-${suffix}`;
       await writeFile(join(dir,name),'fixture');files.push(name);
     }
     const verify=()=>spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8'});

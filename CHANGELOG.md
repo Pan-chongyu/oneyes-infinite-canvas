@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v0.20.1
+## v0.20.2
 
 + [新增] OneYes 公开分支桌面版，提供 Windows、macOS、Linux 的 x64 / ARM64 安装包。
 + [新增] 预置 OneYes 渠道，文生图与参考图编辑启用 SSE 流式生图，工作台显示中间预览。
