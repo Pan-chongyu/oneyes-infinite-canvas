@@ -1,14 +1,22 @@
-import { Alert, Button, Form, Input, Modal, Tag } from "antd";
-import { ArrowRight, CheckCircle2, CircleHelp, LogIn, ShieldCheck, Stethoscope, WandSparkles } from "lucide-react";
+import { Alert, Button, Form, Input, Modal, theme } from "antd";
+import { ArrowRight, CheckCircle2, ChevronRight, CircleAlert, CircleDashed, Image, KeyRound, LockKeyhole, LogIn, MessageSquare, Pencil, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { useConfigStore } from "@/stores/use-config-store";
 import { configureManual, type Platform } from "@/services/api/oneyes-account";
 
-export function OneYesAccountPanel() {
+const services = [
+    { platform: "openai", name: "OpenAI", purpose: "imageText", group: "SVIP / VIP", icon: Image },
+    { platform: "deepseek", name: "DeepSeek", purpose: "text", group: "DeepSeek", icon: MessageSquare },
+    { platform: "minimax", name: "MiniMax", purpose: "video", group: "Video", icon: Video },
+] as const;
+
+export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void }) {
     const { t } = useTranslation();
+    const { token } = theme.useToken();
     const state = useOneYesAccountStore();
+    const channels = useConfigStore(state => state.config.channels);
     const [loginOpen, setLoginOpen] = useState(false);
     const [form] = Form.useForm();
     const [repairOpen, setRepairOpen] = useState(false);
@@ -25,12 +33,12 @@ export function OneYesAccountPanel() {
         manualForm.setFieldsValue({ openai: channels[0].apiKey, deepseek: channels.find(channel => channel.id === "oneyes-deepseek")?.apiKey || "", minimax: channels.find(channel => channel.id === "oneyes-minimax")?.apiKey || "" });
         setManualError(""); setManualOpen(true);
     };
-    return <section className="mb-6 rounded-xl border border-border bg-background p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-                <ShieldCheck className="size-6 text-primary" strokeWidth={1.5} />
-                <div><div className="text-sm font-semibold">{state.user?.username || state.user?.email || t("config.account.title")}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{state.user ? t(`config.account.${state.source === "desktop" ? "shared" : "signedIn"}`) : t("config.account.description")}</div>
+    return <section aria-label={t("config.tabs.channels")} className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/40 px-4 py-3.5">
+            <div className="flex min-w-0 items-center gap-3">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-background"><UserRound className="size-5 text-muted-foreground" strokeWidth={1.5} /></div>
+                <div className="min-w-0"><div className="break-words text-sm font-semibold">{state.user?.username || state.user?.email || t("config.account.title")}</div>
+                    <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{state.user ? t(`config.account.${state.source === "desktop" ? "shared" : "signedIn"}`) : t("config.account.description")}</div>
                 </div>
             </div>
             {state.user ? <Button type="text" size="small" disabled={state.busy} onClick={() => void state.logout()}>{t("config.account.logout")}</Button> : <div className="flex flex-wrap gap-2">
@@ -39,27 +47,56 @@ export function OneYesAccountPanel() {
             </div>}
         </div>
         {state.error && <Alert className="mt-4" type="warning" showIcon title={state.error} />}
-        <div className="my-4 border-t border-border" />
-        <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-2 text-xs text-muted-foreground">
-                <div><span className="mr-2 font-medium text-foreground">{t("config.account.image")}</span>OpenAI <Tag className="!m-0">SVIP / VIP</Tag></div>
-                <div><span className="mr-2 font-medium text-foreground">{t("config.account.text")}</span>OpenAI <Tag className="!m-0">SVIP / VIP</Tag><span className="mx-2">+</span>DeepSeek <Tag className="!m-0">DeepSeek</Tag></div>
-                <div><span className="mr-2 font-medium text-foreground">{t("config.account.video")}</span>MiniMax <Tag className="!m-0">Video</Tag></div>
+        <div className="mb-3 mt-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <h2 className="text-sm font-semibold">{t("config.account.services")}</h2>
+                <p className="mb-0 mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><LockKeyhole className="size-3" aria-hidden="true" />api.oneyes.ai</p>
             </div>
-            <div className="flex gap-2">
-                <Button disabled={state.busy} onClick={showManual}>{t("config.account.manual")}</Button>
+            <div className="flex flex-wrap gap-2">
+                <Button type="text" icon={<KeyRound className="size-3.5" />} disabled={state.busy || manualBusy} onClick={showManual}>{t("config.account.manual")}</Button>
                 <Button icon={<Stethoscope className="size-3.5" />} loading={state.busy} onClick={() => void state.diagnose()}>{t("config.account.diagnose")}</Button>
                 <Button type="primary" disabled={!state.user || state.busy} icon={<WandSparkles className="size-3.5" />} onClick={() => setRepairOpen(true)}>{t("config.account.setup")}</Button>
             </div>
         </div>
-        <p className="mb-0 mt-4 text-xs leading-relaxed text-muted-foreground">{t("config.account.keyHint")}</p>
-        {!!state.report.length && <div className="mt-4 border-t border-border pt-2" aria-live="polite">
-            {state.report.map(item => <div key={item.id} className="flex items-start gap-2 py-2 text-xs">
-                {item.status === "ok" ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-600" /> : <CircleHelp className="mt-0.5 size-4 shrink-0 text-amber-600" />}
-                <div className="min-w-0 flex-1"><span className="font-medium">{item.name}</span><span className="ml-2 text-muted-foreground">{t(`config.account.diagnosis.${item.code}`)}</span>{item.detail && <div className="mt-1 break-words text-muted-foreground">{item.detail}</div>}</div>
-                {item.code === "deleted" && state.user && <Button size="small" type="link" disabled={state.busy} onClick={() => setRepairOpen(true)}>{t("config.account.repair")}</Button>}
-            </div>)}
-        </div>}
+        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border" aria-busy={state.busy}>
+            {services.map(service => {
+                const id = service.platform === "openai" ? channels[0].id : `oneyes-${service.platform}`;
+                const channel = channels.find(item => item.id === id);
+                const result = state.report.find(item => item.id === id);
+                const configured = Boolean(channel?.apiKey.trim());
+                const code = result?.code || (configured ? "unchecked" : "unconfigured");
+                const healthy = code === "ok";
+                const needsAttention = Boolean(result && !healthy && code !== "unconfigured");
+                const StatusIcon = healthy ? CheckCircle2 : needsAttention ? CircleAlert : CircleDashed;
+                const color = healthy ? token.colorSuccessText : needsAttention ? (result?.status === "error" ? token.colorErrorText : token.colorWarningText) : token.colorTextSecondary;
+                const statusColor = healthy || needsAttention ? `color-mix(in srgb, ${color} 65%, ${token.colorTextBase} 35%)` : color;
+                const Icon = service.icon;
+                return <div key={service.platform} data-platform={service.platform} className="px-4 py-4">
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1fr)_minmax(120px,0.7fr)_auto]">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <Icon className="size-5 shrink-0 text-muted-foreground" strokeWidth={1.5} aria-hidden="true" />
+                            <div><h3 className="text-sm font-semibold">{service.name}</h3><div className="mt-1 text-xs text-muted-foreground">{t(`config.account.${service.purpose}`)}</div></div>
+                        </div>
+                        <div className="col-start-1 row-start-2 pl-8 text-xs sm:col-start-auto sm:row-start-auto sm:pl-0">
+                            <div className="flex flex-wrap items-center gap-1.5"><span className="text-muted-foreground">{t(`config.account.${configured ? (channel?.oneYes ? "group" : "manualKey") : "recommendedGroup"}`)}</span>{(!configured || channel?.oneYes) && <span className="font-medium">{channel?.oneYes?.groupName || service.group}</span>}</div>
+                            <div className="mt-1.5 text-muted-foreground">{configured ? t("config.channels.modelCount", { count: channel?.models.length || 0 }) : t("config.account.notConfigured")}</div>
+                        </div>
+                        <div className="col-start-2 row-start-1 row-span-2 flex flex-col items-end gap-2.5 sm:col-start-3 sm:row-span-1 sm:flex-row sm:items-center sm:gap-4">
+                            <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs" style={{ color: statusColor }} aria-live="polite"><StatusIcon className="size-3.5" aria-hidden="true" />{t(`config.account.status.${code}`)}</span>
+                            <Button disabled={state.busy} icon={<Pencil className="size-3.5" />} aria-label={t("config.account.editService", { name: service.name })} onClick={() => channel ? onEdit(channel.id) : showManual()}>{t(configured ? "common.edit" : "config.account.configure")}</Button>
+                        </div>
+                    </div>
+                    {needsAttention && <div className="mt-3 flex flex-wrap items-start justify-between gap-2 border-t border-border/60 pt-2.5 pl-8 text-xs leading-relaxed" style={{ color: statusColor }}>
+                        {result?.detail ? <details className="group min-w-0 flex-1">
+                            <summary style={{ display: "flex" }} className="cursor-pointer list-none items-start gap-1 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"><ChevronRight className="mt-0.5 size-3.5 shrink-0 motion-safe:transition-transform motion-safe:duration-200 group-open:rotate-90" aria-hidden="true" /><span>{t(`config.account.diagnosis.${code}`)}</span></summary>
+                            <p className="mb-0 mt-2 break-words pl-4.5 text-muted-foreground">{result.detail}</p>
+                        </details> : <span className="min-w-0 flex-1">{t(`config.account.diagnosis.${code}`)}</span>}
+                        {code === "deleted" && state.user && <Button size="small" type="link" disabled={state.busy} onClick={() => setRepairOpen(true)}>{t("config.account.repair")}</Button>}
+                    </div>}
+                </div>;
+            })}
+        </div>
+        <p className="mb-0 mt-3 text-xs leading-relaxed text-muted-foreground">{t("config.account.keyHint")}</p>
         <Modal open={repairOpen} title={t("config.account.setup")} okText={t("config.account.confirmSetup")} onCancel={() => setRepairOpen(false)} onOk={() => { setRepairOpen(false); void state.configure(); }}>
             <p className="text-sm leading-relaxed">{t("config.account.confirmHint")}</p>
         </Modal>
