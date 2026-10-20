@@ -4,7 +4,7 @@
 
 ## 接入 OneYes
 
-打开右上角「配置」，编辑预置 OneYes 渠道，填写自己的 API Key。地址预设 https://api.oneyes.ai ，请求自动补 /v1。Key 从 OneYes 客户端「API 密钥」复制；支持模型以该 Key 所属分组为准，可在渠道中获取模型列表。安装包不内置任何共享 Key，不读取其他应用的凭据。
+打开左侧「配置」，编辑内置 OneYes 渠道，填写自己的 API Key。仅保留 OneYes 渠道，不提供新增或删除入口；名称、OpenAI 协议及 https://api.oneyes.ai 接口地址固定，请求自动补 /v1。配置导入和本地恢复也使用固定渠道，保留已有 OneYes Key 与模型，不使用其他渠道的凭据。Key 从 OneYes 客户端「API 密钥」复制；支持模型以该 Key 所属分组为准，可在渠道中获取模型列表。安装包不内置任何共享 Key，不读取其他应用的凭据。
 
 OneYes 的 OpenAI 图像生成及参考图编辑发送 stream=true、partial_images=2，实时消费 SSE 心跳、预览及 completed 事件；只将最终图片写入素材。生图工作台会显示中间预览。不会因断流、524 或解析失败自动重试付费请求；失败后先检查 OneYes 用量再手动决定重试。自定义调用脚本仍由脚本定义协议。
 

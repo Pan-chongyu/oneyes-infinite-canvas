@@ -5,6 +5,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes is the only built-in provider. Verify that add/delete actions are absent and its name, protocol, and endpoint are read-only. Existing OneYes credentials and models should survive restart; imported files and URL credentials must not add foreign providers or change the endpoint. API Key editing and model fetching/selection remain available.
+
 - The desktop shell uses a left navigation sidebar. Verify local recent projects, new canvas creation, tool navigation, the full-width canvas editor, assistant access, and theme/language controls in both the desktop and narrow layouts. Check empty/loading states and English labels; the home screen no longer downloads prompt recommendations.
 
 - OneYes Canvas header no longer shows the version or GitHub shortcut, and startup no longer requests upstream version or changelog data; plugin runtime version reporting remains available.

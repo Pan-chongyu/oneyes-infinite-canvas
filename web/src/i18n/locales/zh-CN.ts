@@ -364,8 +364,8 @@ export default {
     config: {
         title: "配置与用户偏好",
         invalidFile: "配置文件格式不正确",
-        description: "渠道聚合、模型选择、同步与本地存储",
-        modalDescription: "渠道聚合、默认模型、同步与本地存储",
+        description: "OneYes 接入、模型选择、同步与本地存储",
+        modalDescription: "OneYes 接入、默认模型、同步与本地存储",
         tabs: {
             channels: "渠道",
             localProxy: "本地代理",
@@ -467,12 +467,12 @@ export default {
         importedChannelCreated: "已新增渠道“{{name}}”，原有渠道未改动",
         importedChannelUpdated: "已更新渠道“{{name}}”的连接配置",
         importedChannelBaseUrlRequired: "导入链接缺少 Base URL，未修改任何渠道",
-        importedChannelBaseUrlInvalid: "导入链接中的 Base URL 无效，未修改任何渠道",
+        importedChannelBaseUrlInvalid: "仅支持 OneYes 官方接口，未修改当前配置。",
         importFailed: "配置文件读取失败",
         saved: "配置已保存",
         savedContinue: "配置已保存，请继续刚才的请求",
         channels: {
-            description: "每个渠道选择一个协议并拉取模型，为每个模型指定能力（生图/视频/文本/音频），并可自定义调用脚本。",
+            description: "已内置 OneYes，仅需填写自己的 API Key，并选择该 Key 可用的模型。",
             add: "新增渠道",
             unnamed: "未命名渠道",
             numberedName: "渠道 {{count}}",
@@ -512,6 +512,7 @@ export default {
             systemPromptPlaceholder: "例如：你是一位擅长电影感写实摄影的视觉导演。",
         },
         channelEditor: {
+            builtIn: "OneYes 内置渠道，接口地址固定，不可删除或修改。",
             title: "编辑渠道",
             name: "渠道名称",
             protocol: "协议",

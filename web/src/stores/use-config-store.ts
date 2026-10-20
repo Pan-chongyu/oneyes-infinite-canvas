@@ -222,10 +222,7 @@ export const useConfigStore = create<ConfigStore>()(
             shouldPromptContinue: false,
             updateConfig: (key, value) =>
                 set((state) => ({
-                    config: {
-                        ...state.config,
-                        [key]: value,
-                    },
+                    config: normalizeOneYesConfig({ ...state.config, [key]: value }, state.config),
                 })),
             importChannelCredentials: (input) => {
                 const currentConfig = get().config;
@@ -254,23 +251,12 @@ export const useConfigStore = create<ConfigStore>()(
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
-                const config = { ...defaultConfig, ...persistedConfig };
-                if (persistedState.config && !Array.isArray(persistedConfig.channels)) config.channels = [];
-                const channels = normalizeChannels(config);
-                const models = modelOptionsFromChannels(channels);
+                const config = normalizeOneYesConfig(persistedConfig);
                 return {
                     ...current,
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
                     config: {
                         ...config,
-                        channelMode: "local",
-                        apiFormat: normalizeApiFormat(config.apiFormat),
-                        channels,
-                        models,
-                        imageModel: normalizeModelOptionValue(config.imageModel || config.model, channels),
-                        videoModel: normalizeModelOptionValue(config.videoModel, channels),
-                        textModel: normalizeModelOptionValue(config.textModel || config.model, channels),
-                        audioModel: normalizeModelOptionValue(config.audioModel || defaultConfig.audioModel, channels),
                         audioVoice: config.audioVoice || defaultConfig.audioVoice,
                         audioFormat: config.audioFormat || defaultConfig.audioFormat,
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
@@ -325,45 +311,15 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     };
 }
 
-export function upsertChannelCredentials(
-    config: AiConfig,
-    input: { baseUrl?: string | null; apiKey?: string | null },
-): ChannelCredentialsImportResult & { config: AiConfig } {
+export function upsertChannelCredentials(config: AiConfig, input: { baseUrl?: string | null; apiKey?: string | null }): ChannelCredentialsImportResult & { config: AiConfig } {
     const rawBaseUrl = input.baseUrl?.trim() || "";
     if (!rawBaseUrl) return { status: "missing-base-url", config };
-    if (!isHttpBaseUrl(rawBaseUrl)) return { status: "invalid-base-url", config };
+    if (normalizedBaseUrlKey(rawBaseUrl) !== OPENAI_BASE_URL) return { status: "invalid-base-url", config };
 
-    const baseUrl = normalizeImportedBaseUrl(rawBaseUrl);
     const apiKey = input.apiKey?.trim() || "";
-    const matchingIndex = config.channels.findIndex((channel) => normalizedBaseUrlKey(channel.baseUrl) === normalizedBaseUrlKey(baseUrl));
-
-    if (matchingIndex >= 0) {
-        const existing = config.channels[matchingIndex];
-        if (existing.baseUrl === baseUrl && (!apiKey || existing.apiKey === apiKey)) {
-            return { status: "updated", channelName: existing.name, config };
-        }
-        const updated = { ...existing, baseUrl, ...(apiKey ? { apiKey } : {}) };
-        const channels = config.channels.map((channel, index) => (index === matchingIndex ? updated : channel));
-        return { status: "updated", channelName: existing.name, config: { ...config, channels } };
-    }
-
-    const channel = createModelChannel({
-        name: importedChannelName(baseUrl),
-        baseUrl,
-        apiKey,
-        apiFormat: "openai",
-        models: [],
-    });
-    return { status: "created", channelName: channel.name, config: { ...config, channels: [...config.channels, channel] } };
-}
-
-function isHttpBaseUrl(baseUrl: string) {
-    try {
-        const url = new URL(baseUrl);
-        return (url.protocol === "http:" || url.protocol === "https:") && Boolean(url.hostname);
-    } catch {
-        return false;
-    }
+    const next = normalizeOneYesConfig(config);
+    const channel = next.channels[0];
+    return { status: "updated", channelName: "OneYes", config: normalizeOneYesConfig({ ...next, channels: [{ ...channel, ...(apiKey ? { apiKey } : {}) }] }) };
 }
 
 function normalizedBaseUrlKey(baseUrl: string) {
@@ -376,17 +332,12 @@ function normalizedBaseUrlKey(baseUrl: string) {
 
 function normalizeImportedBaseUrl(baseUrl: string) {
     const url = new URL(baseUrl.trim());
-    url.hash = "";
+    if (url.username || url.password || url.search || url.hash) return "";
     return url.toString().replace(/\/+$/, "");
 }
 
 function stripTrailingApiVersion(baseUrl: string) {
     return baseUrl.replace(/\/v1$/i, "");
-}
-
-function importedChannelName(baseUrl: string) {
-    const hostname = new URL(baseUrl).hostname;
-    return hostname.replace(/^(?:www|api)\./i, "") || i18n.t("config.channels.newName");
 }
 
 export function encodeChannelModel(channelId: string, model: string) {
@@ -434,7 +385,18 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.some((item) => item.name === model));
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: i18n.t("config.channels.defaultName"), baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
+    return (
+        matched ||
+        config.channels[0] ||
+        createModelChannel({
+            id: "default",
+            name: i18n.t("config.channels.defaultName"),
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+            apiFormat: config.apiFormat,
+            models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })),
+        })
+    );
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -448,29 +410,32 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     };
 }
 
-function normalizeChannels(config: AiConfig) {
-    const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
-    const channels = persistedChannels.map((channel, index) =>
-        createModelChannel({
-            ...channel,
-            id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
-            name: channel.name || (index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 })),
-            models: normalizeChannelModels(channel.models),
-        }),
-    );
-    if (!channels.length) {
-        channels.push(
-            createModelChannel({
-                id: "default",
-                name: i18n.t("config.channels.defaultName"),
-                baseUrl: config.baseUrl || defaultConfig.baseUrl,
-                apiKey: config.apiKey || "",
-                apiFormat: config.apiFormat || defaultConfig.apiFormat,
-                models: normalizeChannelModels([config.model, config.imageModel, config.videoModel, config.textModel, config.audioModel].map(modelOptionName)),
-            }),
-        );
-    }
-    return channels;
+/** Keep the built-in provider fixed across edits, imports, and stored settings. */
+export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConfig = defaultConfig): AiConfig {
+    const config = { ...defaultConfig, ...input };
+    const source = (Array.isArray(input.channels) ? input.channels : []).find((channel) => channel && normalizedBaseUrlKey(channel.baseUrl || "") === OPENAI_BASE_URL);
+    const channel = createModelChannel({
+        ...(source || fallback.channels[0]),
+        name: "OneYes",
+        baseUrl: OPENAI_BASE_URL,
+        apiFormat: "openai",
+        ...(!Array.isArray(input.channels) && normalizedBaseUrlKey(config.baseUrl) === OPENAI_BASE_URL ? { apiKey: config.apiKey } : {}),
+    });
+    const channels = [channel];
+    return {
+        ...config,
+        channelMode: "local",
+        baseUrl: OPENAI_BASE_URL,
+        apiKey: channel.apiKey,
+        apiFormat: "openai",
+        channels,
+        models: modelOptionsFromChannels(channels),
+        model: normalizeModelOptionValue(config.model, channels) || config.model,
+        imageModel: normalizeModelOptionValue(config.imageModel, channels) || config.imageModel,
+        videoModel: normalizeModelOptionValue(config.videoModel, channels) || config.videoModel,
+        textModel: normalizeModelOptionValue(config.textModel, channels) || config.textModel,
+        audioModel: normalizeModelOptionValue(config.audioModel, channels) || config.audioModel,
+    };
 }
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {

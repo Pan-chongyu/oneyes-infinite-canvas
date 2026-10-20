@@ -364,8 +364,8 @@ export default {
     config: {
         title: "Settings & Preferences",
         invalidFile: "The settings file format is invalid",
-        description: "Providers, model selection, sync, and local storage",
-        modalDescription: "Providers, default models, sync, and local storage",
+        description: "OneYes connection, models, sync, and local storage",
+        modalDescription: "OneYes connection, default models, sync, and local storage",
         tabs: {
             channels: "Providers",
             localProxy: "Local proxy",
@@ -467,12 +467,12 @@ export default {
         importedChannelCreated: "Added provider “{{name}}” without changing existing providers",
         importedChannelUpdated: "Updated connection settings for provider “{{name}}”",
         importedChannelBaseUrlRequired: "The import link has no Base URL. No providers were changed.",
-        importedChannelBaseUrlInvalid: "The import link has an invalid Base URL. No providers were changed.",
+        importedChannelBaseUrlInvalid: "Only the official OneYes endpoint is supported. Your settings were not changed.",
         importFailed: "Failed to read the settings file",
         saved: "Settings saved",
         savedContinue: "Settings saved. Continue with your previous request.",
         channels: {
-            description: "Choose a protocol for each provider, fetch its models, assign capabilities, and optionally customize request scripts.",
+            description: "OneYes is built in. Enter your API Key and select models available to that key.",
             add: "Add provider",
             unnamed: "Unnamed provider",
             numberedName: "Provider {{count}}",
@@ -512,6 +512,7 @@ export default {
             systemPromptPlaceholder: "For example: You are a visual director specializing in cinematic, photorealistic imagery.",
         },
         channelEditor: {
+            builtIn: "OneYes is built in. The provider cannot be removed and its API endpoint is fixed.",
             title: "Edit provider",
             name: "Provider name",
             protocol: "Protocol",
