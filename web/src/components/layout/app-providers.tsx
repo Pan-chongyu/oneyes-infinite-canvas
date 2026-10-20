@@ -37,7 +37,8 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         document.documentElement.lang = locale;
-        document.title = t("meta.title");
+        document.title = `OneYes Canvas · ${t("meta.title")}`;
+        document.body.dataset.canvasReady = "true";
         document.querySelector('meta[name="description"]')?.setAttribute("content", t("meta.description"));
         dayjs.locale(locale === "zh-CN" ? "zh-cn" : "en");
     }, [locale, t]);

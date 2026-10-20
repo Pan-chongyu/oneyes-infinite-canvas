@@ -30,7 +30,7 @@ jobs:
             platform: macOS
             arch: arm64
             target: mac
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             platform: Linux
             arch: x64
             target: linux
@@ -52,7 +52,7 @@ jobs:
             web/package-lock.json
       - name: Install Linux packaging tools
         if: matrix.target == 'linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y rpm libfuse2 xvfb
+        run: sudo apt-get update -qq && sudo apt-get install -y rpm libfuse2t64 xvfb
       - run: npm ci
       - run: npm ci --prefix web
       - name: Validate version and architecture

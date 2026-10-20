@@ -45,7 +45,10 @@ app.whenReady().then(async () => {
         window.on('closed', () => { window = null; });
         if (smoke) window.webContents.on('did-finish-load', async () => {
             try {
-                const info = await window.webContents.executeJavaScript('({title:document.title,protocol:location.protocol,bridge:!!window.oneYesDesktop})');
+                const info = await window.webContents.executeJavaScript(`new Promise(resolve => {
+                    const ready = () => { if (!document.body.dataset.canvasReady) return; observer.disconnect(); resolve({title:document.title,protocol:location.protocol,bridge:!!window.oneYesDesktop}); };
+                    const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
+                })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
                 console.log('ONEYES_CANVAS_SMOKE_OK', JSON.stringify(info)); app.exit(0);
             } catch { app.exit(1); }
