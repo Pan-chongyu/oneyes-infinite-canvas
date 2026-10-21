@@ -108,6 +108,10 @@ type CodexRequestSpec = {
         params: { cursor?: string | null; limit?: number | null; detail?: "full" | "toolsAndAuthOnly" | null; threadId?: string | null };
         result: { data: CodexMcpServerStatus[]; nextCursor: string | null };
     };
+    "config/mcpServer/reload": {
+        params: null;
+        result: Record<string, never>;
+    };
     "skills/list": {
         params: { cwds: string[]; forceReload?: boolean };
         result: { data: CodexSkillsListEntry[] };

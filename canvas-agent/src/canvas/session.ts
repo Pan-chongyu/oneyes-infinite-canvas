@@ -18,7 +18,7 @@ export type ConversationState = {
     conversationId: string;
     threadId: string;
     status: "idle" | "preparing" | "ready" | "warning" | "running" | "failed";
-    mcpStatuses: Record<string, { status: McpStartupState; error?: string | null; failureReason?: string | null }>;
+    mcpStatuses: Record<string, { status: McpStartupState; error?: string | null; failureReason?: string | null; recovery?: "retrying" | "recovered" | "failed" }>;
     sourceClientId?: string;
     error?: string;
 };
@@ -116,12 +116,12 @@ export class CanvasSession {
     }
 
     /** 记录预热阶段单个 MCP 服务的启动状态。 */
-    updateConversationMcp(name: string, status: McpStartupState, error?: string | null, failureReason?: string | null) {
-        if (!name || this.conversationState.status !== "preparing") return this.conversationStateSnapshot;
+    updateConversationMcp(name: string, status: McpStartupState, error?: string | null, failureReason?: string | null, recovery?: "retrying" | "recovered" | "failed", threadId?: string) {
+        if (!name || this.conversationState.status === "idle" || (threadId && this.conversationState.threadId && threadId !== this.conversationState.threadId)) return this.conversationStateSnapshot;
         const snapshot = this.updateConversation({
-            mcpStatuses: { ...this.conversationState.mcpStatuses, [name]: { status, error, failureReason } },
+            mcpStatuses: { ...this.conversationState.mcpStatuses, [name]: { status, error, failureReason, ...(recovery ? { recovery } : {}) } },
         });
-        return this.conversationInventoryComplete && this.preparedConversationThreadId
+        return this.conversationState.status !== "running" && this.conversationInventoryComplete && this.preparedConversationThreadId
             ? this.completeConversationPreparation(this.preparedConversationThreadId)
             : snapshot;
     }
@@ -135,7 +135,7 @@ export class CanvasSession {
             if (current?.status === "failed" || current?.status === "cancelled") return;
             mcpStatuses[item.name] = item.authStatus === "notLoggedIn"
                 ? { status: "failed", error: "MCP 服务未登录", failureReason: "reauthenticationRequired" }
-                : { status: "ready" };
+                : { ...current, status: "ready" };
         });
         this.conversationInventoryComplete = true;
         return this.updateConversation({ mcpStatuses });

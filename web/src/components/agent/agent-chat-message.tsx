@@ -400,7 +400,7 @@ function AgentPlanCard({ title, plan, theme }: { title: string; plan: PlanDetail
     );
 }
 
-function McpStartupHelp({ item, theme }: { item: { name: string; detail: string; failureReason?: string | null; cancelled?: boolean }; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+function McpStartupHelp({ item, theme }: { item: { name: string; detail: string; failureReason?: string | null; cancelled?: boolean; recovery?: "retrying" | "recovered" | "failed" }; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const copyText = useCopyText();
     const help = mcpStartupHelp(item.name, item.detail, item.failureReason, item.cancelled);
@@ -410,6 +410,7 @@ function McpStartupHelp({ item, theme }: { item: { name: string; detail: string;
     return (
         <div className="mt-1 space-y-1.5">
             <p style={{ color: theme.node.text }}>{trHelp(`reason.${help.reason}`)}</p>
+            {item.recovery === "failed" && <p>{trHelp("autoFailed")}</p>}
             <p className="opacity-70">{impact}</p>
             <details className="group/help">
                 <summary className="w-fit cursor-pointer list-none py-1 font-medium" style={{ display: "flex", alignItems: "center", gap: 4, color: theme.node.text }}>
@@ -429,7 +430,7 @@ function McpStartupHelp({ item, theme }: { item: { name: string; detail: string;
     );
 }
 
-export function AgentWorkingMessage({ text, detail, status = "running", mcpStatuses = [], activityKey, theme }: { text: string; detail?: string; status?: "running" | "ready" | "error"; mcpStatuses?: Array<{ name: string; status: "running" | "ready" | "error"; detail: string; failureReason?: string | null; cancelled?: boolean }>; activityKey: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+export function AgentWorkingMessage({ text, detail, status = "running", mcpStatuses = [], activityKey, theme }: { text: string; detail?: string; status?: "running" | "ready" | "error"; mcpStatuses?: Array<{ name: string; status: "running" | "ready" | "error"; detail: string; failureReason?: string | null; cancelled?: boolean; recovery?: "retrying" | "recovered" | "failed" }>; activityKey: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const [elapsed, setElapsed] = useState(0);
     useEffect(() => {

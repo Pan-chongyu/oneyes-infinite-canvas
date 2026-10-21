@@ -101,10 +101,10 @@ function agentErrorState(error: unknown) {
 function conversationBootstrapView(conversation: AgentConversationState) {
     const mcpStartupStatuses: Record<string, AgentBootstrapStatus> = Object.fromEntries(Object.entries(conversation.mcpStatuses).map(([name, item]) => {
         const view: AgentBootstrapStatus = item.status === "starting"
-            ? { key: `mcp:${name}:starting`, text: rt("mcpStarting", { name }), detail: rt("mcpConnecting"), status: "running" }
+            ? { key: `mcp:${name}:starting`, text: rt("mcpStarting", { name }), detail: rt(item.recovery === "retrying" ? "mcpRecovering" : "mcpConnecting"), status: "running" }
             : item.status === "ready"
-                ? { key: `mcp:${name}:ready`, text: rt("mcpReadyNamed", { name }), detail: rt("toolsReady"), status: "ready" }
-                : { key: `mcp:${name}:${item.status}`, text: rt(item.status === "failed" ? "mcpFailedNamed" : "mcpCanceledNamed", { name }), detail: item.error || rt("toolInitFailed"), status: "error", failureReason: item.failureReason, cancelled: item.status === "cancelled" };
+                ? { key: `mcp:${name}:ready`, text: rt("mcpReadyNamed", { name }), detail: rt(item.recovery === "recovered" ? "mcpRecovered" : "toolsReady"), status: "ready" }
+                : { key: `mcp:${name}:${item.status}`, text: rt(item.status === "failed" ? "mcpFailedNamed" : "mcpCanceledNamed", { name }), detail: item.error || rt("toolInitFailed"), status: "error", failureReason: item.failureReason, cancelled: item.status === "cancelled", recovery: item.recovery };
         return [name, view];
     }));
     const services = Object.values(mcpStartupStatuses);

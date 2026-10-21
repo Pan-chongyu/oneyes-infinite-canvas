@@ -255,6 +255,24 @@ test("对话 revision 单调递增且 MCP 全部进入终态前保持 preparing"
     revisions.slice(1).forEach((revision, index) => assert.ok(revision > revisions[index]));
 });
 
+test("late MCP recovery clears stale warnings, stays scoped to its thread and never ends a running turn", () => {
+    const session = new CanvasSession();
+    session.beginConversation();
+    session.updateConversationMcp("windows-mcp", "failed", "connection closed");
+    session.completeConversationMcpInventory([{ name: "infinite-canvas", authStatus: "unsupported" }]);
+    assert.equal(session.completeConversationPreparation("thread-1").status, "warning");
+    const before = session.conversationStateSnapshot;
+    assert.deepEqual(session.updateConversationMcp("windows-mcp", "ready", null, null, "recovered", "old-thread"), before);
+    const ready = session.updateConversationMcp("windows-mcp", "ready", null, null, "recovered", "thread-1");
+    assert.equal(ready.status, "ready");
+    assert.equal(ready.mcpStatuses["windows-mcp"].error, null);
+    assert.equal(ready.mcpStatuses["windows-mcp"].recovery, "recovered");
+    session.markConversationRunning("thread-1");
+    assert.equal(session.updateConversationMcp("windows-mcp", "failed", "connection closed", null, "failed", "thread-1").status, "running");
+    assert.equal(session.finishConversationRun("thread-1").status, "warning");
+    assert.equal(session.updateConversationMcp("windows-mcp", "ready", null, null, undefined, "thread-1").status, "ready");
+});
+
 test("可选 MCP 失败进入 warning，画布 MCP 失败进入 failed", () => {
     const optionalFailure = new CanvasSession();
     optionalFailure.beginConversation();

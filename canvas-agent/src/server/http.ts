@@ -33,9 +33,12 @@ export function startHttpServer() {
             session.emitAll(type, value);
             return;
         }
-        if (type === "agent_bootstrap" && value.phase === "preheat") {
-            if (value.type === "mcp.startup") session.updateConversationMcp(String(value.name || ""), startupStatus(value.status), String(value.error || "") || null, String(value.failureReason || "") || null);
-            if (value.type === "mcp.complete") session.completeConversationMcpInventory(mcpInventory(value.services));
+        if (type === "agent_bootstrap") {
+            if (value.type === "mcp.startup" && (value.phase === "preheat" || value.threadId === session.conversationStateSnapshot.threadId)) {
+                const recovery = value.recovery === "retrying" || value.recovery === "recovered" || value.recovery === "failed" ? value.recovery : undefined;
+                session.updateConversationMcp(String(value.name || ""), startupStatus(value.status), String(value.error || "") || null, String(value.failureReason || "") || null, recovery, String(value.threadId || "") || undefined);
+            }
+            if (value.type === "mcp.complete" && value.phase === "preheat") session.completeConversationMcpInventory(mcpInventory(value.services));
         }
         const scope = session.codexBusy ? session.codexEventScope : { threadId: "", turnId: "", sourceClientId: "" };
         const threadId = String(value.threadId || value.thread_id || scope.threadId || ensureSiteWorkspace(config).activeThreadId || "");

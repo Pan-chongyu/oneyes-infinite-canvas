@@ -3,12 +3,12 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createAgentLogWriter } from "../utils/agent-runtime.js";
+import { createAgentLogWriter, redactAgentLog } from "../utils/agent-runtime.js";
 import { VERSION, loadConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { field, type JsonRecord } from "../utils/value.js";
 import { codexEventHistory, type CodexEventHistory } from "./codex-event-history.js";
-import type { CodexNotificationParams, CodexPlanUpdate, CodexReasoningEffort, CodexRequestMethod, CodexRequestParams, CodexRequestResult, CodexSkillSelector, CodexTurnInput } from "./codex-protocol.js";
+import type { CodexMcpStartupStatus, CodexNotificationParams, CodexPlanUpdate, CodexReasoningEffort, CodexRequestMethod, CodexRequestParams, CodexRequestResult, CodexSkillSelector, CodexTurnInput } from "./codex-protocol.js";
 import type { AgentEmit, AgentPermissionMode } from "./types.js";
 
 type AgentEvent = JsonRecord & { type: string; usage?: unknown };
@@ -59,6 +59,8 @@ export class CodexAppClient {
     private pendingThreadStartedNotifications: JsonRecord[] = [];
     private pendingPreheatThreadStarts = 0;
     private preheatingThreadIds = new Set<string>();
+    private mcpStartupStates = new Map<string, Map<string, CodexMcpStartupStatus>>();
+    private mcpRecoveries = new Set<string>();
     private failing = false;
     private failureMessage = "";
 
@@ -122,7 +124,7 @@ export class CodexAppClient {
             return thread;
         } finally {
             if (preheat) this.pendingPreheatThreadStarts -= 1;
-            if (threadId) this.preheatingThreadIds.delete(threadId);
+            if (threadId) { this.preheatingThreadIds.delete(threadId); this.mcpStartupStates.delete(threadId); this.mcpRecoveries.delete(threadId); }
         }
     }
 
@@ -147,14 +149,44 @@ export class CodexAppClient {
             return thread;
         } finally {
             if (preheat) this.pendingPreheatThreadStarts -= 1;
-            if (preheat) this.preheatingThreadIds.delete(threadId);
+            if (preheat) { this.preheatingThreadIds.delete(threadId); this.mcpStartupStates.delete(threadId); this.mcpRecoveries.delete(threadId); }
         }
     }
 
     /** 以 app-server 的权威 MCP 清单响应作为预热完成边界。 */
     private async completeMcpPreheat(threadId: string) {
-        const result = await this.request("mcpServerStatus/list", { threadId, limit: 100, detail: "toolsAndAuthOnly" });
+        const inventory = () => this.request("mcpServerStatus/list", { threadId, limit: 100, detail: "toolsAndAuthOnly" });
+        let result = await inventory();
+        const failure = this.mcpStartupStates.get(threadId)?.get("windows-mcp");
+        if (canRecoverWindowsMcp(failure) && !this.activeTurns.size && !this.pendingTurnStart && !this.mcpRecoveries.has(threadId)) {
+            this.mcpRecoveries.add(threadId);
+            this.emitMcpStartup({ ...failure!, threadId, status: "starting", error: null, failureReason: null });
+            try {
+                // Use Codex's own refresh: preserve config, thread and tool approval policy.
+                await this.request("config/mcpServer/reload", null);
+                result = await inventory();
+            } catch (error) {
+                this.emitMcpStartup({ ...failure!, threadId, status: "failed", error: redactAgentLog(`${failure!.error || ""}\n自动重连失败：${error instanceof Error ? error.message : String(error)}`) });
+            }
+        }
         this.emit("agent_bootstrap", { type: "mcp.complete", phase: "preheat", threadId, services: result.data.map(({ name, authStatus }) => ({ name, authStatus })) });
+    }
+
+    private emitMcpStartup(value: CodexMcpStartupStatus) {
+        const threadId = value.threadId || this.currentThreadId;
+        const preheat = this.preheatingThreadIds.has(threadId) || (this.pendingPreheatThreadStarts > 0 && !this.preheatingThreadIds.size);
+        if (preheat) {
+            const statuses = this.mcpStartupStates.get(threadId) || new Map();
+            statuses.set(value.name, value);
+            this.mcpStartupStates.set(threadId, statuses);
+        }
+        const recovery = value.name === "windows-mcp" && this.mcpRecoveries.has(threadId)
+            ? value.status === "starting" ? "retrying" : value.status === "ready" ? "recovered" : "failed" : undefined;
+        this.emit("agent_bootstrap", {
+            type: "mcp.startup", phase: preheat ? "preheat" : "runtime", threadId, name: value.name,
+            status: value.status, error: value.error, failureReason: value.failureReason,
+            ...(recovery ? { recovery } : {}),
+        });
     }
 
     /** 查询 Codex 线程列表。 */
@@ -382,17 +414,7 @@ export class CodexAppClient {
             return;
         }
         if (method === "mcpServer/startupStatus/updated") {
-            const value = params as unknown as CodexNotificationParams<"mcpServer/startupStatus/updated">;
-            const threadId = value.threadId || this.currentThreadId;
-            this.emit("agent_bootstrap", {
-                type: "mcp.startup",
-                phase: this.pendingPreheatThreadStarts > 0 || this.preheatingThreadIds.has(threadId) ? "preheat" : "runtime",
-                threadId,
-                name: value.name,
-                status: value.status,
-                error: value.error,
-                failureReason: value.failureReason,
-            });
+            this.emitMcpStartup(params as unknown as CodexMcpStartupStatus);
             return;
         }
         const turnEvent = method.startsWith("turn/") || method.startsWith("item/") || method === "thread/tokenUsage/updated" || method === "error";
@@ -751,6 +773,14 @@ export class CodexAppClient {
             this.finalizingTurns.clear();
         });
     }
+}
+
+/** Retry only transient Windows automation startup failures; never repeat a model turn. */
+export function canRecoverWindowsMcp(value?: CodexMcpStartupStatus, platform: NodeJS.Platform = process.platform) {
+    if (platform !== "win32" || value?.name !== "windows-mcp" || value.status !== "failed" || value.failureReason) return false;
+    const error = value.error || "";
+    if (/ENOENT|not found|not recognized|ModuleNotFoundError|no module named|401|403|unauthorized|forbidden|access denied|permission denied|不是内部或外部命令/i.test(error)) return false;
+    return /handshak|initialize response|connection (?:closed|reset|refused)|ECONNRESET|ECONNREFUSED|timed?\s*out|timeout/i.test(error);
 }
 
 /** 将 Codex 的字符串、摘要数组或文本对象转换为展示文本。 */

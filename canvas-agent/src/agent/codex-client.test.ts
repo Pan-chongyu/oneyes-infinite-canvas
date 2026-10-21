@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CodexAppClient } from "./codex-client.js";
+import { CodexAppClient, canRecoverWindowsMcp } from "./codex-client.js";
 import { assertDraftHasNoSensitiveValues, canvasSkillSource } from "./codex.js";
 
 type TestClient = {
@@ -18,6 +18,50 @@ type TestClient = {
 };
 
 const emptyEventHistory = { record: () => Promise.resolve(), recordTurn: () => Promise.resolve() };
+
+test("only transient Windows-MCP errors qualify for automatic reconnect", () => {
+    const failure = { name: "windows-mcp", status: "failed" as const, threadId: "t", error: "handshaking failed: connection closed: initialize response", failureReason: null };
+    assert.equal(canRecoverWindowsMcp(failure, "win32"), true);
+    for (const platform of ["darwin", "linux"] as const) assert.equal(canRecoverWindowsMcp(failure, platform), false);
+    for (const error of ["handshake: ENOENT", "handshake: ModuleNotFoundError", "handshake: 401 Unauthorized", "permission denied", "command not found"]) assert.equal(canRecoverWindowsMcp({ ...failure, error }, "win32"), false);
+    assert.equal(canRecoverWindowsMcp({ ...failure, name: "other" }, "win32"), false);
+    assert.equal(canRecoverWindowsMcp({ ...failure, status: "cancelled" }, "win32"), false);
+    assert.equal(canRecoverWindowsMcp({ ...failure, failureReason: "reauthenticationRequired" }, "win32"), false);
+});
+
+for (const outcome of ["ready", "failed", "rpc-error"] as const) test(`Windows-MCP preheat recovers once, preserving thread and never replaying a turn (${outcome})`, { skip: process.platform !== "win32" }, async () => {
+    const writes: Array<Record<string, unknown>> = [], events: Array<{ type: string; payload: unknown }> = [];
+    const child = { stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } };
+    const client = Reflect.construct(CodexAppClient, [child, (type: string, payload: unknown) => events.push({ type, payload }), emptyEventHistory]) as CodexAppClient;
+    const native = client as unknown as TestClient;
+    const tick = () => new Promise(resolve => setImmediate(resolve));
+    const starting = client.startThread("D:\\canvas", "request", true);
+    const failure = { threadId: "thread-repair", name: "windows-mcp", status: "failed", error: "connection closed: initialize response", failureReason: null };
+    native.handleNotification("mcpServer/startupStatus/updated", failure);
+    native.handle({ id: writes[0].id, result: { thread: { id: "thread-repair" } } });
+    await tick();
+    const inventory = () => ({ data: [{ name: "infinite-canvas", authStatus: "unsupported" }], nextCursor: null });
+    native.handle({ id: writes.at(-1)!.id, result: inventory() });
+    await tick();
+    const reload = writes.at(-1)!;
+    assert.equal(reload.method, "config/mcpServer/reload");
+    assert.equal(reload.params, null);
+    if (outcome === "rpc-error") native.handle({ id: reload.id, error: { message: "refresh unavailable" } });
+    else {
+        native.handleNotification("mcpServer/startupStatus/updated", { ...failure, status: outcome, error: outcome === "ready" ? null : failure.error });
+        native.handle({ id: reload.id, result: {} });
+        await tick();
+        assert.equal(writes.at(-1)!.method, "mcpServerStatus/list");
+        native.handle({ id: writes.at(-1)!.id, result: inventory() });
+    }
+    assert.equal((await starting).id, "thread-repair");
+    assert.equal(writes.filter(item => item.method === "config/mcpServer/reload").length, 1);
+    assert.equal(writes.filter(item => item.method === "thread/start").length, 1);
+    assert.equal(writes.some(item => item.method === "turn/start" || item.method === "config/value/write"), false);
+    const repair = events.filter(item => item.type === "agent_bootstrap" && (item.payload as Record<string, unknown>).recovery).map(item => item.payload as Record<string, unknown>);
+    assert.equal(repair[0].recovery, "retrying");
+    assert.equal(repair.at(-1)!.recovery, outcome === "ready" ? "recovered" : "failed");
+});
 
 test("审批只在 app-server 确认 resolved 后清除", () => {
     const writes: Array<Record<string, unknown>> = [];
