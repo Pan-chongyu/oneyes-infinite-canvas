@@ -3,6 +3,10 @@ import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import type { CanvasPlugin } from "@/types/canvas-plugin";
 import i18n from "@/i18n";
+import builtinPlugins from "virtual:canvas-builtin-plugins";
+
+export { builtinPlugins };
+export const isBuiltinPlugin = (id: string) => builtinPlugins.some(plugin => plugin.id === id);
 
 const cleanups = new Map<string, () => void>();
 
@@ -61,6 +65,7 @@ function withCacheBust(url: string) {
 export async function installPluginFromUrl(url: string, opts?: { official?: boolean; bustCache?: boolean }) {
     const source = await fetchPluginSource(opts?.bustCache ? withCacheBust(url) : url);
     const plugin = await evaluatePluginSource(source);
+    if (isBuiltinPlugin(plugin.id)) throw new Error(i18n.t("canvas.plugins.builtinProtected"));
     deactivatePlugin(plugin.id); // Replace the previous version.
     usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: opts?.official });
     activatePlugin(plugin);
@@ -73,6 +78,7 @@ export async function updatePlugin(record: InstalledPlugin) {
 }
 
 export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
+    if (isBuiltinPlugin(record.id)) return;
     usePluginStore.getState().setEnabled(record.id, enabled);
     if (!enabled) {
         deactivatePlugin(record.id);
@@ -85,17 +91,25 @@ export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean
 }
 
 export function uninstallPlugin(id: string) {
+    if (isBuiltinPlugin(id)) return;
     deactivatePlugin(id);
     usePluginStore.getState().remove(id);
 }
 
-let loaded = false;
+let loading: Promise<void> | undefined;
 
 // Load installed and enabled plugins at application startup.
-export async function ensurePluginsLoaded() {
-    if (loaded) return;
-    loaded = true;
+export function ensurePluginsLoaded() {
+    if (loading) return loading;
+    builtinPlugins.forEach(activatePlugin);
+    loading = loadInstalledPlugins();
+    return loading;
+}
+
+async function loadInstalledPlugins() {
     await usePluginStore.persist.rehydrate();
+    // Drop old downloaded copies; node types and per-node metadata remain unchanged.
+    usePluginStore.getState().plugins.filter(record => isBuiltinPlugin(record.id)).forEach(record => usePluginStore.getState().remove(record.id));
     await loadLocalPlugins(); // Discover disabled local plugins first, then activate all enabled records.
     const records = usePluginStore.getState().plugins.filter((record) => record.enabled);
     await Promise.all(
@@ -130,6 +144,7 @@ async function loadLocalPlugins() {
             try {
                 const source = await fetchPluginSource(withCacheBust(url));
                 const plugin = await evaluatePluginSource(source);
+                if (isBuiltinPlugin(plugin.id)) return;
                 const existing = store.plugins.find((item) => item.id === plugin.id);
                 store.upsert({
                     id: plugin.id,
@@ -159,6 +174,7 @@ async function loadDevPlugins() {
             try {
                 const source = await fetchPluginSource(withCacheBust(url));
                 const plugin = await evaluatePluginSource(source);
+                if (isBuiltinPlugin(plugin.id)) return;
                 deactivatePlugin(plugin.id);
                 activatePlugin(plugin);
                 console.info(`[plugin] Dev plugin loaded: ${plugin.id} (${url})`);

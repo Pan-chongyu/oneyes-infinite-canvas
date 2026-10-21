@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
+import { builtinPlugins } from "./build/builtin-plugins.mjs";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const localVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim() || "dev";
@@ -38,7 +39,7 @@ function localPluginsManifest(): Plugin {
 export default defineConfig({
     build: { target: "esnext" },
     base: process.env.VITE_BASE || "/",
-    plugins: [react(), localPluginsManifest()],
+    plugins: [react(), builtinPlugins(), localPluginsManifest()],
     resolve: {
         alias: {
             "@": resolve(webDir, "src"),

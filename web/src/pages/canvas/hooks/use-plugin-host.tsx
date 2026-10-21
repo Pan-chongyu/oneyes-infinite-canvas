@@ -22,8 +22,8 @@ type PluginHostParams = {
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (open: boolean) => void;
     theme: CanvasTheme;
-    nodesRef: MutableRefObject<CanvasNodeData[]>;
-    connectionsRef: MutableRefObject<CanvasConnection[]>;
+    nodes: CanvasNodeData[];
+    connections: CanvasConnection[];
     viewportRef: MutableRefObject<ViewportTransform>;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setDialogNodeId: Dispatch<SetStateAction<string | null>>;
@@ -36,7 +36,7 @@ type PluginHostParams = {
  */
 export function usePluginHost(params: PluginHostParams) {
     const { t } = useTranslation();
-    const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodesRef, connectionsRef, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
+    const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodes, connections, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
 
     // Host capabilities available to plugin nodes; methods receive nodeId and are not bound to a specific node.
     const pluginAi = useMemo<CanvasPluginAi>(() => {
@@ -91,18 +91,18 @@ export function usePluginHost(params: PluginHostParams) {
 
     const pluginHost = useMemo<CanvasPluginHost>(
         () => ({
-            getNode: (id) => nodesRef.current.find((node) => node.id === id) || null,
-            getNodes: () => nodesRef.current,
-            getConnections: () => connectionsRef.current,
+            getNode: (id) => nodes.find((node) => node.id === id) || null,
+            getNodes: () => nodes,
+            getConnections: () => connections,
             getUpstream: (nodeId) =>
-                connectionsRef.current
+                connections
                     .filter((conn) => conn.toNodeId === nodeId)
-                    .map((conn) => nodesRef.current.find((node) => node.id === conn.fromNodeId))
+                    .map((conn) => nodes.find((node) => node.id === conn.fromNodeId))
                     .filter((node): node is CanvasNodeData => Boolean(node)),
             getDownstream: (nodeId) =>
-                connectionsRef.current
+                connections
                     .filter((conn) => conn.fromNodeId === nodeId)
-                    .map((conn) => nodesRef.current.find((node) => node.id === conn.toNodeId))
+                    .map((conn) => nodes.find((node) => node.id === conn.toNodeId))
                     .filter((node): node is CanvasNodeData => Boolean(node)),
             updateNode: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, ...patch } : node))),
             updateMetadata: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))),
@@ -111,7 +111,7 @@ export function usePluginHost(params: PluginHostParams) {
             openPanel: (nodeId) => setDialogNodeId(nodeId),
             closePanel: () => setDialogNodeId(null),
         }),
-        [applyAgentOps, pluginAi],
+        [applyAgentOps, pluginAi, nodes, connections],
     );
 
     const renderPluginPanel = useCallback(

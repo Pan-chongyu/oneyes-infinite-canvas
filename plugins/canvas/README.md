@@ -1,3 +1,5 @@
+> OneYes 桌面分支：Markdown、SVG、HTML、3D 全景和便利贴已随客户端内置，默认启用，渲染依赖离线可用。无需按下文单独安装官方插件；以下 SDK 与独立插件发布流程供第三方开发使用。内置构建入口为 `web/build/builtin-plugins.mjs`，版本与客户端一起发布。
+
 # Infinite Canvas 画布节点插件
 
 给画布扩展自定义节点。每个插件是一个**独立目录**,用 **TypeScript** 编写,自带 `package.json` / `build.mjs` / `src/index.tsx` / `dist/`,互不耦合,可单独构建、发布、升级。
