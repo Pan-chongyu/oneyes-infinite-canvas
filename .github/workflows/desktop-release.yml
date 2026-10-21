@@ -66,6 +66,9 @@ jobs:
       - run: npm test
       - run: npm --prefix web run typecheck
       - run: npm run build
+      - name: Verify automatic Windows-MCP dependency setup
+        if: matrix.target == 'win'
+        run: node scripts/smoke-windows-mcp.mjs
       - name: Package desktop installers
         run: npm run dist -- --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:

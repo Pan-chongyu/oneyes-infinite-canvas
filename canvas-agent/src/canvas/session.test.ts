@@ -255,6 +255,18 @@ test("对话 revision 单调递增且 MCP 全部进入终态前保持 preparing"
     revisions.slice(1).forEach((revision, index) => assert.ok(revision > revisions[index]));
 });
 
+test("dependency preparation never leaves a disabled service stuck starting or marks native tools ready", () => {
+    const session = new CanvasSession();
+    session.beginConversation({ threadId: "thread-1" });
+    session.updateConversationMcp("windows-mcp", "starting", null, null, "installing", "thread-1");
+    session.completeMcpDependencyPreparation("windows-mcp", "old-thread");
+    assert.equal(session.conversationStateSnapshot.mcpStatuses["windows-mcp"].recovery, "installing");
+    session.completeMcpDependencyPreparation("windows-mcp", "thread-1");
+    assert.equal(session.conversationStateSnapshot.mcpStatuses["windows-mcp"], undefined);
+    session.completeConversationMcpInventory([{ name: "infinite-canvas", authStatus: "unsupported" }]);
+    assert.equal(session.completeConversationPreparation("thread-1").status, "ready");
+});
+
 test("late MCP recovery clears stale warnings, stays scoped to its thread and never ends a running turn", () => {
     const session = new CanvasSession();
     session.beginConversation();

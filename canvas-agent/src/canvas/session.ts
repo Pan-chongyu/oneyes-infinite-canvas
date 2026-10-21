@@ -18,7 +18,7 @@ export type ConversationState = {
     conversationId: string;
     threadId: string;
     status: "idle" | "preparing" | "ready" | "warning" | "running" | "failed";
-    mcpStatuses: Record<string, { status: McpStartupState; error?: string | null; failureReason?: string | null; recovery?: "retrying" | "recovered" | "failed" }>;
+    mcpStatuses: Record<string, { status: McpStartupState; error?: string | null; failureReason?: string | null; recovery?: "installing" | "retrying" | "recovered" | "failed" }>;
     sourceClientId?: string;
     error?: string;
 };
@@ -116,7 +116,7 @@ export class CanvasSession {
     }
 
     /** 记录预热阶段单个 MCP 服务的启动状态。 */
-    updateConversationMcp(name: string, status: McpStartupState, error?: string | null, failureReason?: string | null, recovery?: "retrying" | "recovered" | "failed", threadId?: string) {
+    updateConversationMcp(name: string, status: McpStartupState, error?: string | null, failureReason?: string | null, recovery?: "installing" | "retrying" | "recovered" | "failed", threadId?: string) {
         if (!name || this.conversationState.status === "idle" || (threadId && this.conversationState.threadId && threadId !== this.conversationState.threadId)) return this.conversationStateSnapshot;
         const snapshot = this.updateConversation({
             mcpStatuses: { ...this.conversationState.mcpStatuses, [name]: { status, error, failureReason, ...(recovery ? { recovery } : {}) } },
@@ -124,6 +124,14 @@ export class CanvasSession {
         return this.conversationState.status !== "running" && this.conversationInventoryComplete && this.preparedConversationThreadId
             ? this.completeConversationPreparation(this.preparedConversationThreadId)
             : snapshot;
+    }
+
+    /** Dependency preparation is provisional; only the native MCP startup may mark a service ready. */
+    completeMcpDependencyPreparation(name: string, threadId?: string) {
+        if (this.conversationState.mcpStatuses[name]?.recovery !== "installing" || (threadId && this.conversationState.threadId && threadId !== this.conversationState.threadId)) return this.conversationStateSnapshot;
+        const mcpStatuses = { ...this.conversationState.mcpStatuses };
+        delete mcpStatuses[name];
+        return this.updateConversation({ mcpStatuses });
     }
 
     /** 用 app-server 的完整 MCP 清单补齐未发送逐项通知的服务。 */

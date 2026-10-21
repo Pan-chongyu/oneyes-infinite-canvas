@@ -10,6 +10,7 @@ import { field, type JsonRecord } from "../utils/value.js";
 import { codexEventHistory, type CodexEventHistory } from "./codex-event-history.js";
 import type { CodexMcpStartupStatus, CodexNotificationParams, CodexPlanUpdate, CodexReasoningEffort, CodexRequestMethod, CodexRequestParams, CodexRequestResult, CodexSkillSelector, CodexTurnInput } from "./codex-protocol.js";
 import type { AgentEmit, AgentPermissionMode } from "./types.js";
+import { prepareWindowsMcp, type WindowsMcpSettings } from "./windows-mcp.js";
 
 type AgentEvent = JsonRecord & { type: string; usage?: unknown };
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; silent?: boolean };
@@ -114,12 +115,13 @@ export class CodexAppClient {
         if (preheat) this.pendingPreheatThreadStarts += 1;
         let threadId = "";
         try {
-            const { thread } = await this.request("thread/start", { ...threadSettings(permissionMode), ...(cwd ? { cwd } : {}), threadSource: "user" });
+            const dependencies = preheat && process.platform === "win32" && process.env.ONEYES_DESKTOP_AGENT === "1" ? await this.prepareMcpDependencies() : undefined;
+            const { thread } = await this.request("thread/start", { ...threadSettings(permissionMode, dependencies?.settings), ...(cwd ? { cwd } : {}), threadSource: "user" });
             if (!thread.id) throw new Error("Codex app-server 没有返回 thread id");
             threadId = thread.id;
             if (preheat) {
                 this.preheatingThreadIds.add(threadId);
-                await this.completeMcpPreheat(threadId);
+                await this.completeMcpPreheat(threadId, dependencies?.error);
             }
             return thread;
         } finally {
@@ -143,9 +145,10 @@ export class CodexAppClient {
         if (preheat) this.pendingPreheatThreadStarts += 1;
         try {
             if (preheat) this.preheatingThreadIds.add(threadId);
-            const { thread } = await this.request("thread/resume", { threadId, ...threadSettings(permissionMode), ...(cwd ? { cwd } : {}) });
+            const dependencies = preheat && process.platform === "win32" && process.env.ONEYES_DESKTOP_AGENT === "1" ? await this.prepareMcpDependencies(threadId) : undefined;
+            const { thread } = await this.request("thread/resume", { threadId, ...threadSettings(permissionMode, dependencies?.settings), ...(cwd ? { cwd } : {}) });
             if (!thread.id) throw new Error("Codex app-server 没有返回 thread id");
-            if (preheat) await this.completeMcpPreheat(thread.id);
+            if (preheat) await this.completeMcpPreheat(thread.id, dependencies?.error);
             return thread;
         } finally {
             if (preheat) this.pendingPreheatThreadStarts -= 1;
@@ -153,8 +156,17 @@ export class CodexAppClient {
         }
     }
 
+    /** Prepare missing Windows dependencies before starting the native MCP connection. */
+    private async prepareMcpDependencies(threadId = "") {
+        try {
+            const settings = await prepareWindowsMcp({ installing: () => this.emit("agent_bootstrap", { type: "mcp.startup", phase: "preheat", threadId, name: "windows-mcp", status: "starting", recovery: "installing" }) });
+            return { settings };
+        } catch (error) { return { error: redactAgentLog(`自动补齐依赖失败：${error instanceof Error ? error.message : String(error)}`) }; }
+        finally { this.emit("agent_bootstrap", { type: "mcp.dependencies.complete", phase: "preheat", threadId, name: "windows-mcp" }); }
+    }
+
     /** 以 app-server 的权威 MCP 清单响应作为预热完成边界。 */
-    private async completeMcpPreheat(threadId: string) {
+    private async completeMcpPreheat(threadId: string, dependencyError?: string) {
         const inventory = () => this.request("mcpServerStatus/list", { threadId, limit: 100, detail: "toolsAndAuthOnly" });
         let result = await inventory();
         const failure = this.mcpStartupStates.get(threadId)?.get("windows-mcp");
@@ -169,6 +181,8 @@ export class CodexAppClient {
                 this.emitMcpStartup({ ...failure!, threadId, status: "failed", error: redactAgentLog(`${failure!.error || ""}\n自动重连失败：${error instanceof Error ? error.message : String(error)}`) });
             }
         }
+        const current = this.mcpStartupStates.get(threadId)?.get("windows-mcp");
+        if (dependencyError && current?.status === "failed") this.emitMcpStartup({ ...current, error: `${current.error || ""}\n${dependencyError}` });
         this.emit("agent_bootstrap", { type: "mcp.complete", phase: "preheat", threadId, services: result.data.map(({ name, authStatus }) => ({ name, authStatus })) });
     }
 
@@ -816,14 +830,14 @@ function canvasAgentMcpCommand() {
 }
 
 /** 生成 Codex app-server 使用的 MCP 配置。 */
-function codexConfig(permissionMode: AgentPermissionMode) {
+function codexConfig(permissionMode: AgentPermissionMode, windowsMcp?: WindowsMcpSettings) {
     const config = process.env.ONEYES_DESKTOP_AGENT === "1" ? loadConfig() : null;
     const transport = config ? { url: `${config.url}/mcp`, http_headers: { "x-canvas-agent-token": config.token } } : canvasAgentMcp;
-    return { model_reasoning_summary: "auto", ...(permissionMode === "automatic" ? { approvals_reviewer: "auto_review" } : {}), mcp_servers: { "infinite-canvas": { ...transport, default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } } };
+    return { model_reasoning_summary: "auto", ...(permissionMode === "automatic" ? { approvals_reviewer: "auto_review" } : {}), mcp_servers: { ...(windowsMcp ? { "windows-mcp": windowsMcp } : {}), "infinite-canvas": { ...transport, default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } } };
 }
 
-function threadSettings(permissionMode: AgentPermissionMode) {
-    return { approvalPolicy: permissionMode === "full" ? "never" as const : "on-request" as const, sandbox: permissionMode === "full" ? "danger-full-access" as const : "workspace-write" as const, config: codexConfig(permissionMode) };
+function threadSettings(permissionMode: AgentPermissionMode, windowsMcp?: WindowsMcpSettings) {
+    return { approvalPolicy: permissionMode === "full" ? "never" as const : "on-request" as const, sandbox: permissionMode === "full" ? "danger-full-access" as const : "workspace-write" as const, config: codexConfig(permissionMode, windowsMcp) };
 }
 
 function skillDraftThreadSettings(cwd: string) {

@@ -683,12 +683,12 @@ export default {
                 other: "仅 {{name}} 暂不可用，其他已就绪工具仍可使用。",
             },
             check: {
-                windows: "Windows-MCP 仅支持 Windows 10/11。在 PowerShell 运行 uvx --version；找不到命令时先按官方文档安装 uv。再运行 uvx windows-mcp serve，按终端提示补齐 Python 或依赖。服务正常等待运行时可按 Ctrl+C 退出。",
+                windows: "Windows-MCP 仅支持 Windows 10/11。桌面版会自动检查并补齐 uv、Python 和官方工具依赖；首次准备需要联网，请保持 Canvas 打开。如果自动准备失败，请检查网络、磁盘空间及安全软件拦截，再重新连接。",
                 canvas: "保持 OneYes Canvas 打开，在「连接」页点击重新连接；网页版请先启动本地 Canvas Agent，再核对地址和连接 Token。",
                 other: "在终端手动运行该工具的启动命令，查看是否缺少运行环境、依赖或网络连接；远程工具请先确认服务地址可访问。",
             },
             config: {
-                windows: '核对 Codex 中该服务的命令和参数。当前官方 uvx 安装方式为 command = "uvx"、args = ["windows-mcp", "serve"]；使用完整路径时确认文件存在。原有其他 MCP 配置请保留。',
+                windows: '自动补齐适用于官方 uvx 或 windows-mcp 的 stdio 启动方式，在应用专用目录安装并保留原有 Codex 配置。自定义启动脚本、远程服务或已停用服务不会自动修改，可展开原始错误并按官方文档处理。',
                 canvas: "桌面版可在「连接」页重新执行一键接入，检查端口占用或配置错误提示。已有 MCP 和模型设置应保留。",
                 other: "按该工具的安装说明核对 Codex 中的命令、参数、文件路径或服务地址，保留原有其他 MCP 配置。",
             },
@@ -697,6 +697,7 @@ export default {
             disable: "暂时不用这个工具，可在 Codex 的 MCP 设置中停用对应服务，保留 infinite-canvas 及其他正常工具。",
         },
         runtime: {
+            mcpInstalling: "正在自动补齐 Windows 工具运行环境，首次准备需要联网…",
             mcpRecovering: "连接暂时中断，正在自动重新连接…", mcpRecovered: "已自动重新连接，工具可以使用",
             mcpStarting: "正在启动 MCP：{{name}}", mcpConnecting: "正在建立工具连接并读取可用工具列表", mcpReadyNamed: "MCP 已就绪：{{name}}", toolsReady: "工具列表加载完成，可以开始对话", mcpFailedNamed: "MCP 启动失败：{{name}}", mcpCanceledNamed: "MCP 启动已取消：{{name}}", toolInitFailed: "工具服务未能完成初始化", mcpServicesStarting: "正在启动 MCP 服务", toolServicesPending: "还有 {{count}} 个工具服务正在初始化", checkingToolServices: "正在确认工具服务状态", conversationInitializing: "正在初始化 Codex 对话", conversationCreating: "正在创建会话并启动画布工具服务", someMcpFailed: "部分 MCP 服务初始化失败", remainingToolsReady: "其余工具已就绪，可以开始对话", conversationInitFailed: "Codex 对话初始化失败", conversationCreateFailed: "无法创建 Codex 会话", mcpServicesReady: "{{count}} 个 MCP 服务已完成初始化", toolInitCanceled: "工具服务初始化已取消", mcpStatusComplete: "MCP 状态确认完成", mcpListRead: "已读取 Codex 返回的完整工具服务清单",
             historyReadFailed: "读取历史失败", conversationSyncFailed: "同步会话失败", agentOutdated: "本地 Agent 版本过旧，请重启 Canvas Agent 后重新连接", restartRequired: "需要重启 Agent", versionMismatch: "Agent 版本不匹配", awaitingApproval: "等待权限确认", codexRunning: "Codex 正在运行", connected: "已连接", localAgentConnected: "本地 Agent 已连接", processingFailed: "处理失败", completed: "完成", approvalGranted: "已批准权限", approvalCanceled: "已取消权限", log: "日志", connectionLostDescription: "本地 Agent 连接失败或已断开", connectionFailedDescription: "连接失败，请检查地址和 token", connectionLost: "连接断开", connectionFailed: "连接失败", modelListFailed: "读取模型列表失败",

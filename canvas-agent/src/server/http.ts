@@ -34,8 +34,9 @@ export function startHttpServer() {
             return;
         }
         if (type === "agent_bootstrap") {
+            if (value.type === "mcp.dependencies.complete" && value.phase === "preheat") session.completeMcpDependencyPreparation(String(value.name || ""), String(value.threadId || "") || undefined);
             if (value.type === "mcp.startup" && (value.phase === "preheat" || value.threadId === session.conversationStateSnapshot.threadId)) {
-                const recovery = value.recovery === "retrying" || value.recovery === "recovered" || value.recovery === "failed" ? value.recovery : undefined;
+                const recovery = value.recovery === "installing" || value.recovery === "retrying" || value.recovery === "recovered" || value.recovery === "failed" ? value.recovery : undefined;
                 session.updateConversationMcp(String(value.name || ""), startupStatus(value.status), String(value.error || "") || null, String(value.failureReason || "") || null, recovery, String(value.threadId || "") || undefined);
             }
             if (value.type === "mcp.complete" && value.phase === "preheat") session.completeConversationMcpInventory(mcpInventory(value.services));
