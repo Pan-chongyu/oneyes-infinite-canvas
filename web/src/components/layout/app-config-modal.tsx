@@ -1,6 +1,6 @@
-import { App, Button, Form, Input, Modal, Progress, Radio, Select, Switch, Tabs } from "antd";
+import { App, Button, Dropdown, Form, Input, Modal, Progress, Radio, Select, Switch, Tabs } from "antd";
 import type { TFunction } from "i18next";
-import { Cloud, Download, RefreshCw, Upload, Wifi } from "lucide-react";
+import { Cloud, Download, MoreHorizontal, RefreshCw, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -158,19 +158,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
 
     return (
         <>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-3 dark:border-stone-800">
-                <div className="text-xs text-stone-500">{t("config.fileSecurity")}</div>
-                <div className="flex gap-2">
-                    <Button disabled={accountBusy} icon={<Upload className="size-4" />} onClick={() => configInputRef.current?.click()}>
-                        {t("config.import")}
-                    </Button>
-                    <Button icon={<Download className="size-4" />} onClick={exportAppConfig}>
-                        {t("config.export")}
-                    </Button>
-                    <input ref={configInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => event.target.files?.[0] && void loadConfigFile(event.target.files[0])} />
-                </div>
-            </div>
+            <input ref={configInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => event.target.files?.[0] && void loadConfigFile(event.target.files[0])} />
             <Tabs
+                tabBarExtraContent={<Dropdown trigger={["click"]} menu={{ items: [
+                    { key: "guide", label: t("config.onboarding.guide"), disabled: accountBusy, onClick: () => useConfigStore.getState().openSetup() },
+                    { type: "divider" },
+                    { key: "security", label: <span className="block max-w-64 whitespace-normal text-xs">{t("config.fileSecurity")}</span>, disabled: true },
+                    { key: "import", icon: <Upload className="size-3.5" />, label: t("config.import"), disabled: accountBusy, onClick: () => configInputRef.current?.click() },
+                    { key: "export", icon: <Download className="size-3.5" />, label: t("config.export"), onClick: exportAppConfig },
+                ] }}><Button type="text" icon={<MoreHorizontal className="size-4" />} aria-label={t("config.onboarding.more")} /></Dropdown>}
                 activeKey={activeTab}
                 onChange={(key) => setActiveTab(key as ConfigTabKey)}
                 items={[

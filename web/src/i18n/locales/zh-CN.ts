@@ -362,6 +362,23 @@ export default {
         emptyCanvases: "暂无画布项目",
     },
     config: {
+        onboarding: {
+            title: "欢迎使用 OneYes Canvas", guide: "配置向导", begin: "开始配置", more: "更多设置",
+            steps: { login: "登录", configure: "配置模型", done: "开始创作" },
+            loginTitle: "先连接你的 OneYes 账户",
+            loginHint: "登录后，画布会帮你准备 Key 和模型。已在 OneYes 客户端登录？可直接复用。",
+            configureTitle: "让模型准备就绪",
+            configureHint: "按官网分组自动匹配，不用逐个复制 Key 或挑选模型。",
+            manualHint: "已有 Key？填入需要使用的平台即可，无需全部填写。",
+            configure: "一键配置并继续", preparing: "正在检查…", autoMatch: "自动匹配",
+            keyHint: "复用或创建 Canvas_无限画布，已有可用 Key 优先复用；仅读取模型，不产生生成费用。",
+            manualChecked: "已保存填写的 Key 并检查模型连接，不会创建新的 Key。",
+            doneTitle: "可以开始创作了", doneHint: "生图、文本和视频均已接通。以后打开画布，无需重复配置。",
+            partialHint: "已接通的功能可以先用，其余平台可重试，或稍后在设置中补齐。",
+            failedTitle: "还差一步", failedHint: "暂未接通可用模型。按下方提示处理后重试，也可以手动填写 Key。",
+            retry: "重新检查并配置", start: "开始使用", useAccount: "使用账户自动配置",
+            later: "稍后配置", laterHint: "随时可在设置中重新打开", needKey: "请至少填写一个平台的 Key。",
+        },
         account: {
             services: "模型服务", imageText: "生图与文本", group: "官网分组", recommendedGroup: "所需分组", manualKey: "手动 Key", notConfigured: "添加 Key 后读取可用模型", configure: "配置", manage: "管理模型", editService: "管理 {{name}} 的模型",
             status: { ok: "连接正常", unchecked: "待检查", unconfigured: "未配置", account: "需连接账户", accountUnavailable: "账户待检查", deleted: "Key 已删除", inactive: "Key 不可用", groupChanged: "分组已变更", modelsChanged: "模型有变化", unavailable: "连接失败", setupFailed: "配置未完成" },

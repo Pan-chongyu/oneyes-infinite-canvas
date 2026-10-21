@@ -362,6 +362,23 @@ export default {
         emptyCanvases: "No canvas projects yet",
     },
     config: {
+        onboarding: {
+            title: "Welcome to OneYes Canvas", guide: "Setup guide", begin: "Get started", more: "More settings",
+            steps: { login: "Sign in", configure: "Connect models", done: "Create" },
+            loginTitle: "Connect your OneYes account",
+            loginHint: "Sign in to prepare your keys and models. Already signed in to OneYes Desktop? Use that session.",
+            configureTitle: "Get your models ready",
+            configureHint: "Match your website groups automatically, without copying keys or selecting models one by one.",
+            manualHint: "Have your own keys? Fill in only the platforms you need.",
+            configure: "Configure and continue", preparing: "Checking…", autoMatch: "Automatic",
+            keyHint: "Reuse eligible Canvas_无限画布 keys first, creating missing ones. Only model lists are read; no generation charges.",
+            manualChecked: "Your keys are saved and model connections checked. No new keys are created.",
+            doneTitle: "Ready to create", doneHint: "Images, text, and video are connected. Your setup is saved for next time.",
+            partialHint: "You can use connected services now. Retry the others or finish later in Settings.",
+            failedTitle: "One more step", failedHint: "No models are connected yet. Follow the guidance below and retry, or enter keys manually.",
+            retry: "Retry setup", start: "Start using Canvas", useAccount: "Use automatic account setup",
+            later: "Set up later", laterHint: "Reopen this guide in Settings", needKey: "Enter a key for at least one platform.",
+        },
         account: {
             services: "Model services", imageText: "Images & text", group: "Website group", recommendedGroup: "Required group", manualKey: "Manual key", notConfigured: "Add a key to load models", configure: "Configure", manage: "Manage models", editService: "Manage {{name}} models",
             status: { ok: "Connected", unchecked: "Not checked", unconfigured: "Not configured", account: "Sign-in needed", accountUnavailable: "Account unchecked", deleted: "Key deleted", inactive: "Key inactive", groupChanged: "Group changed", modelsChanged: "Models changed", unavailable: "Connection failed", setupFailed: "Setup incomplete" },

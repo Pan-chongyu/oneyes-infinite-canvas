@@ -1,10 +1,10 @@
-import { Alert, Button, Form, Input, Modal, theme } from "antd";
-import { ArrowRight, CheckCircle2, ChevronRight, CircleAlert, CircleDashed, Image, KeyRound, LockKeyhole, LogIn, MessageSquare, Pencil, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
+import { Alert, Button, Dropdown, Modal, theme } from "antd";
+import { CheckCircle2, ChevronRight, CircleAlert, CircleDashed, Image, LockKeyhole, MessageSquare, MoreHorizontal, Pencil, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { useConfigStore } from "@/stores/use-config-store";
-import { configureManual, type Platform } from "@/services/api/oneyes-account";
+import { OneYesManualForm } from "./oneyes-connection-forms";
 
 const services = [
     { platform: "openai", name: "OpenAI", purpose: "imageText", group: "SVIP / VIP", icon: Image },
@@ -17,22 +17,19 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
     const { token } = theme.useToken();
     const state = useOneYesAccountStore();
     const channels = useConfigStore(state => state.config.channels);
-    const [loginOpen, setLoginOpen] = useState(false);
-    const [form] = Form.useForm();
+    const setupOpen = useConfigStore(state => state.isSetupOpen);
     const [repairOpen, setRepairOpen] = useState(false);
     const [manualOpen, setManualOpen] = useState(false);
     const [manualBusy, setManualBusy] = useState(false);
-    const [manualError, setManualError] = useState("");
-    const [manualForm] = Form.useForm();
     const diagnosed = useRef(false);
     useEffect(() => { if (window.oneYesDesktop?.account) void state.restore(); }, [state.restore]);
-    useEffect(() => { if (state.user) { setLoginOpen(false); form.resetFields(); } }, [state.user, form]);
-    useEffect(() => { if (state.ready && !state.busy && !diagnosed.current) { diagnosed.current = true; void state.diagnose(); } }, [state.ready, state.busy, state.diagnose]);
-    const showManual = () => {
-        const channels = useConfigStore.getState().config.channels;
-        manualForm.setFieldsValue({ openai: channels[0].apiKey, deepseek: channels.find(channel => channel.id === "oneyes-deepseek")?.apiKey || "", minimax: channels.find(channel => channel.id === "oneyes-minimax")?.apiKey || "" });
-        setManualError(""); setManualOpen(true);
-    };
+    useEffect(() => {
+        if (state.ready && !state.busy && !setupOpen && channels.some(channel => channel.apiKey.trim()) && !diagnosed.current) {
+            diagnosed.current = true;
+            if (!state.report.length) void state.diagnose();
+        }
+    }, [state.ready, state.busy, state.report.length, state.diagnose, setupOpen, channels]);
+    const showManual = () => setManualOpen(true);
     return <section aria-label={t("config.tabs.channels")} className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/40 px-4 py-3.5">
             <div className="flex min-w-0 items-center gap-3">
@@ -41,10 +38,7 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
                     <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{state.user ? t(`config.account.${state.source === "desktop" ? "shared" : "signedIn"}`) : t("config.account.description")}</div>
                 </div>
             </div>
-            {state.user ? <Button type="text" size="small" disabled={state.busy} onClick={() => void state.logout()}>{t("config.account.logout")}</Button> : <div className="flex flex-wrap gap-2">
-                <Button disabled={state.busy} onClick={() => void state.connect("reuse")}>{t("config.account.reuse")}</Button>
-                <Button type="primary" icon={<LogIn className="size-3.5" />} disabled={state.busy} onClick={() => setLoginOpen(true)}>{t("config.account.login")}</Button>
-            </div>}
+            {state.user ? <Button type="text" size="small" disabled={state.busy || manualBusy} onClick={() => void state.logout()}>{t("config.account.logout")}</Button> : <Button type="primary" disabled={state.busy || manualBusy} onClick={() => useConfigStore.getState().openSetup()}>{t("config.onboarding.begin")}</Button>}
         </div>
         {state.error && <Alert className="mt-4" type="warning" showIcon title={state.error} />}
         <div className="mb-3 mt-6 flex flex-wrap items-center justify-between gap-3">
@@ -53,9 +47,9 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
                 <p className="mb-0 mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><LockKeyhole className="size-3" aria-hidden="true" />api.oneyes.ai</p>
             </div>
             <div className="flex flex-wrap gap-2">
-                <Button type="text" icon={<KeyRound className="size-3.5" />} disabled={state.busy || manualBusy} onClick={showManual}>{t("config.account.manual")}</Button>
-                <Button icon={<Stethoscope className="size-3.5" />} loading={state.busy} onClick={() => void state.diagnose()}>{t("config.account.diagnose")}</Button>
-                <Button type="primary" disabled={!state.user || state.busy} icon={<WandSparkles className="size-3.5" />} onClick={() => setRepairOpen(true)}>{t("config.account.setup")}</Button>
+                <Button icon={<Stethoscope className="size-3.5" />} disabled={manualBusy} loading={state.busy} onClick={() => void state.diagnose()}>{t("config.account.diagnose")}</Button>
+                {state.user && <Button type="primary" disabled={state.busy || manualBusy} icon={<WandSparkles className="size-3.5" />} onClick={() => useConfigStore.getState().openSetup()}>{t("config.onboarding.guide")}</Button>}
+                <Dropdown trigger={["click"]} disabled={state.busy || manualBusy} menu={{ items: [{ key: "manual", label: t("config.account.manual"), onClick: showManual }] }}><Button disabled={state.busy || manualBusy} icon={<MoreHorizontal className="size-4" />} aria-label={t("config.onboarding.more")} /></Dropdown>
             </div>
         </div>
         <div className="divide-y divide-border overflow-hidden rounded-xl border border-border" aria-busy={state.busy}>
@@ -100,34 +94,8 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
         <Modal open={repairOpen} title={t("config.account.setup")} okText={t("config.account.confirmSetup")} onCancel={() => setRepairOpen(false)} onOk={() => { setRepairOpen(false); void state.configure(); }}>
             <p className="text-sm leading-relaxed">{t("config.account.confirmHint")}</p>
         </Modal>
-        <Modal open={loginOpen} title={t("config.account.login")} footer={null} onCancel={() => { setLoginOpen(false); form.resetFields(); }} destroyOnHidden>
-            <Form form={form} layout="vertical" onFinish={async values => { await state.connect(state.requires_2fa ? "login_2fa" : "login", values); form.setFieldValue("password", ""); }}>
-                {state.requires_2fa ? <Form.Item name="code" label={t("config.account.code")} rules={[{ required: true }]}><Input autoComplete="one-time-code" inputMode="numeric" autoFocus /></Form.Item> : <>
-                    <Form.Item name="email" label={t("config.account.email")} rules={[{ required: true, type: "email" }]}><Input autoComplete="username" autoFocus /></Form.Item>
-                    <Form.Item name="password" label={t("config.account.password")} rules={[{ required: true }]}><Input.Password autoComplete="current-password" /></Form.Item>
-                </>}
-                {state.error && <Alert className="mb-4" type="error" showIcon title={state.error} />}
-                <Button type="primary" htmlType="submit" block loading={state.busy} icon={<ArrowRight className="size-4" />}>{t(state.requires_2fa ? "config.account.verify" : "config.account.login")}</Button>
-                {state.requires_2fa && <Button block type="text" disabled={state.busy} onClick={() => { useOneYesAccountStore.setState({ requires_2fa: false, error: "" }); form.resetFields(); }}>{t("config.account.backToLogin")}</Button>}
-                <div className="mt-3 flex justify-between text-xs"><a href="https://api.oneyes.ai/register" target="_blank" rel="noreferrer">{t("config.account.register")}</a><a href="https://api.oneyes.ai/forgot-password" target="_blank" rel="noreferrer">{t("config.account.forgot")}</a></div>
-            </Form>
-        </Modal>
-        <Modal open={manualOpen} title={t("config.account.manual")} footer={null} onCancel={() => { if (!manualBusy) { setManualOpen(false); manualForm.resetFields(); } }} destroyOnHidden>
-            <p className="text-xs leading-relaxed text-muted-foreground">{t("config.account.manualHint")}</p>
-            <Form form={manualForm} layout="vertical" onFinish={async (values: Record<Platform, string>) => {
-                setManualBusy(true); setManualError("");
-                try {
-                    useConfigStore.getState().replaceConfig(await configureManual(useConfigStore.getState().config, values));
-                    setManualOpen(false); manualForm.resetFields(); void state.diagnose();
-                } catch (error) { setManualError(error instanceof Error ? error.message : String(error)); }
-                finally { setManualBusy(false); }
-            }}>
-                <Form.Item name="openai" label="OpenAI · SVIP / VIP"><Input.Password autoComplete="off" placeholder="sk-..." /></Form.Item>
-                <Form.Item name="deepseek" label="DeepSeek · DeepSeek"><Input.Password autoComplete="off" placeholder="sk-..." /></Form.Item>
-                <Form.Item name="minimax" label="MiniMax · Video"><Input.Password autoComplete="off" placeholder="sk-..." /></Form.Item>
-                {manualError && <Alert className="mb-4" type="error" title={manualError} />}
-                <Button htmlType="submit" type="primary" block loading={manualBusy}>{t("config.account.saveManual")}</Button>
-            </Form>
+        <Modal open={manualOpen} title={t("config.account.manual")} footer={null} closable={!manualBusy} keyboard={!manualBusy} mask={{ closable: !manualBusy }} onCancel={() => { if (!manualBusy) setManualOpen(false); }} destroyOnHidden>
+            <OneYesManualForm onBusyChange={setManualBusy} onSaved={() => setManualOpen(false)} />
         </Modal>
     </section>;
 }

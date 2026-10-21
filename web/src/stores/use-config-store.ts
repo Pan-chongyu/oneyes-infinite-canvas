@@ -138,6 +138,10 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
 
 type ConfigStore = {
     config: AiConfig;
+    setupStatus: "pending" | "skipped" | "completed";
+    isSetupOpen: boolean;
+    openSetup: () => void;
+    closeSetup: (status?: "skipped" | "completed") => void;
     webdav: WebdavSyncConfig;
     isConfigOpen: boolean;
     configTab: ConfigTabKey;
@@ -214,10 +218,21 @@ function isAiConfigReady(config: AiConfig, model: string) {
     return Boolean(match && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
 }
 
+export function hasConfiguredModels(config: AiConfig) {
+    return config.channels.some(channel => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length > 0);
+}
+
 export const useConfigStore = create<ConfigStore>()(
     persist(
         (set, get) => ({
             config: defaultConfig,
+            setupStatus: "pending",
+            isSetupOpen: false,
+            openSetup: () => set({ isSetupOpen: true }),
+            closeSetup: (setupStatus = "skipped") => {
+                if (setupStatus === "completed" && !hasConfiguredModels(get().config)) return;
+                set({ isSetupOpen: false, setupStatus });
+            },
             webdav: defaultWebdavSyncConfig,
             isConfigOpen: false,
             configTab: "channels",
@@ -250,7 +265,7 @@ export const useConfigStore = create<ConfigStore>()(
             name: CONFIG_STORE_KEY,
             skipHydration: true,
             storage: createJSONStorage(() => window.oneYesDesktop?.storage || localStorage),
-            partialize: (state) => ({ config: state.config, webdav: state.webdav }),
+            partialize: (state) => ({ config: state.config, webdav: state.webdav, setupStatus: state.setupStatus }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
@@ -258,6 +273,7 @@ export const useConfigStore = create<ConfigStore>()(
                 const config = normalizeOneYesConfig(persistedConfig);
                 return {
                     ...current,
+                    setupStatus: persistedState.setupStatus === "completed" || persistedState.setupStatus === "skipped" ? persistedState.setupStatus : "pending",
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
                     config: {
                         ...config,
