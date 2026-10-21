@@ -28,7 +28,7 @@ export type AgentPendingApproval = { requestId: string; method: string; threadId
 export type AgentCanvasContext = { snapshot: CanvasAgentSnapshot; applyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot; undoOps: () => CanvasAgentSnapshot | null; canUndo: boolean };
 export type AgentThreadSummary = { id: string; preview: string; name?: string | null; cwd?: string; status?: string; source?: unknown; createdAt?: number; updatedAt?: number };
 export type AgentTokenUsage = { input: number; cached: number; output: number };
-export type AgentBootstrapStatus = { key: string; text: string; detail: string; status: "running" | "ready" | "error" };
+export type AgentBootstrapStatus = { key: string; text: string; detail: string; status: "running" | "ready" | "error"; failureReason?: string | null; cancelled?: boolean };
 export type AgentConversationState = {
     revision: number;
     conversationId: string;

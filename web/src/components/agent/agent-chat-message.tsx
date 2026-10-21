@@ -11,6 +11,7 @@ import { useAgentStore, type AgentCanvasReference, type AgentPendingApproval, ty
 import { resolveAgentMessageAssetUrl, revealAgentLocalFile } from "@/services/api/canvas-agent";
 import { AgentCanvasReferencePreview, canvasReferenceIcon, canvasReferenceKindLabel } from "./agent-canvas-reference-preview";
 import { agentInlineTokenClass, agentInlineTokenIconClass, agentInlineTokenMediaClass, agentReferenceMarker, parseAgentInlineTokens } from "./agent-chat-inline-tokens";
+import { mcpStartupHelp } from "./mcp-startup-help";
 
 const streamdownProps = () => ({
     className: "agent-streamdown",
@@ -399,7 +400,36 @@ function AgentPlanCard({ title, plan, theme }: { title: string; plan: PlanDetail
     );
 }
 
-export function AgentWorkingMessage({ text, detail, status = "running", mcpStatuses = [], activityKey, theme }: { text: string; detail?: string; status?: "running" | "ready" | "error"; mcpStatuses?: Array<{ name: string; status: "running" | "ready" | "error"; detail: string }>; activityKey: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+function McpStartupHelp({ item, theme }: { item: { name: string; detail: string; failureReason?: string | null; cancelled?: boolean }; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    const { t } = useTranslation();
+    const copyText = useCopyText();
+    const help = mcpStartupHelp(item.name, item.detail, item.failureReason, item.cancelled);
+    const trHelp = (key: string) => t(`agent.mcpHelp.${key}`);
+    const steps = [trHelp(help.reason === "auth" ? "reconnectAuth" : `check.${help.service}`), trHelp(`config.${help.service}`), trHelp("restart")];
+    const impact = t(`agent.mcpHelp.impact.${help.service}`, { name: item.name });
+    return (
+        <div className="mt-1 space-y-1.5">
+            <p style={{ color: theme.node.text }}>{trHelp(`reason.${help.reason}`)}</p>
+            <p className="opacity-70">{impact}</p>
+            <details className="group/help">
+                <summary className="w-fit cursor-pointer list-none py-1 font-medium" style={{ display: "flex", alignItems: "center", gap: 4, color: theme.node.text }}>
+                    <ChevronRight className="size-3 transition-transform group-open/help:rotate-90 motion-reduce:transition-none" />{trHelp("solve")}
+                </summary>
+                <ol className="ml-4 list-decimal space-y-2 py-1 pl-2">
+                    {steps.map(step => <li key={step}>{step}</li>)}
+                </ol>
+                {help.service !== "canvas" && <p className="mt-2 opacity-70">{trHelp("disable")}</p>}
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2" style={{ color: theme.node.text }}>
+                    <button type="button" className="inline-flex items-center gap-1 py-1 hover:underline" onClick={() => copyText([`${item.name}: ${trHelp(`reason.${help.reason}`)}`, impact, ...steps.map((step, i) => `${i + 1}. ${step}`), ...(help.service !== "canvas" ? [trHelp("disable")] : []), ...(help.service === "windows" ? ["https://github.com/CursorTouch/Windows-MCP#installation"] : [])].join("\n"))}><Copy className="size-3" />{trHelp("copy")}</button>
+                    {help.service === "windows" && <a className="inline-flex items-center gap-1 py-1 hover:underline" style={{ color: "inherit" }} href="https://github.com/CursorTouch/Windows-MCP#installation" target="_blank" rel="noopener noreferrer"><ExternalLink className="size-3" />{trHelp("official")}</a>}
+                </div>
+            </details>
+            {item.detail && <details><summary className="w-fit cursor-pointer py-1 opacity-60">{trHelp("technical")}</summary><p className="mt-1 whitespace-pre-wrap break-words opacity-60 [overflow-wrap:anywhere]">{item.detail}</p></details>}
+        </div>
+    );
+}
+
+export function AgentWorkingMessage({ text, detail, status = "running", mcpStatuses = [], activityKey, theme }: { text: string; detail?: string; status?: "running" | "ready" | "error"; mcpStatuses?: Array<{ name: string; status: "running" | "ready" | "error"; detail: string; failureReason?: string | null; cancelled?: boolean }>; activityKey: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const { t } = useTranslation();
     const [elapsed, setElapsed] = useState(0);
     useEffect(() => {
@@ -423,7 +453,7 @@ export function AgentWorkingMessage({ text, detail, status = "running", mcpStatu
                             {item.status === "running" ? <LoaderCircle className="mt-0.5 size-3.5 shrink-0 animate-spin" /> : item.status === "ready" ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> : <XCircle className="mt-0.5 size-3.5 shrink-0 text-red-600" />}
                             <div className="min-w-0">
                                 <div className="font-medium" style={{ color: theme.node.text }}>{item.name}</div>
-                                <div className="opacity-65">{item.detail}</div>
+                                {item.status === "error" ? <McpStartupHelp item={item} theme={theme} /> : <div className="opacity-65">{item.detail}</div>}
                             </div>
                         </div>
                     ))}

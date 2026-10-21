@@ -665,6 +665,36 @@ export default {
         events: { analyzing: "正在分析任务…", reasoning: "思考摘要", plan: "执行计划", commandFailed: "命令执行失败", commandCompleted: "命令已完成", executeCommand: "执行命令", editFiles: "修改文件", searchWeb: "搜索资料", viewImage: "查看图片", imageViewed: "已查看图片", viewingImage: "正在查看图片", imageGeneration: "内置生图", imageFailed: "图片生成失败", imageCompleted: "图片生成完成", generatingImage: "正在生成图片…", compactContext: "整理上下文", contextCompacted: "已整理当前对话，继续处理任务", compactingContext: "正在整理当前对话…", collaboration: "协作处理", collaborationFailed: "协作任务失败", collaborationCompleted: "已完成协作任务", collaborating: "正在协作处理任务…", progress: "任务进度", progressCount: "已完成 {{completed}}/{{total}} 项", planning: "正在整理执行步骤…", executingCommand: "正在执行命令…", workingDirectory: "工作目录", exitStatus: "退出状态", duration: "耗时", seconds: "{{value}} 秒", filesCompleted: "已完成文件修改", preparingFiles: "正在准备文件修改…", fileCompleted: "已{{action}} {{path}}", editingFile: "正在{{action}} {{path}}", filesEdited: "已修改 {{count}} 个文件：{{names}}{{more}}", editingFiles: "正在修改 {{count}} 个文件：{{names}}{{more}}", andMore: " 等", openPage: "打开网页：{{url}}", findInPage: "在网页中查找“{{pattern}}”", content: "内容", search: "搜索：{{query}}", relatedInfo: "相关资料", keyword: "关键词", webpage: "网页", add: "新增", delete: "删除", edit: "修改", diagnostics: "Infinite Canvas Agent 诊断", address: "地址：{{endpoint}}", connection: "连接：{{connection}} · 状态：{{status}}", online: "在线", connecting: "连接中", disabled: "未启用", messageTool: "消息：{{messages}} · 工具：{{tool}}", none: "无", noLogs: "暂无事件日志", threadCreated: "创建会话", turnStarted: "开始处理", progressUpdated: "更新任务进度", turnFailed: "处理失败", turnStopped: "处理已停止", turnCompleted: "处理完成", toolCalled: "调用工具", toolFailed: "工具失败", toolCompleted: "工具完成", replyReceived: "收到回复", completed: "完成", modelBusy: "模型暂时繁忙", modelBusyDescription: "当前选择的模型请求量过大，暂时无法处理。请稍后重试，或切换其他模型后再试。", taskFailed: "任务失败", taskFailedDescription: "Codex 未能完成本次任务，请稍后重试。" },
         eventExtra: { toolNamed: "调用工具：{{name}}", toolOperation: "工具操作", targetPage: "目标页面", searchContent: "搜索内容", textContent: "文本内容", operationContent: "操作内容", imageCount: "图片数量", tools: { generateImage: "生成图片", viewImage: "查看图片", executeCommand: "执行命令", editFiles: "修改文件", searchWeb: "搜索资料", canvasOps: "画布操作", readCanvas: "读取画布", readSelection: "读取选区", exportSnapshot: "导出快照", createNode: "创建节点", addAttachments: "添加附件图片", createText: "创建文本", createTexts: "批量创建文本", createConfig: "创建生成配置", createImageFlow: "创建生图流程", createGenerationFlow: "创建生成流程", generateText: "生成文本", generateVideo: "生成视频", generateAudio: "生成音频", updateNode: "更新节点", updateText: "更新文本", moveNodes: "移动节点", resizeNode: "调整节点尺寸", deleteNodes: "删除节点", connectNodes: "连接节点", selectNodes: "选择节点", setViewport: "调整视口", runGeneration: "触发生成", openPage: "打开页面" } },
         eventMore: { toolRunning: "{{action}}中…", openedRoute: "已打开{{route}}", canvasCount: "共 {{count}} 个画布", promptCount: "找到 {{count}} 条提示词", assetCount: "共 {{count}} 个资产", assetAdded: "已加入我的素材", generationStatus: "共 {{total}} 个任务，排队 {{queued}}，运行中 {{running}}，成功 {{succeeded}}，失败 {{failed}}", workbenchExecuted: "已在工作台执行", workbenchConfigRead: "已读取工作台配置", canvasRead: "已读取当前画布内容", selectionRead: "已读取当前选中内容", textNodes: "{{count}} 个文本", imageNodes: "{{count}} 张图片", configNodes: "{{count}} 个配置", videoNodes: "{{count}} 个视频", audioNodes: "{{count}} 个音频", groupNodes: "{{count}} 个分组", otherNodes: "{{count}} 个其他节点", connections: "{{count}} 条连线", emptyCanvas: "当前画布为空", executeTool: "执行{{tool}}", thinking: "正在思考...", operationRunning: "{{operation}}正在进行...", organizingCanvas: "画布已读取，Codex 正在整理结果...", operationCompleted: "{{operation}}已完成，Codex 正在继续处理...", attachmentPrompt: "请处理上传的图片附件。", routes: { home: "首页", canvas: "画布页面", canvasProject: "指定画布", image: "生图工作台", video: "视频工作台", prompts: "提示词中心", assets: "我的素材", config: "配置页面" } },
+        mcpHelp: {
+            solve: "解决方法", technical: "查看原始错误", copy: "复制处理步骤", official: "官方安装文档",
+            reason: {
+                handshake: "工具服务在完成连接前就断开了，暂时无法确定具体原因。",
+                dependency: "工具的启动程序或运行依赖未找到。",
+                timeout: "工具服务启动超时，可能仍在下载依赖或等待网络响应。",
+                auth: "工具服务需要重新登录，或当前账号没有访问权限。",
+                connection: "未能连接到工具服务，请检查服务是否正在运行。",
+                cancelled: "工具启动已取消，尚未建立连接。",
+                unknown: "工具服务未能启动，请检查启动输出确认原因。",
+            },
+            impact: {
+                windows: "Windows 自动化工具暂不可用；画布和其他已就绪工具仍可继续使用。",
+                canvas: "画布工具暂不可用；普通对话和其他已就绪工具仍可使用。",
+                other: "仅 {{name}} 暂不可用，其他已就绪工具仍可使用。",
+            },
+            check: {
+                windows: "Windows-MCP 仅支持 Windows 10/11。在 PowerShell 运行 uvx --version；找不到命令时先按官方文档安装 uv。再运行 uvx windows-mcp serve，按终端提示补齐 Python 或依赖。服务正常等待运行时可按 Ctrl+C 退出。",
+                canvas: "保持 OneYes Canvas 打开，在「连接」页点击重新连接；网页版请先启动本地 Canvas Agent，再核对地址和连接 Token。",
+                other: "在终端手动运行该工具的启动命令，查看是否缺少运行环境、依赖或网络连接；远程工具请先确认服务地址可访问。",
+            },
+            config: {
+                windows: '核对 Codex 中该服务的命令和参数。当前官方 uvx 安装方式为 command = "uvx"、args = ["windows-mcp", "serve"]；使用完整路径时确认文件存在。原有其他 MCP 配置请保留。',
+                canvas: "桌面版可在「连接」页重新执行一键接入，检查端口占用或配置错误提示。已有 MCP 和模型设置应保留。",
+                other: "按该工具的安装说明核对 Codex 中的命令、参数、文件路径或服务地址，保留原有其他 MCP 配置。",
+            },
+            reconnectAuth: "到该工具的账号或连接设置中重新登录、授权，并确认账号具有所需权限。不要把密码或密钥发到聊天中。",
+            restart: "保存后完整退出并重开 OneYes Canvas，再新建对话确认工具状态；如果也在外部 Codex 中使用，请重启对应 Codex。",
+            disable: "暂时不用这个工具，可在 Codex 的 MCP 设置中停用对应服务，保留 infinite-canvas 及其他正常工具。",
+        },
         runtime: {
             mcpStarting: "正在启动 MCP：{{name}}", mcpConnecting: "正在建立工具连接并读取可用工具列表", mcpReadyNamed: "MCP 已就绪：{{name}}", toolsReady: "工具列表加载完成，可以开始对话", mcpFailedNamed: "MCP 启动失败：{{name}}", mcpCanceledNamed: "MCP 启动已取消：{{name}}", toolInitFailed: "工具服务未能完成初始化", mcpServicesStarting: "正在启动 MCP 服务", toolServicesPending: "还有 {{count}} 个工具服务正在初始化", checkingToolServices: "正在确认工具服务状态", conversationInitializing: "正在初始化 Codex 对话", conversationCreating: "正在创建会话并启动画布工具服务", someMcpFailed: "部分 MCP 服务初始化失败", remainingToolsReady: "其余工具已就绪，可以开始对话", conversationInitFailed: "Codex 对话初始化失败", conversationCreateFailed: "无法创建 Codex 会话", mcpServicesReady: "{{count}} 个 MCP 服务已完成初始化", toolInitCanceled: "工具服务初始化已取消", mcpStatusComplete: "MCP 状态确认完成", mcpListRead: "已读取 Codex 返回的完整工具服务清单",
             historyReadFailed: "读取历史失败", conversationSyncFailed: "同步会话失败", agentOutdated: "本地 Agent 版本过旧，请重启 Canvas Agent 后重新连接", restartRequired: "需要重启 Agent", versionMismatch: "Agent 版本不匹配", awaitingApproval: "等待权限确认", codexRunning: "Codex 正在运行", connected: "已连接", localAgentConnected: "本地 Agent 已连接", processingFailed: "处理失败", completed: "完成", approvalGranted: "已批准权限", approvalCanceled: "已取消权限", log: "日志", connectionLostDescription: "本地 Agent 连接失败或已断开", connectionFailedDescription: "连接失败，请检查地址和 token", connectionLost: "连接断开", connectionFailed: "连接失败", modelListFailed: "读取模型列表失败",
