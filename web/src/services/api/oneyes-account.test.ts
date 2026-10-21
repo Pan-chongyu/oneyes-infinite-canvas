@@ -6,7 +6,7 @@ globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { configureOneYes, configureManual, diagnoseOneYes, selectGroup } = await import("./oneyes-account");
 const { defaultConfig, normalizeOneYesConfig, resolveModelRequestConfig, upsertChannelCredentials } = await import("@/stores/use-config-store");
 const user = { id: 7, email: "test@example.test" };
-const groups = [{ id: 1, name: "VIP", platform: "openai" }, { id: 2, name: "SVIP", platform: "openai" }, { id: 3, name: "DeepSeek", platform: "deepseek" }, { id: 4, name: "Video", platform: "minimax" }, { id: 5, name: "SVIP", platform: "anthropic" }];
+const groups = [{ id: 1, name: "VIP", platform: "openai" }, { id: 2, name: "SVIP", platform: "openai" }, { id: 3, name: "DeepSeek", platform: "deepseek" }, { id: 4, name: "Video", platform: "grok" }, { id: 5, name: "SVIP", platform: "anthropic" }, { id: 6, name: "Video", platform: "minimax" }];
 type TestKey = { id: number; group_id: number; name: string; key: string; status: string };
 function fixture(initial: TestKey[] = []) {
     const keys = [...initial], writes: number[] = [];
@@ -23,9 +23,11 @@ function fixture(initial: TestKey[] = []) {
     };
     return { call, keys, writes };
 }
-const models = async (channel: { apiKey: string }) => channel.apiKey === "test-2" ? ["gpt-image-2", "gpt-5.5", "gpt-4o-mini-tts"] : channel.apiKey === "test-3" ? ["deepseek-chat", "deepseek-reasoner"] : ["MiniMax-Hailuo-2.3", "unrelated-text"];
+const models = async (channel: { apiKey: string }) => channel.apiKey === "test-2" ? ["gpt-image-2", "gpt-5.5", "gpt-4o-mini-tts"] : channel.apiKey === "test-3" ? ["deepseek-chat", "deepseek-reasoner"] : ["grok-imagine-video", "unrelated-text"];
 test("platform group matching is exact, prefers SVIP, and never borrows another platform", () => {
     assert.equal(selectGroup(groups, "openai").id, 2);
+    assert.equal(selectGroup(groups, "grok").id, 4);
+    assert.throws(() => selectGroup(groups.filter(g => g.id !== 4), "grok"));
     assert.equal(selectGroup(groups.filter(g => g.id !== 2), "openai").id, 1);
     assert.throws(() => selectGroup(groups.filter(g => g.platform !== "openai"), "openai"));
     assert.throws(() => selectGroup([...groups, { ...groups[1], id: 6 }], "openai"));
@@ -34,6 +36,8 @@ test("setup reuses same-name keys per group across retries and routes models to 
     const f = fixture();
     const first = await configureOneYes(defaultConfig, user, f.call, models);
     assert.equal(first.configured, 3); assert.equal(first.issues.length, 0); assert.deepEqual(f.writes, [2, 3, 4]);
+    assert.equal(first.config.channels[2].oneYes?.platform, "grok");
+    assert.equal(first.config.channels[2].name, "OneYes Grok");
     const again = await configureOneYes(first.config, user, f.call, models);
     assert.equal(again.configured, 3); assert.equal(f.writes.length, 3);
     const config = normalizeOneYesConfig(again.config);
@@ -70,15 +74,35 @@ test("failed key-list reads never create keys; manual configuration requires no 
         throw new Error("network unavailable");
     }, models));
     assert.equal(creates, 0);
-    const manual = await configureManual(defaultConfig, { openai: "test-2", deepseek: "test-3", minimax: "test-4" }, models);
+    const manual = await configureManual(defaultConfig, { openai: "test-2", deepseek: "test-3", grok: "test-4" }, models);
     assert.equal(manual.channels.length, 3); assert.ok(manual.channels.every(channel => !channel.oneYes));
     assert.equal(resolveModelRequestConfig(manual, manual.videoModel).apiKey, "test-4");
+});
+test("video models from the OpenAI-compatible group stay available as video models", async () => {
+    const names = ["SD2.0", "SD2.5", "gemini-omni-flash", "gemini-omni-flash-1.1", "grok-imagine-video", "grok-imagine-video-1.5", "kling-3.0-turbo", "minimax-h3", "seedance-2.0-fast官方版", "seedance-2.0-mini官方版", "seedance-2.0官方版", "seedance-2.5官方版", "veo-3.1", "veo-3.1-fast", "wan3.0-video", "wan3.0-video-prime"];
+    const config = await configureManual(defaultConfig, { openai: "video-key", deepseek: "", grok: "" }, async () => names);
+    const models = config.channels[0].models;
+    assert.deepEqual(models.map(model => model.name), names);
+    assert.ok(models.every(model => model.capability === "video"));
+    assert.equal(config.videoModel, "default::grok-imagine-video");
 });
 test("an existing eligible OpenAI VIP key is reused before creating an SVIP key", async () => {
     const f = fixture([{ id: 9, group_id: 1, name: "Canvas_无限画布", key: "test-2", status: "active" }]);
     const result = await configureOneYes(defaultConfig, user, f.call, models);
     assert.equal(result.config.channels[0].oneYes?.groupId, 1);
     assert.deepEqual(f.writes, [3, 4]);
+});
+test("legacy MiniMax-managed video keys are diagnosed and never treated as Grok setup", async () => {
+    const config = normalizeOneYesConfig({ ...defaultConfig, channels: [
+        defaultConfig.channels[0],
+        { id: "oneyes-minimax", name: "OneYes MiniMax", baseUrl: "https://api.oneyes.ai", apiKey: "old-video-key", apiFormat: "openai", models: [{ name: "grok-imagine-video", capability: "video" }], oneYes: { platform: "minimax", groupId: 4, groupName: "Video", keyId: 9, accountId: user.id } },
+    ] });
+    assert.equal(config.channels[1].name, "OneYes Grok");
+    const report = await diagnoseOneYes(config, user, async <T>(operation: string) => {
+        if (operation === "keys") return { items: [{ id: 9, group_id: 4, name: "Canvas_无限画布", key: "old-video-key", status: "active" }], total: 1 } as T;
+        throw new Error("unexpected operation");
+    }, async () => ["grok-imagine-video"]);
+    assert.equal(report.find(item => item.id === "oneyes-minimax")?.code, "legacyPlatform");
 });
 test("desktop Axios transport forwards the custom scheme through Fetch", async () => {
     const { initializeDesktopTransport } = await import("./desktop-transport");

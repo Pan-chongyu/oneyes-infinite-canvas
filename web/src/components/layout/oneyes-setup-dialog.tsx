@@ -4,7 +4,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { useConfigStore } from "@/stores/use-config-store";
+import { GROK_VIDEO_CHANNEL_ID, useConfigStore } from "@/stores/use-config-store";
 import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { getVerifiedSetupIds, shouldOpenSetup } from "@/stores/oneyes-setup";
 import { OneYesLoginForm, OneYesManualForm } from "./oneyes-connection-forms";
@@ -39,7 +39,7 @@ function SetupContent() {
     const services = [
         { id: config.channels[0].id, name: "OpenAI", purpose: "imageText", group: "SVIP / VIP", icon: Image },
         { id: "oneyes-deepseek", name: "DeepSeek", purpose: "text", group: "DeepSeek", icon: MessageSquare },
-        { id: "oneyes-minimax", name: "MiniMax", purpose: "video", group: "Video", icon: Video },
+        { id: GROK_VIDEO_CHANNEL_ID, name: "Grok", purpose: "video", group: "Video", icon: Video },
     ];
     const close = () => { if (!busy) useConfigStore.getState().closeSetup(); };
     const configure = async () => {

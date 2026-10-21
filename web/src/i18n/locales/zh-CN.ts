@@ -381,7 +381,7 @@ export default {
         },
         account: {
             services: "模型服务", imageText: "生图与文本", group: "官网分组", recommendedGroup: "所需分组", manualKey: "手动 Key", notConfigured: "添加 Key 后读取可用模型", configure: "配置", manage: "管理模型", editService: "管理 {{name}} 的模型",
-            status: { ok: "连接正常", unchecked: "待检查", unconfigured: "未配置", account: "需连接账户", accountUnavailable: "账户待检查", deleted: "Key 已删除", inactive: "Key 不可用", groupChanged: "分组已变更", modelsChanged: "模型有变化", unavailable: "连接失败", setupFailed: "配置未完成" },
+            status: { ok: "连接正常", unchecked: "待检查", unconfigured: "未配置", account: "需连接账户", accountUnavailable: "账户待检查", deleted: "Key 已删除", inactive: "Key 不可用", groupChanged: "分组已变更", legacyPlatform: "需重新接入 Grok", modelsChanged: "模型有变化", unavailable: "连接失败", setupFailed: "配置未完成" },
             diagnosticHint: "请打开「配置 → 连接诊断」检查 Key 是否被删除，并修复连接。",
             backToLogin: "返回账号登录",
             title: "连接 OneYes", description: "登录账户，一键准备画布所需的 Key 与模型", shared: "已复用 OneYes 客户端登录态", signedIn: "已登录 OneYes", logout: "退出连接", reuse: "复用客户端登录", login: "登录 OneYes",
@@ -389,7 +389,7 @@ export default {
             image: "生图", text: "文本", video: "视频", keyHint: "一键配置将复用或创建 Canvas_无限画布。连接诊断不产生生成费用。",
             confirmSetup: "配置并检查", confirmHint: "将按平台分组复用 Canvas_无限画布；缺少时创建同名 Key。OpenAI 优先复用合规 Key，新建时优先 SVIP，其次 VIP。已停用或额度耗尽的 Key 请先在官网处理。此操作会更新对应分组的 Key 和可用模型，不会自动重试生成任务。",
             manualHint: "接口固定为 api.oneyes.ai。分别填写对应官网分组的 Key；仅读取模型列表，保存后可继续编辑模型。留空表示暂不配置。",
-            diagnosis: { ok: "连接正常", unconfigured: "尚未配置 Key", account: "请连接配置此 Key 的账户后检查", accountUnavailable: "暂时无法检查账户，请恢复登录后重试", deleted: "Key 已在官网删除，点击修复可重新创建并接入", inactive: "Key 已停用、过期或额度耗尽，请在官网处理", groupChanged: "Key 分组已变更，请重新配置", modelsChanged: "部分模型不再可用，请编辑模型设置", unavailable: "连接失败，请检查 Key 权限、余额和网络", setupFailed: "该分组未配置成功" },
+            diagnosis: { ok: "连接正常", unconfigured: "尚未配置 Key", account: "请连接配置此 Key 的账户后检查", accountUnavailable: "暂时无法检查账户，请恢复登录后重试", deleted: "Key 已在官网删除，点击修复可重新创建并接入", inactive: "Key 已停用、过期或额度耗尽，请在官网处理", groupChanged: "Key 分组已变更，请重新配置", legacyPlatform: "当前仍使用旧 MiniMax 视频分组，请点击一键配置接入 Grok 视频分组", modelsChanged: "部分模型不再可用，请编辑模型设置", unavailable: "连接失败，请检查 Key 权限、余额和网络", setupFailed: "该分组未配置成功" },
         },
         title: "配置与用户偏好",
         invalidFile: "配置文件格式不正确",

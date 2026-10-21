@@ -22,7 +22,7 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
-    oneYes?: { platform: "openai" | "deepseek" | "minimax"; groupId: number; groupName: string; keyId: number; accountId: number };
+    oneYes?: { platform: "openai" | "deepseek" | "grok" | "minimax"; groupId: number; groupName: string; keyId: number; accountId: number };
 };
 
 export type AiConfig = {
@@ -76,6 +76,8 @@ export type ChannelCredentialsImportResult = {
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
 export const OPENAI_BASE_URL = "https://api.oneyes.ai";
+// Keep the saved channel ID so existing video model selections remain valid.
+export const GROK_VIDEO_CHANNEL_ID = "oneyes-minimax";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
 export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
@@ -156,7 +158,7 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
-const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo"];
+const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo", "seedance", "gemini-omni", "minimax-h"];
 
 export function boolConfig(value: string, fallback: boolean) {
     return value ? value === "true" : fallback;
@@ -167,7 +169,7 @@ const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "im
 /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
 export function guessCapability(name: string): ModelCapability {
     const value = name.toLowerCase();
-    if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword))) return "video";
+    if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword)) || /^sd[\s_-]*\d+(?:\.\d+)?$/.test(value)) return "video";
     if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
     if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
     return "text";
@@ -436,7 +438,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 /** Keep the built-in provider fixed across edits, imports, and stored settings. */
 export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConfig = defaultConfig): AiConfig {
     const config = { ...defaultConfig, ...input };
-    const source = (Array.isArray(input.channels) ? input.channels : []).find((channel) => channel && !["oneyes-deepseek", "oneyes-minimax"].includes(channel.id) && normalizedBaseUrlKey(channel.baseUrl || "") === OPENAI_BASE_URL);
+    const source = (Array.isArray(input.channels) ? input.channels : []).find((channel) => channel && !["oneyes-deepseek", GROK_VIDEO_CHANNEL_ID].includes(channel.id) && normalizedBaseUrlKey(channel.baseUrl || "") === OPENAI_BASE_URL);
     const channel = createModelChannel({
         ...(source || fallback.channels[0]),
         name: "OneYes",
@@ -446,9 +448,10 @@ export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConf
     });
     const channels = [channel];
     // Fixed OneYes routing slots, never additional provider endpoints.
-    for (const platform of ["deepseek", "minimax"] as const) {
-        const slot = (input.channels || []).find(item => item.id === `oneyes-${platform}` && normalizedBaseUrlKey(item.baseUrl || "") === OPENAI_BASE_URL);
-        if (slot) channels.push(createModelChannel({ ...slot, name: `OneYes ${platform === "deepseek" ? "DeepSeek" : "MiniMax"}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai" }));
+    for (const platform of ["deepseek", "grok"] as const) {
+        const id = platform === "grok" ? GROK_VIDEO_CHANNEL_ID : `oneyes-${platform}`;
+        const slot = (input.channels || []).find(item => item.id === id && normalizedBaseUrlKey(item.baseUrl || "") === OPENAI_BASE_URL);
+        if (slot) channels.push(createModelChannel({ ...slot, name: `OneYes ${platform === "deepseek" ? "DeepSeek" : "Grok"}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai" }));
     }
     if (channel.oneYes?.platform === "openai") channel.name = "OneYes OpenAI";
     return {

@@ -18,7 +18,7 @@ globalThis.localStorage = {
 };
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 
-const { CONFIG_STORE_KEY, defaultConfig, normalizeOneYesConfig, upsertChannelCredentials, useConfigStore } = await import("./use-config-store");
+const { CONFIG_STORE_KEY, defaultConfig, guessCapability, GROK_VIDEO_CHANNEL_ID, normalizeOneYesConfig, upsertChannelCredentials, useConfigStore } = await import("./use-config-store");
 const { shouldOpenSetup, getVerifiedSetupIds } = await import("./oneyes-setup");
 
 test("first launch offers setup only without configured models, respecting later and imported credentials", () => {
@@ -30,6 +30,24 @@ test("first launch offers setup only without configured models, respecting later
     assert.equal(shouldOpenSetup({ ...state, config }), false);
     assert.equal(shouldOpenSetup({ ...state, config: { ...config, channels: [{ ...config.channels[0], models: [] }] } }), true);
     assert.equal(shouldOpenSetup({ ...state, config: { ...config, channels: [{ ...config.channels[0], apiKey: "  " }] } }), true);
+});
+
+test("known OneYes video catalog names are categorized as video models", () => {
+    for (const name of ["SD2.0", "SD2.5", "gemini-omni-flash", "gemini-omni-flash-1.1", "grok-imagine-video", "grok-imagine-video-1.5", "kling-3.0-turbo", "minimax-h3", "seedance-2.0-fast官方版", "seedance-2.0-mini官方版", "seedance-2.0官方版", "seedance-2.5官方版", "veo-3.1", "veo-3.1-fast", "wan3.0-video", "wan3.0-video-prime"]) {
+        assert.equal(guessCapability(name), "video", name);
+    }
+    assert.equal(guessCapability("gpt-image-2"), "image");
+    assert.equal(guessCapability("gpt-5.5"), "text");
+});
+
+test("the legacy video channel keeps saved model references while adopting the Grok label", () => {
+    const config = normalizeOneYesConfig({ ...defaultConfig, channels: [
+        defaultConfig.channels[0],
+        { id: "oneyes-minimax", name: "OneYes MiniMax", baseUrl: "https://api.oneyes.ai", apiKey: "saved-video-key", apiFormat: "openai", models: [{ name: "grok-imagine-video", capability: "video" }] },
+    ], videoModel: "oneyes-minimax::grok-imagine-video" });
+    assert.equal(GROK_VIDEO_CHANNEL_ID, "oneyes-minimax");
+    assert.equal(config.channels[1].name, "OneYes Grok");
+    assert.equal(config.videoModel, "oneyes-minimax::grok-imagine-video");
 });
 
 test("setup completion requires verified usable services, with partial failures reported separately", () => {

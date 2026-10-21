@@ -2,6 +2,7 @@ import { Alert, Button, Dropdown, Modal, theme } from "antd";
 import { CheckCircle2, ChevronRight, CircleAlert, CircleDashed, Image, LockKeyhole, MessageSquare, MoreHorizontal, Pencil, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { channelIdForPlatform } from "@/services/api/oneyes-account";
 import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { useConfigStore } from "@/stores/use-config-store";
 import { OneYesManualForm } from "./oneyes-connection-forms";
@@ -9,7 +10,7 @@ import { OneYesManualForm } from "./oneyes-connection-forms";
 const services = [
     { platform: "openai", name: "OpenAI", purpose: "imageText", group: "SVIP / VIP", icon: Image },
     { platform: "deepseek", name: "DeepSeek", purpose: "text", group: "DeepSeek", icon: MessageSquare },
-    { platform: "minimax", name: "MiniMax", purpose: "video", group: "Video", icon: Video },
+    { platform: "grok", name: "Grok", purpose: "video", group: "Video", icon: Video },
 ] as const;
 
 export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void }) {
@@ -54,7 +55,7 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
         </div>
         <div className="divide-y divide-border overflow-hidden rounded-xl border border-border" aria-busy={state.busy}>
             {services.map(service => {
-                const id = service.platform === "openai" ? channels[0].id : `oneyes-${service.platform}`;
+                const id = channelIdForPlatform(service.platform, channels[0].id);
                 const channel = channels.find(item => item.id === id);
                 const result = state.report.find(item => item.id === id);
                 const configured = Boolean(channel?.apiKey.trim());

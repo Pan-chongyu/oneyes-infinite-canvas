@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchChannelModels } from "@/services/api/image";
-import { guessCapability, normalizeChannelModels, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { GROK_VIDEO_CHANNEL_ID, guessCapability, normalizeChannelModels, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
@@ -48,8 +48,8 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     if (!draft) return null;
 
-    const platform = draft.oneYes?.platform || (draft.id === "oneyes-deepseek" ? "deepseek" : draft.id === "oneyes-minimax" ? "minimax" : "openai");
-    const name = { openai: "OpenAI", deepseek: "DeepSeek", minimax: "MiniMax" }[platform];
+    const platform = draft.id === GROK_VIDEO_CHANNEL_ID ? "grok" : draft.oneYes?.platform || (draft.id === "oneyes-deepseek" ? "deepseek" : "openai");
+    const name = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", minimax: "MiniMax" }[platform];
     const selected = new Set(draft.models.map(model => model.name));
     const missing = available === null ? [] : draft.models.filter(model => !available.includes(model.name));
     const keyword = search.trim().toLowerCase();
