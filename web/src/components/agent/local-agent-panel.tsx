@@ -179,6 +179,12 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const confirmToolsRef = useRef(confirmTools);
     const pendingToolRef = useRef<AgentPendingToolCall | null>(null);
     const autoConnectRef = useRef(false);
+    const desktopRestoreRef = useRef(false);
+    useEffect(() => {
+        if (desktopRestoreRef.current || !window.oneYesDesktop?.agent) return;
+        desktopRestoreRef.current = true;
+        void useAgentStore.getState().setupDesktopCodex(true);
+    }, []);
     const connectedRef = useRef(false);
     const errorLoggedRef = useRef(false);
     const attachmentUrlsRef = useRef(new Set<string>());
@@ -341,8 +347,10 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
 
     useEffect(() => {
         if (!clientReady || !enabled || !token.trim()) return;
-        localStorage.setItem("canvas-agent-url", endpoint);
-        localStorage.setItem("canvas-agent-token", token);
+        if (!window.oneYesDesktop?.agent) {
+            localStorage.setItem("canvas-agent-url", endpoint);
+            localStorage.setItem("canvas-agent-token", token);
+        }
         const clientId = clientIdRef.current;
         let disposed = false;
         let protocolRejected = false;

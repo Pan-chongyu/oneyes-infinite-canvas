@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 export const DEFAULT_PORT = 17371;
-export const CONFIG_DIR = path.join(os.homedir(), ".infinite-canvas");
+export const CONFIG_DIR = process.env.ONEYES_CANVAS_AGENT_HOME || path.join(os.homedir(), ".infinite-canvas");
 export const CONFIG_FILE = path.join(CONFIG_DIR, "canvas-agent.json");
 export const VERSION = readPackageVersion();
 export const AGENT_PROMPT = fs.readFileSync(new URL("../agent-instructions.md", import.meta.url), "utf8");
@@ -17,7 +17,8 @@ export type CanvasAgentConfig = { url: string; token: string; origins?: string[]
 export function loadConfig(create = false): CanvasAgentConfig {
     try {
         return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")) as CanvasAgentConfig;
-    } catch {
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Canvas Agent 配置无法读取，已保留原文件，请检查配置后重试");
         const config = { url: `http://127.0.0.1:${Number(process.env.PORT) || DEFAULT_PORT}`, token: crypto.randomBytes(18).toString("hex") };
         if (create) saveConfig(config);
         return config;

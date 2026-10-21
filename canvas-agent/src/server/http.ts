@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createCanvasMcpServer } from "./mcp.js";
 
 import { runClaudeTurn } from "../agent/claude.js";
 import { archiveCodexThread, CodexSkillLookupError, configureCodexSkill, generateCodexSkillDraft, interruptCodexTurn, isRecoverableThreadError, listCodexModels, listCodexSkills, listCodexThreads, readCodexThread, resolveCodexApproval, resolveCodexSkill, resumeCodexThread, runCodexTurn, startCodexThread, summarizeCodexThread } from "../agent/codex.js";
@@ -116,6 +118,7 @@ export function startHttpServer() {
     });
     app.use((req, res, next) => {
         const url = requestUrl(req, config);
+        if (req.headers.host !== new URL(config.url).host) return void res.status(403).json({ ok: false, error: "invalid host" });
         if (!setCors(req, res, url, config)) return void res.status(403).json({ ok: false, error: "origin not allowed" });
         if (req.method === "OPTIONS") return void res.json({});
         next();
@@ -126,6 +129,16 @@ export function startHttpServer() {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
     });
+    app.get("/agent/desktop-status", (_req, res) => res.json({ ok: true, desktopBridge: 1, protocolVersion: AGENT_PROTOCOL_VERSION }));
+    app.post("/mcp", route(async (req, res) => {
+        const server = createCanvasMcpServer((name, input) => session.callTool(name, input));
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+        res.on("close", () => { void transport.close(); void server.close(); });
+        await server.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+    }));
+    app.get("/mcp", (_req, res) => res.sendStatus(405));
+    app.delete("/mcp", (_req, res) => res.sendStatus(405));
     app.get("/events", (req, res) => {
         session.openEvents(requestUrl(req, config), res, ensureSiteWorkspace(config).activeThreadId || "");
     });
@@ -431,7 +444,10 @@ export function startHttpServer() {
         res.status(500).json({ ok: false, error: error.message });
     });
 
-    app.listen(port, "127.0.0.1", () => {
+    const server = app.listen(port, "127.0.0.1", (error?: Error) => {
+        if (error) { server.emit("error", error); return; }
+        if (process.env.ONEYES_DESKTOP_AGENT === "1") process.send?.({ type: "ready", url: config.url, token: config.token });
+        else {
         console.log("Infinite Canvas Agent");
         checkVersions();
         console.log(`Local URL: ${config.url}`);
@@ -440,6 +456,7 @@ export function startHttpServer() {
         console.log("Optional MCP add: codex mcp add infinite-canvas -- npx -y @basketikun/canvas-agent@latest mcp");
         console.log("Remove manually added MCP: codex mcp remove infinite-canvas");
         if (logger.enabled) console.log(`Debug log: ${logger.filePath}`);
+        }
         logger.info("Canvas Agent started", { url: config.url, workspace: ensureSiteWorkspace(config).workspacePath, debugLog: logger.filePath });
         const activeThreadId = initialWorkspace.activeThreadId || "";
         if (activeThreadId && session.beginCodexMutation()) {
@@ -451,6 +468,7 @@ export function startHttpServer() {
             }).finally(() => session.endCodexMutation()).catch(() => undefined);
         }
     });
+    return server;
 }
 
 /** 将异步 Express 路由异常交给统一错误处理中间件。 */

@@ -1,17 +1,18 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.9",
+  "version": "0.20.10",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
   "license": "MIT",
   "main": "desktop/main.cjs",
   "scripts": {
-    "build": "npm --prefix web run build",
+    "build": "npm --prefix canvas-agent run build && npm --prefix web run build",
     "test": "node --test test/*.test.mjs && npm --prefix web run test:oneyes",
     "desktop": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "pretest": "npm --prefix canvas-agent run build"
   },
   "devDependencies": {
     "electron": "44.9.1",
@@ -29,7 +30,8 @@
       "desktop/**/*.cjs",
       "web/dist/**/*",
       "LICENSE",
-      "NOTICE.md"
+      "NOTICE.md",
+      "desktop/resources/CODEX-LICENSE.txt"
     ],
     "asar": true,
     "npmRebuild": false,
@@ -78,6 +80,33 @@
       "provider": "github",
       "owner": "Pan-chongyu",
       "repo": "oneyes-infinite-canvas"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "canvas-agent",
+        "to": "canvas-agent",
+        "filter": [
+          "dist/**/*",
+          "package.json",
+          "agent-instructions.md"
+        ]
+      },
+      {
+        "from": "canvas-agent/node_modules",
+        "to": "canvas-agent/node_modules",
+        "filter": [
+          "**/*",
+          "!.bin/**/*",
+          "!typescript/**/*",
+          "!tsx/**/*",
+          "!@esbuild/**/*",
+          "!esbuild/**/*",
+          "!@types/**/*"
+        ]
+      }
+    ]
+  },
+  "dependencies": {
+    "@iarna/toml": "2.2.5"
   }
 }

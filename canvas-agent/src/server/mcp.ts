@@ -9,16 +9,20 @@ type CanvasAgentToolResponse = { ok?: boolean; result?: unknown; error?: string 
 /** 启动通过标准输入输出通信的 MCP 服务。 */
 export async function startMcpServer() {
     const config = loadConfig(true);
+    await createCanvasMcpServer((name, input) => postCanvasAgentTool(config, name, input)).connect(new StdioServerTransport());
+}
+
+export function createCanvasMcpServer(call: (name: ToolName, input: unknown) => Promise<unknown>) {
     const server = new McpServer({ name: "canvas-agent", version: VERSION }, { instructions: AGENT_PROMPT });
-    toolNames.forEach((name) => registerCanvasTool(server, config, name));
-    await server.connect(new StdioServerTransport());
+    toolNames.forEach((name) => registerCanvasTool(server, call, name));
+    return server;
 }
 
 /** 向 MCP Server 注册单个 Canvas Agent 工具。 */
-function registerCanvasTool(server: McpServer, config: CanvasAgentConfig, name: ToolName) {
+function registerCanvasTool(server: McpServer, call: (name: ToolName, input: unknown) => Promise<unknown>, name: ToolName) {
     const schema = toolInputSchemas[name];
     server.registerTool(name, { description: toolDescriptions[name], inputSchema: schema.shape }, async (input: unknown) => {
-        const result = await postCanvasAgentTool(config, name, schema.parse(input));
+        const result = await call(name, schema.parse(input));
         return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     });
 }

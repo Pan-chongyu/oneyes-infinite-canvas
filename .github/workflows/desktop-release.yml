@@ -50,11 +50,14 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             web/package-lock.json
+            canvas-agent/package-lock.json
       - name: Install Linux packaging tools
         if: matrix.target == 'linux'
         run: sudo apt-get update -qq && sudo apt-get install -y rpm libfuse2t64 xvfb
       - run: npm ci
       - run: npm ci --prefix web
+      - run: npm ci --prefix canvas-agent --include=optional
+      - run: npm --prefix canvas-agent test
       - name: Validate version and architecture
         shell: bash
         run: |

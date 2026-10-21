@@ -3,6 +3,8 @@ title: Pending Tests
 description: Implemented changes that still need manual verification
 ---
 
+- OneYes Canvas v0.20.10：在干净桌面环境点击「一键永久接入 Codex」，确认本地服务自动启动、Codex 用户配置持久保存、原配置备份和其他 MCP/模型保留；退出后重开自动恢复连接，外部 Codex 新对话能发现 canvas_* 工具。检查重复接入、端口占用、损坏配置、断开后重新连接及浏览器高级连接；不应自动替用户登录 Codex、修改模型 API 或发送付费任务。
+
 # Pending Tests
 
 - OneYes v0.20.9: all five official node plugins (Markdown, SVG, HTML, Panorama, Sticky note) now ship with the app and register without installation. Their renderer dependencies are bundled locally. Verify adding nodes from the creation/extension menus, Markdown editing/preview, SVG upstream content, sandboxed HTML interaction, 360° panorama upload/rotation/AI generation, and sticky-note color/editing. Confirm existing saved nodes and third-party plugins survive restart, built-in plugins show Included with no install/uninstall actions, and no CDN/registry is requested. Automated bundle tests cover local imports, SDK React sharing, saved node types/resources and HTML sandbox; local browser checks cover offline rendering, live HTML upstream changes, persisted edits and coexistence with a cached third-party plugin. A local Windows Electron check creates all five nodes from the toolbar and verifies the built-in manager. Native Windows/macOS/Linux packages receive startup smoke checks in the release workflow. Real paid panorama generation remains for user verification.

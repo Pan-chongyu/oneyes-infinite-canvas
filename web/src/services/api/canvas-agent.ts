@@ -5,6 +5,14 @@ import type { AgentReasoningEffort } from "@/stores/use-agent-store";
 type AgentConfigResponse = { ok?: boolean; protocolVersion?: number; url?: string; token?: string; hasToken?: boolean };
 const AGENT_MESSAGE_ASSET_PATTERN = /^agent-asset:([a-f0-9]{64})\/([a-f0-9]{64}\.(?:gif|jpe?g|png|webp))$/;
 
+export async function desktopCodexConnection(operation: 'setup' | 'restore') {
+    if (!window.oneYesDesktop?.agent) throw new Error(i18n.t('agent.connect.desktopOnly'));
+    const result = await window.oneYesDesktop.agent.call(operation);
+    if (result.error) throw new Error(result.error);
+    if (!result.data) throw new Error(i18n.t('agent.connect.setupFailed'));
+    return result.data;
+}
+
 export class AgentApiError<T = unknown> extends Error {
     constructor(readonly status: number, readonly response: T & { code?: string; error?: string; msg?: string }) {
         super(response.error || response.msg || i18n.t("agent.state.requestFailed"));

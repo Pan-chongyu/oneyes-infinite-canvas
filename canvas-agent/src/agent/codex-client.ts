@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createAgentLogWriter } from "../utils/agent-runtime.js";
-import { VERSION } from "../config.js";
+import { VERSION, loadConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { field, type JsonRecord } from "../utils/value.js";
 import { codexEventHistory, type CodexEventHistory } from "./codex-event-history.js";
@@ -68,7 +68,9 @@ export class CodexAppClient {
     /** 启动并初始化 Codex app-server。 */
     static async start(emit: AgentEmit, onExit: () => void) {
         logger.info("Starting Codex app-server", { executable: process.execPath, codex: codexBin() });
-        const child = spawn(process.execPath, [codexBin(), "app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+        const child = spawn(codexBin(), ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+        const stopOnExit = () => child.kill();
+        if (process.env.ONEYES_DESKTOP_AGENT === "1") process.once("exit", stopOnExit);
         const client = new CodexAppClient(child, emit);
         let stopped = false;
         const stop = () => {
@@ -93,6 +95,7 @@ export class CodexAppClient {
             stop();
         });
         child.on("exit", (code) => {
+            process.removeListener("exit", stopOnExit);
             stderr.flush();
             logger.warn("Codex app-server exited", { code });
             client.failAll(`Codex app-server exited: ${code ?? 0}`);
@@ -784,7 +787,9 @@ function canvasAgentMcpCommand() {
 
 /** 生成 Codex app-server 使用的 MCP 配置。 */
 function codexConfig(permissionMode: AgentPermissionMode) {
-    return { model_reasoning_summary: "auto", ...(permissionMode === "automatic" ? { approvals_reviewer: "auto_review" } : {}), mcp_servers: { "infinite-canvas": { command: canvasAgentMcp.command, args: canvasAgentMcp.args, default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } } };
+    const config = process.env.ONEYES_DESKTOP_AGENT === "1" ? loadConfig() : null;
+    const transport = config ? { url: `${config.url}/mcp`, http_headers: { "x-canvas-agent-token": config.token } } : canvasAgentMcp;
+    return { model_reasoning_summary: "auto", ...(permissionMode === "automatic" ? { approvals_reviewer: "auto_review" } : {}), mcp_servers: { "infinite-canvas": { ...transport, default_tools_approval_mode: "approve", startup_timeout_sec: 20, tool_timeout_sec: 90 } } };
 }
 
 function threadSettings(permissionMode: AgentPermissionMode) {
@@ -896,5 +901,7 @@ function parseMaybeJson(value: unknown) {
 
 /** 定位当前依赖中 Codex CLI 的执行文件。 */
 function codexBin() {
-    return path.join(path.dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js");
+    const target = `${process.arch === "arm64" ? "aarch64" : "x86_64"}-${process.platform === "win32" ? "pc-windows-msvc" : process.platform === "darwin" ? "apple-darwin" : "unknown-linux-musl"}`;
+    const root = path.dirname(require.resolve(`@openai/codex-${process.platform}-${process.arch}/package.json`));
+    return path.join(root, "vendor", target, "bin", process.platform === "win32" ? "codex.exe" : "codex");
 }

@@ -3,6 +3,7 @@ const { join, resolve } = require('node:path');
 const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
 const { createAccount } = require('./account.cjs');
+const { createAgent } = require('./agent.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 const smoke = process.argv.includes('--smoke-test');
@@ -14,6 +15,15 @@ app.whenReady().then(async () => {
     const root = resolve(__dirname, '../web/dist'), vault = createVault(app.getPath('userData'));
     await vault.read(); // Refuse to overwrite an unreadable vault.
     const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: (...args) => net.fetch(...args) });
+    if (smoke) {
+        const smokePort = await new Promise(resolve => { const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
+        const fs = require('node:fs/promises');
+        await fs.mkdir(join(app.getPath('userData'), 'agent'), { recursive: true });
+        await fs.writeFile(join(app.getPath('userData'), 'agent/canvas-agent.json'), JSON.stringify({ url: `http://127.0.0.1:${smokePort}`, token: require('node:crypto').randomBytes(18).toString('hex') }));
+    }
+    const agent = createAgent({ directory: app.getPath('userData'), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
+        ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
+    app.on('before-quit', () => agent.stop());
     protocol.handle('oneyes-canvas', async request => {
         try {
             const target = route(request.url, root);
@@ -40,6 +50,12 @@ app.whenReady().then(async () => {
         try { return { data: await account.call(operation, args) }; }
         catch (error) { return { error: error.message }; }
     });
+    ipcMain.handle('agent:call', async (event, operation) => {
+        trusted(event);
+        if (!['status', 'setup', 'restore'].includes(operation)) throw new Error('不支持的接入操作');
+        try { return { data: await agent[operation]() }; }
+        catch (error) { return { error: error.message }; }
+    });
     function createWindow() {
         window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#1c1917', icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         window.setMenuBarVisibility(false);
@@ -57,8 +73,20 @@ app.whenReady().then(async () => {
                     const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
-                console.log('ONEYES_CANVAS_SMOKE_OK', JSON.stringify(info)); app.exit(0);
-            } catch (error) { console.error('ONEYES_CANVAS_SMOKE_FAILED', error.message); app.exit(1); }
+                const connection = await agent.setup();
+                if (!connection.configured || !(await agent.status()).configured) throw new Error('Persistent Codex setup failed');
+                const mcp = await fetch(`${connection.url}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'x-canvas-agent-token': connection.token }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'desktop-smoke', version: '1' } } }) }).then(r => r.json());
+                if (!mcp.result?.serverInfo) throw new Error('Packaged MCP handshake failed');
+                const runtime = app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent');
+                const cli = join(runtime, 'node_modules/@openai/codex/bin/codex.js');
+                const result = await require('node:util').promisify(require('node:child_process').execFile)(process.execPath, [cli, 'mcp', 'get', 'infinite-canvas', '--json'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CODEX_HOME: join(app.getPath('userData'), 'codex') }, windowsHide: true });
+                if (JSON.parse(result.stdout).transport.url !== `${connection.url}/mcp`) throw new Error('Packaged Codex config validation failed');
+                const moduleUrl = require('node:url').pathToFileURL(join(runtime, 'dist/agent/codex-client.js')).href;
+                const initialize = `const {CodexAppClient}=await import(${JSON.stringify(moduleUrl)});await CodexAppClient.start(()=>{},()=>{});console.log('APP_SERVER_READY');process.exit(0);`;
+                const initialized = await require('node:util').promisify(require('node:child_process').execFile)(process.execPath, ['--input-type=module', '-e', initialize], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ONEYES_DESKTOP_AGENT: '1', ONEYES_CANVAS_AGENT_HOME: join(app.getPath('userData'), 'agent'), CODEX_HOME: join(app.getPath('userData'), 'codex') }, windowsHide: true, timeout: 20_000 });
+                if (!initialized.stdout.includes('APP_SERVER_READY')) throw new Error('Packaged Codex app-server initialization failed');
+                console.log('ONEYES_CANVAS_SMOKE_OK', JSON.stringify({ ...info, codex: true, mcp: true })); agent.stop(); app.exit(0);
+            } catch (error) { console.error('ONEYES_CANVAS_SMOKE_FAILED', error.message); agent.stop(); app.exit(1); }
         });
         void window.loadURL('oneyes-canvas://app/');
     }

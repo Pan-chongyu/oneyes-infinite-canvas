@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import i18n from "@/i18n";
+import { desktopCodexConnection } from "@/services/api/canvas-agent";
 
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -86,6 +87,9 @@ type AgentStore = {
     closePanel: () => void;
     togglePanel: () => void;
     setCanvasContext: (context: AgentCanvasContext | null) => void;
+    codexConfigured: boolean;
+    codexSetupBusy: boolean;
+    setupDesktopCodex: (restore?: boolean) => Promise<void>;
     connectAgent: (options?: { silent?: boolean }) => void;
     disconnectAgent: (patch?: Partial<Omit<AgentStore, "setAgentState" | "connectAgent" | "disconnectAgent" | "addMessage" | "addEventLog" | "clearEventLogs" | "openPanel" | "closePanel" | "togglePanel" | "setCanvasContext">>) => void;
     addMessage: (item: AgentChatItem) => void;
@@ -105,6 +109,22 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     token: typeof window === "undefined" ? "" : localStorage.getItem("canvas-agent-token") || "",
     connected: false,
     enabled: false,
+    codexConfigured: false,
+    codexSetupBusy: false,
+    setupDesktopCodex: async (restore = false) => {
+        if (get().codexSetupBusy) return;
+        set({ codexSetupBusy: true, connectError: '' });
+        try {
+            const connection = await desktopCodexConnection(restore ? 'restore' : 'setup');
+            set({ codexConfigured: connection.configured });
+            if (connection.configured && connection.url && connection.token) {
+                set({ url: connection.url, token: connection.token });
+                get().connectAgent();
+            }
+        } catch (error) {
+            set({ connectError: error instanceof Error ? error.message : i18n.t('agent.connect.setupFailed'), activeTab: 'setup' });
+        } finally { set({ codexSetupBusy: false }); }
+    },
     silentConnect: false,
     fragmentBootstrap: false,
     prompt: "",
@@ -155,8 +175,10 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         } catch {
             return set({ connectError: silent ? "" : i18n.t("agent.state.invalidUrl") });
         }
-        localStorage.setItem("canvas-agent-url", endpoint);
-        localStorage.setItem("canvas-agent-token", token);
+        if (!window.oneYesDesktop?.agent) {
+            localStorage.setItem("canvas-agent-url", endpoint);
+            localStorage.setItem("canvas-agent-token", token);
+        }
         // Only set enabled here; LocalAgentPanel's effect owns SSE initialization.
         set({ url: endpoint, token, enabled: true, silentConnect: silent, fragmentBootstrap: false, activity: i18n.t("agent.status.connecting"), connectError: "" });
     },
