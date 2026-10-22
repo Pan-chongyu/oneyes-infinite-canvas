@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.16: automatic setup must create the Grok Video key both with independent sign-in and with OneYes Desktop v0.1.68 session sharing. MiniMax Video must remain blocked; repeat setup must reuse the Grok key. No billed generation request is sent.
+
 - OneYes Canvas v0.20.15: all screenshot-listed SD2, Gemini Omni, Grok Imagine, Kling, MiniMax-H, Seedance, Veo, and Wan models should be classified as video. Automatic setup must reuse or create `Canvas_无限画布` only in Grok / Video; manual setup must show Grok · Video. Confirm OpenAI/DeepSeek routing is unchanged, legacy MiniMax-managed keys report that Grok reconnection is needed, setup loads Grok video models, and saved video model selections remain valid. Setup only reads models and must not submit a billed generation request.
 
 - OneYes Canvas v0.20.14: first launch waits for config/session restoration and guides sign-in, 2FA, desktop session reuse, automatic platform setup or manual keys. Check full/partial success, unavailable groups, failed network, 2FA retry, empty-key validation, explicit defer, persistence across restart, existing/imported configuration bypass, and reopening from Settings. Only model lists/connection checks are requested; no billed generation. Existing platform/group key reuse remains. Local fixture checks cover dark/light, narrow layout, keyboard and reduced motion; real account login/group permissions need user verification. Confirm diagnostics/model editing remain and import/export keep their credential-exclusion notice in More settings. Existing encrypted desktop storage is reused.

@@ -59,6 +59,30 @@ test('account redirects fail closed and corrupt sessions are preserved', async (
     const account = createAccount({ vault: memory(), fetcher: async () => new Response(null, { status: 302 }) });
     await assert.rejects(account.call('login', {}), /重定向/);
 });
+test('Canvas key creation accepts only the Grok Video group for video access', async () => {
+    const vault = memory(), created = [];
+    const fetcher = async (url, options) => {
+        if (url.endsWith('/settings/public')) return ok({});
+        if (url.endsWith('/auth/login')) return ok({ access_token: 'access-test', user });
+        if (url.endsWith('/groups/available')) return ok([
+            { id: 4, name: 'Video', platform: 'Grok' },
+            { id: 5, name: 'Video', platform: 'MiniMax' },
+        ]);
+        if (url.endsWith('/keys') && options.method === 'POST') {
+            const payload = JSON.parse(options.body);
+            created.push(payload);
+            return ok({ id: 9, name: payload.name, key: 'grok-video-key', status: 'active', group_id: payload.group_id });
+        }
+        throw new Error('unexpected request');
+    };
+    const account = createAccount({ vault, fetcher });
+    await account.call('login', { email: user.email, password: 'password-test' });
+    const key = await account.call('create_key', { account_id: 7, group_id: 4 });
+    assert.equal(key.group_id, 4);
+    assert.deepEqual(created, [{ name: 'Canvas_无限画布', group_id: 4 }]);
+    await assert.rejects(account.call('create_key', { account_id: 7, group_id: 5 }), /不能用于 Canvas/);
+    assert.equal(created.length, 1);
+});
 test('native broker uses OS-local IPC and a capability instead of passing credentials in URLs', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-broker-'));
     const secret = randomBytes(32).toString('base64url');

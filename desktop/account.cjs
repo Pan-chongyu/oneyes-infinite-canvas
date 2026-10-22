@@ -135,7 +135,7 @@ function createAccount({ vault, fetcher, broker = brokerCall }) {
         }
         if (!Number.isSafeInteger(args.group_id) || args.group_id <= 0) throw new Error('分组 ID 无效');
         const groups = await request('GET', '/groups/available');
-        if (!Array.isArray(groups) || !groups.some(group => group.id === args.group_id && ({ openai: ['vip', 'svip'], deepseek: ['deepseek'], minimax: ['video'] })[group.platform?.trim().toLowerCase()]?.includes(group.name?.trim().toLowerCase()))) throw new Error('该分组不能用于 Canvas 一键配置');
+        if (!Array.isArray(groups) || !groups.some(group => group.id === args.group_id && ({ openai: ['vip', 'svip'], deepseek: ['deepseek'], grok: ['video'] })[group.platform?.trim().toLowerCase()]?.includes(group.name?.trim().toLowerCase()))) throw new Error('该分组不能用于 Canvas 一键配置');
         return request('POST', '/keys', { name: 'Canvas_无限画布', group_id: args.group_id });
     }
     return { call: (operation, args) => serial(() => call(operation, args)) };
