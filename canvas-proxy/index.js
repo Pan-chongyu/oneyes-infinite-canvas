@@ -1,67 +1,31 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
+import { pipeline } from "node:stream/promises";
+import { createTransport, proxyFailure } from "./transport.js";
 
 const pkg = createRequire(import.meta.url)("./package.json");
-
 const CORS_HEADERS = {
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "*",
-    "access-control-allow-headers": "*",
-    "access-control-expose-headers": "*",
-    "access-control-max-age": "86400",
+    "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*",
+    "access-control-expose-headers": "*", "access-control-max-age": "86400",
 };
-
-/** Headers that describe the hop to this proxy rather than the upstream request. */
-const SKIP_REQUEST_HEADERS = new Set(["host", "connection", "content-length", "accept-encoding", "origin", "referer", "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site"]);
-/** fetch() already decoded and re-framed the body, so the upstream framing headers no longer apply. */
-const SKIP_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "transfer-encoding", "connection", "keep-alive"]);
+const HOP_HEADERS = ["connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization", "proxy-authenticate"];
+const SKIP_REQUEST_HEADERS = new Set([...HOP_HEADERS, "host", "content-length", "accept-encoding", "origin", "referer", "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site"]);
+const SKIP_RESPONSE_HEADERS = new Set([...HOP_HEADERS, "content-encoding", "content-length"]);
 
 function readArg(args, name, fallback) {
     const index = args.indexOf(`--${name}`);
-    return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
+    return index >= 0 ? args[index + 1] : fallback;
 }
 
-function readBody(req) {
-    return new Promise((resolve, reject) => {
-        const chunks = [];
-        req.on("data", (chunk) => chunks.push(chunk));
-        req.on("end", () => resolve(Buffer.concat(chunks)));
-        req.on("error", reject);
-    });
-}
-
-function readTarget(url) {
-    const raw = url.slice(1);
-    // decodeURI undoes the escaping browsers apply to the path while keeping intentional encodeURIComponent escapes.
-    let target = raw;
-    try {
-        target = decodeURI(raw);
-    } catch {
-        // Malformed escape sequence: forward the raw form instead of failing.
-    }
-    // Some clients collapse the "//" in the embedded target URL, so restore it before parsing.
-    target = target.replace(/^(https?:)\/*/i, "$1//");
-    return /^https?:\/\/[^/]/i.test(target) ? target : "";
-}
-
-function requestHeaders(req) {
-    const headers = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-        if (SKIP_REQUEST_HEADERS.has(key) || value === undefined) continue;
-        headers[key] = Array.isArray(value) ? value.join(", ") : value;
-    }
-    return headers;
-}
-
-function responseHeaders(upstream) {
-    const headers = { ...CORS_HEADERS };
-    upstream.headers.forEach((value, key) => {
-        if (SKIP_RESPONSE_HEADERS.has(key) || key.startsWith("access-control-")) return;
-        headers[key] = value;
-    });
-    return headers;
+function readTarget(input) {
+    // Preserve encoded path/query bytes, including signed media URLs.
+    const raw = input.slice(1).replace(/^(https?:)\/*/i, "$1//");
+    if (!/^https?:\/\//i.test(raw)) return null;
+    const url = new URL(raw);
+    if (url.username || url.password) throw new Error("目标地址不能包含凭据");
+    return url;
 }
 
 function sendJson(res, status, payload) {
@@ -69,64 +33,53 @@ function sendJson(res, status, payload) {
     res.end(JSON.stringify(payload));
 }
 
-function logForward(method, target, outcome, startedAt) {
-    console.log(`${new Date().toLocaleTimeString()} ${method} ${target} -> ${outcome} ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
-}
-
-async function forward(req, res, target) {
-    const body = req.method === "GET" || req.method === "HEAD" ? undefined : await readBody(req);
-    const upstream = await fetch(target, { method: req.method, headers: requestHeaders(req), body, redirect: "follow" });
-    // Logged as soon as the status line arrives, so a long SSE stream still shows up immediately.
-    res.writeHead(upstream.status, responseHeaders(upstream));
-    if (!upstream.body) {
-        res.end();
-        return upstream.status;
-    }
-    // Streamed so that SSE responses (text generation) reach the browser chunk by chunk.
-    const stream = Readable.fromWeb(upstream.body);
-    res.on("close", () => stream.destroy());
-    stream.pipe(res);
-    return upstream.status;
-}
-
-export function createProxyServer() {
-    return createServer((req, res) => {
-        if (req.method === "OPTIONS") {
-            res.writeHead(204, CORS_HEADERS);
-            res.end();
-            return;
-        }
-        const target = readTarget(req.url || "/");
-        if (!target) {
-            sendJson(res, 200, { app: "infinite-canvas", proxy: pkg.name, version: pkg.version, usage: "/<full-target-url>" });
-            return;
-        }
-        const startedAt = Date.now();
-        const method = req.method || "GET";
-        forward(req, res, target)
-            .then((status) => logForward(method, target, status, startedAt))
-            .catch((error) => {
-                const reason = error instanceof Error ? error.message : String(error);
-                logForward(method, target, `failed (${reason})`, startedAt);
-                if (res.headersSent) {
-                    res.destroy();
-                    return;
-                }
-                sendJson(res, 502, { error: reason });
-            });
+export function createProxyServer({ proxy, logger = console.log } = {}) {
+    const transport = createTransport(proxy);
+    const server = createServer(async (req, res) => {
+        if (req.method === "OPTIONS") { res.writeHead(204, CORS_HEADERS); res.end(); return; }
+        const controller = new AbortController();
+        const abort = () => { if (!res.writableFinished) controller.abort(); };
+        req.on("aborted", abort); res.on("close", abort);
+        const started = Date.now();
+        let target;
+        try {
+            target = readTarget(req.url || "/");
+            if (!target) { sendJson(res, 200, { app: "infinite-canvas", proxy: pkg.name, version: pkg.version, upstream: Boolean(proxy), usage: "/<full-target-url>" }); return; }
+            const skip = new Set([...SKIP_REQUEST_HEADERS, ...(req.headers.connection || "").toLowerCase().split(/\s*,\s*/)]);
+            const headers = Object.fromEntries(Object.entries(req.headers).filter(([key]) => !skip.has(key)));
+            const upstream = await transport.fetch(target, { method: req.method, headers, signal: controller.signal, redirect: target.origin === 'https://api.oneyes.ai' ? 'manual' : 'follow',
+                ...(!["GET", "HEAD"].includes(req.method) ? { body: req } : {}) });
+            if (target.origin === 'https://api.oneyes.ai' && upstream.status >= 300 && upstream.status < 400) {
+                upstream.body?.destroy(); sendJson(res, 502, { error: 'OneYes 接口发生重定向，已停止请求以保护 API Key' }); return;
+            }
+            const responseHeaders = { ...CORS_HEADERS };
+            const responseSkip = new Set([...SKIP_RESPONSE_HEADERS, ...(upstream.headers.get("connection") || "").toLowerCase().split(/\s*,\s*/)]);
+            upstream.headers.forEach((value, key) => { if (!responseSkip.has(key) && !key.startsWith("access-control-")) responseHeaders[key] = value; });
+            res.writeHead(upstream.status, responseHeaders); res.flushHeaders();
+            logger(`${req.method} ${target.origin}${target.pathname} -> ${upstream.status} ${((Date.now() - started) / 1000).toFixed(1)}s`);
+            if (upstream.body) await pipeline(upstream.body, res); else res.end();
+        } catch (error) {
+            if (controller.signal.aborted) return;
+            const reason = proxyFailure(error);
+            logger(`${req.method} ${target ? target.origin + target.pathname : "invalid target"} -> ${reason}`);
+            if (res.headersSent) res.destroy(); else sendJson(res, 502, { error: reason });
+        } finally { req.off("aborted", abort); res.off("close", abort); }
     });
+    server.on("close", () => transport.close());
+    return server;
 }
 
-const args = process.argv.slice(2);
-if (args.includes("--help") || args.includes("-h")) {
-    console.log(`${pkg.name} v${pkg.version}\n\nUsage: npx ${pkg.name}@latest [--port 23210] [--host 127.0.0.1]\n\nForwards http://<host>:<port>/<full-target-url> to <full-target-url> with permissive CORS headers.`);
-    process.exit(0);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    const args = process.argv.slice(2);
+    if (args.includes("--help") || args.includes("-h")) {
+        console.log(`${pkg.name} v${pkg.version}\n\nUsage: node canvas-proxy/index.js [--port 23210] [--host 127.0.0.1] [--proxy socks5h://127.0.0.1:1080]\n\nUpstream: HTTP / HTTPS / SOCKS4 / SOCKS4a / SOCKS5 / SOCKS5h, optional URL-encoded credentials.\nEnvironment: PORT, HOST, CANVAS_UPSTREAM_PROXY. Streams responses without buffering.`);
+    } else {
+        try {
+            const port = Number(readArg(args, "port", process.env.PORT || 23210));
+            const host = readArg(args, "host", process.env.HOST || "127.0.0.1");
+            createProxyServer({ proxy: readArg(args, "proxy", process.env.CANVAS_UPSTREAM_PROXY) }).listen(port, host, () => {
+                console.log(`${pkg.name} v${pkg.version} listening on http://${host}:${port}`);
+            });
+        } catch (error) { console.error(proxyFailure(error)); process.exitCode = 1; }
+    }
 }
-
-const port = Number(readArg(args, "port", process.env.PORT || 23210));
-const host = readArg(args, "host", process.env.HOST || "127.0.0.1");
-
-createProxyServer().listen(port, host, () => {
-    console.log(`${pkg.name} v${pkg.version} listening on http://${host}:${port}`);
-    console.log(`Fill this address into Infinite Canvas → 配置 → 本地代理: http://${host}:${port}`);
-});

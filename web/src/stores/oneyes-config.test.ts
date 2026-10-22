@@ -18,8 +18,41 @@ globalThis.localStorage = {
 };
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 
-const { CONFIG_STORE_KEY, defaultConfig, guessCapability, GROK_VIDEO_CHANNEL_ID, normalizeOneYesConfig, upsertChannelCredentials, useConfigStore } = await import("./use-config-store");
+const { CONFIG_STORE_KEY, defaultConfig, guessCapability, GROK_VIDEO_CHANNEL_ID, normalizeOneYesConfig, upsertChannelCredentials, useConfigStore, withLocalProxy } = await import("./use-config-store");
+const { normalizeProxySettings, proxySettings, testProxyConnection } = await import("@/services/api/local-proxy");
 const { shouldOpenSetup, getVerifiedSetupIds } = await import("./oneyes-setup");
+
+test("proxy settings validate protocols and separate URL credentials before saving", () => {
+    const settings = proxySettings(defaultConfig);
+    const normalized = normalizeProxySettings({ ...settings, upstreamProxyUrl: "socks5h://user:p%40ss%3A%23@127.0.0.1:1080" });
+    assert.equal(normalized.upstreamProxyUrl, "socks5h://127.0.0.1:1080");
+    assert.equal(normalized.upstreamProxyUsername, "user"); assert.equal(normalized.upstreamProxyPassword, "p@ss:#");
+    assert.equal(normalizeProxySettings({ ...settings, upstreamProxyUrl: "127.0.0.1:7890" }).upstreamProxyUrl, "http://127.0.0.1:7890");
+    for (const upstreamProxyUrl of ["", "file:///secret", "ftp://localhost:21", "http://localhost/path", "http://localhost?key=secret", "socks5://u:%Q@localhost:1080"]) assert.throws(() => normalizeProxySettings({ ...settings, upstreamProxyUrl }));
+    assert.throws(() => normalizeProxySettings({ ...settings, proxyMode: "forwarder", proxyUrl: "socks5://localhost:1080" }));
+});
+
+test("desktop proxy routing includes OneYes, preserves queries and never includes proxy credentials", async () => {
+    const original = useConfigStore.getState().config;
+    const target = "https://api.oneyes.ai/v1/models?signature=a%2Fb%3D";
+    const media = "https://media.test/video.mp4?signature=secret";
+    const settings = { ...defaultConfig, proxyEnabled: true, upstreamProxyUrl: "socks5://user:password@localhost:1080" };
+    try {
+        window.oneYesDesktop = { proxy: { test: async () => ({ data: { status: 401 } }) } } as unknown as NonNullable<Window["oneYesDesktop"]>;
+        useConfigStore.setState({ config: settings });
+        for (const url of [target, media]) {
+            const routed = withLocalProxy(url); assert.equal(routed, "oneyes-canvas://app/proxy?url=" + encodeURIComponent(url));
+            assert.doesNotMatch(routed, /user|password|socks/);
+        }
+        for (const url of ["data:image/png;base64,test", "blob:test", "oneyes-canvas://app/oneyes-api/v1/models"]) assert.equal(withLocalProxy(url), url);
+        assert.match(await testProxyConnection(proxySettings(settings)), /401/);
+        useConfigStore.setState({ config: { ...settings, proxyEnabled: false } });
+        assert.equal(withLocalProxy(target), "oneyes-canvas://app/oneyes-api/v1/models?signature=a%2Fb%3D"); assert.equal(withLocalProxy(media), media);
+        delete window.oneYesDesktop;
+        useConfigStore.setState({ config: { ...settings, proxyMode: "forwarder" } });
+        assert.equal(withLocalProxy(target), `${settings.proxyUrl}/${target}`);
+    } finally { delete window.oneYesDesktop; useConfigStore.setState({ config: original }); }
+});
 
 test("first launch offers setup only without configured models, respecting later and imported credentials", () => {
     const state = { setupStatus: "pending", isConfigOpen: false, config: defaultConfig };

@@ -1,5 +1,7 @@
 OneYes Canvas 桌面分支，基于 basketikun/infinite-canvas v0.20.0，保留原作者与 MIT 许可。
 
+v0.20.17 新增桌面内置 HTTP / HTTPS / SOCKS4、SOCKS4a、SOCKS5 和 SOCKS5h 上游代理。配置中选择「HTTP / SOCKS 代理」，填写地址及可选认证后保存即可使用；模型、媒体、WebDAV 和桌面账户请求统一通过代理，认证失败或代理不可达时不会改走直连。代理地址、账号和密码保存在桌面 AES 加密配置中，导出配置会清除凭据，日志和请求地址不会记录凭据。网页端继续使用本机转发服务模式；桌面版本不需要运行 Node.js。
+
 v0.20.16 修复账户校验仍将视频分组限制为 MiniMax 的问题。独立登录和复用 OneYes Desktop 登录态现在都能按 Grok / Video 创建 Canvas_无限画布 Key；其他平台的同名 Video 分组仍会拒绝。
 
 v0.20.15 将截图所列模型统一归类为视频模型，并把 OneYes 视频 Key 的自动创建、复用及手动配置目标切换为 Grok / Video 分组。旧 MiniMax 官方 Key 会在连接诊断中提示重新接入；保存的模型选择继续有效。此 Canvas 版本发布 Windows、macOS、Linux 六种平台／架构的安装包；不更改主客户端 OTA 更新器。

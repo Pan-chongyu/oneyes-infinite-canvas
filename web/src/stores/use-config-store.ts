@@ -55,6 +55,10 @@ export type AiConfig = {
     canvasImageCount: string;
     proxyEnabled: boolean;
     proxyUrl: string;
+    proxyMode: "upstream" | "forwarder";
+    upstreamProxyUrl: string;
+    upstreamProxyUsername: string;
+    upstreamProxyPassword: string;
     nodeRegenerateBehavior: "new-node" | "overwrite";
     autoFocusOnSelect: boolean;
 };
@@ -126,6 +130,10 @@ export const defaultConfig: AiConfig = {
     canvasImageCount: "3",
     proxyEnabled: false,
     proxyUrl: DEFAULT_LOCAL_PROXY_URL,
+    proxyMode: "upstream",
+    upstreamProxyUrl: "",
+    upstreamProxyUsername: "",
+    upstreamProxyPassword: "",
     nodeRegenerateBehavior: "new-node",
     autoFocusOnSelect: false,
 };
@@ -292,6 +300,7 @@ export const useConfigStore = create<ConfigStore>()(
                         canvasImageCount: config.canvasImageCount || "3",
                         proxyEnabled: Boolean(config.proxyEnabled),
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,
+                        proxyMode: persistedConfig.proxyMode || (persistedConfig.proxyEnabled ? "forwarder" : "upstream"),
                         nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
                         autoFocusOnSelect: Boolean(config.autoFocusOnSelect),
                     },
@@ -498,13 +507,16 @@ export function normalizeLocalProxyUrl(value: string) {
 
 /** Prefix an outgoing request with the local forwarding proxy so the browser is not blocked by CORS. */
 export function withLocalProxy(url: string) {
-    if (window.oneYesDesktop && new URL(url, location.href).origin === "https://api.oneyes.ai") {
+    if (!/^https?:\/\//i.test(url)) return url;
+    const { proxyEnabled, proxyMode, proxyUrl } = useConfigStore.getState().config;
+    if (proxyEnabled) {
+        if (proxyMode === "upstream" && window.oneYesDesktop) return `oneyes-canvas://app/proxy?url=${encodeURIComponent(url)}`;
+        const base = normalizeLocalProxyUrl(proxyUrl);
+        if (base && !url.startsWith(`${base}/`)) return `${base}/${url}`;
+    }
+    if (window.oneYesDesktop && new URL(url).origin === "https://api.oneyes.ai") {
         const target = new URL(url);
         return `oneyes-canvas://app/oneyes-api${target.pathname}${target.search}`;
     }
-    const { proxyEnabled, proxyUrl } = useConfigStore.getState().config;
-    if (!proxyEnabled || !/^https?:\/\//i.test(url)) return url;
-    const base = normalizeLocalProxyUrl(proxyUrl);
-    if (!base || url.startsWith(`${base}/`)) return url;
-    return `${base}/${url}`;
+    return url;
 }

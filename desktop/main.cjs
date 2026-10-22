@@ -4,6 +4,7 @@ const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
 const { createAccount } = require('./account.cjs');
 const { createAgent } = require('./agent.cjs');
+const { createNetwork } = require('./network.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 const smoke = process.argv.includes('--smoke-test');
@@ -13,8 +14,10 @@ else {
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
 app.whenReady().then(async () => {
     const root = resolve(__dirname, '../web/dist'), vault = createVault(app.getPath('userData'));
-    await vault.read(); // Refuse to overwrite an unreadable vault.
-    const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: (...args) => net.fetch(...args) });
+    const saved = await vault.read(); // Refuse to overwrite an unreadable vault.
+    const network = await createNetwork((...args) => net.fetch(...args));
+    network.configure(saved ? JSON.parse(saved).state?.config : {});
+    const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: network.fetch });
     if (smoke) {
         const smokePort = await new Promise(resolve => { const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
         const fs = require('node:fs/promises');
@@ -23,28 +26,37 @@ app.whenReady().then(async () => {
     }
     const agent = createAgent({ directory: app.getPath('userData'), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
         ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
-    app.on('before-quit', () => agent.stop());
+    app.on('before-quit', () => { agent.stop(); network.close(); });
     protocol.handle('oneyes-canvas', async request => {
         try {
             const target = route(request.url, root);
             if (target.file) return net.fetch(target.file);
-            if (!['GET', 'POST', 'DELETE', 'PATCH', 'PUT'].includes(request.method)) return new Response(null, { status: 405 });
+            if (!['GET', 'HEAD', 'POST', 'DELETE', 'PATCH', 'PUT', 'OPTIONS', 'PROPFIND', 'MKCOL', 'COPY', 'MOVE', 'LOCK', 'UNLOCK', 'PROPPATCH'].includes(request.method)) return new Response(null, { status: 405 });
             const headers = {};
-            for (const name of ['authorization', 'content-type', 'accept']) if (request.headers.has(name)) headers[name] = request.headers.get(name);
-            const upstream = await net.fetch(target.api, {
-                method: request.method, headers, redirect: 'manual', signal: request.signal,
+            const skip = new Set(['host', 'connection', 'content-length', 'accept-encoding', 'origin', 'referer', 'proxy-authorization']);
+            for (const [name, value] of request.headers) if (!skip.has(name) && !name.startsWith('sec-')) headers[name] = value;
+            const oneYes = new URL(target.api).origin === 'https://api.oneyes.ai';
+            const upstream = await network.fetch(target.api, {
+                method: request.method, headers, redirect: oneYes ? 'manual' : 'follow', signal: request.signal,
                 ...(!['GET', 'HEAD'].includes(request.method) ? { body: await request.arrayBuffer() } : {}),
-            });
+            }, target.proxy);
             if (upstream.status >= 300 && upstream.status < 400) return Response.json({ error: { message: 'OneYes 接口发生重定向，已停止请求以保护 API Key' } }, { status: 502 });
-            return new Response(upstream.body, { status: upstream.status, headers: { 'Content-Type': upstream.headers.get('Content-Type') || 'application/json', 'Cache-Control': 'no-store' } });
-        } catch { return Response.json({ error: { message: '连接 OneYes 失败，请检查网络后重试' } }, { status: 502 }); }
+            const responseHeaders = new Headers(upstream.headers);
+            for (const name of ['content-encoding', 'content-length', 'transfer-encoding', 'connection']) responseHeaders.delete(name);
+            return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+        } catch (error) { return Response.json({ error: { message: /^(代理|请填写代理)/.test(error.message) ? error.message : '连接服务失败，请检查网络后重试' } }, { status: 502 }); }
     });
     const trusted = event => {
         if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('oneyes-canvas://app/')) throw new Error('拒绝访问配置');
     };
     ipcMain.handle('config:read', event => { trusted(event); return vault.read(); });
-    ipcMain.handle('config:write', (event, value) => { trusted(event); return vault.write(value); });
-    ipcMain.handle('config:remove', event => { trusted(event); return vault.remove(); });
+    ipcMain.handle('config:write', async (event, value) => { trusted(event); const config = JSON.parse(value).state?.config; await vault.write(value); network.configure(config); });
+    ipcMain.handle('config:remove', async event => { trusted(event); await vault.remove(); network.configure({}); });
+    ipcMain.handle('proxy:test', async (event, config) => {
+        trusted(event);
+        try { return { data: await network.test(config) }; }
+        catch (error) { return { error: error.message }; }
+    });
     ipcMain.handle('account:call', async (event, operation, args) => {
         trusted(event);
         try { return { data: await account.call(operation, args) }; }
@@ -73,6 +85,7 @@ app.whenReady().then(async () => {
                     const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
+                await require('./proxy-smoke.cjs').runProxySmoke(window);
                 const connection = await agent.setup();
                 if (!connection.configured || !(await agent.status()).configured) throw new Error('Persistent Codex setup failed');
                 const mcp = await fetch(`${connection.url}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'x-canvas-agent-token': connection.token }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'desktop-smoke', version: '1' } } }) }).then(r => r.json());

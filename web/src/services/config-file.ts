@@ -24,11 +24,15 @@ export function exportAppConfig() {
         app: "infinite-canvas",
         version: 1,
         exportedAt: new Date().toISOString(),
-        config: { ...config, apiKey: "", channels: config.channels.map((channel) => ({ ...channel, apiKey: "" })) },
+        config: { ...config, apiKey: "", upstreamProxyPassword: "", upstreamProxyUsername: "", upstreamProxyUrl: stripProxyCredentials(config.upstreamProxyUrl), proxyUrl: stripProxyCredentials(config.proxyUrl), channels: config.channels.map((channel) => ({ ...channel, apiKey: "" })) },
         webdav: { ...webdav, password: "" },
         promptSources: { sources, schedule },
     };
     saveAs(new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" }), "infinite-canvas-config.json");
+}
+
+function stripProxyCredentials(value: string) {
+    try { const url = new URL(value.includes("://") ? value : `http://${value}`); url.username = ""; url.password = ""; return url.href; } catch { return ""; }
 }
 
 export async function importAppConfig(file: File) {

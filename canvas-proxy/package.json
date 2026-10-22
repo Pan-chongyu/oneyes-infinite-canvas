@@ -1,6 +1,7 @@
 {
   "name": "@basketikun/canvas-proxy",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "private": true,
   "description": "Minimal local forwarding proxy that lets the Infinite Canvas web app call AI provider APIs without CORS restrictions.",
   "license": "MIT",
   "type": "module",
@@ -10,6 +11,7 @@
   },
   "files": [
     "index.js",
+    "transport.js",
     "README.md"
   ],
   "scripts": {
@@ -17,6 +19,12 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "node-fetch": "3.3.2",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "socks-proxy-agent": "8.0.5"
   },
   "publishConfig": {
     "access": "public"

@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.16",
+  "version": "0.20.17",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -28,6 +28,8 @@
     },
     "files": [
       "desktop/**/*.cjs",
+      "canvas-proxy/transport.js",
+      "canvas-proxy/package.json",
       "web/dist/**/*",
       "LICENSE",
       "NOTICE.md",
@@ -107,6 +109,10 @@
     ]
   },
   "dependencies": {
-    "@iarna/toml": "2.2.5"
+    "@iarna/toml": "2.2.5",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "node-fetch": "3.3.2",
+    "socks-proxy-agent": "8.0.5"
   }
 }

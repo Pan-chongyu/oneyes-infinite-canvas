@@ -3,6 +3,11 @@ const { pathToFileURL } = require('node:url');
 function route(input, root) {
     const url = new URL(input);
     if (url.protocol !== 'oneyes-canvas:' || url.host !== 'app') throw new Error('拒绝访问');
+    if (url.pathname === '/proxy') {
+        const target = new URL(url.searchParams.get('url'));
+        if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) throw new Error('无效代理目标');
+        return { api: target.href, proxy: true };
+    }
     if (url.pathname.startsWith('/oneyes-api/')) {
         const path = url.pathname.slice('/oneyes-api'.length);
         if (!/^\/v1\//.test(path)) throw new Error('无效接口');

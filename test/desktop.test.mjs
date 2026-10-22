@@ -26,3 +26,9 @@ test('protocol confines API credentials to OneYes and files to packaged assets',
     assert.ok(route('oneyes-canvas://app/canvas/example', root).file.endsWith('/index.html'));
     for(const input of ['https://api.oneyes.ai/v1/models','oneyes-canvas://evil/','oneyes-canvas://app/oneyes-api/admin','oneyes-canvas://app/%2e%2e%2f%2e%2e%2fsecrets.key']) assert.throws(() => route(input, root));
 });
+
+test('desktop proxy route accepts only HTTP(S) targets and preserves signed URLs', () => {
+    const root = resolve('web/dist'), target = 'https://media.example.test/file?signature=a%2Fb%3D&x=1&x=2';
+    assert.deepEqual(route('oneyes-canvas://app/proxy?url=' + encodeURIComponent(target), root), { api: target, proxy: true });
+    for (const value of ['file:///secret', 'data:text/plain,secret', 'https://user:password@example.test/', 'invalid']) assert.throws(() => route('oneyes-canvas://app/proxy?url=' + encodeURIComponent(value), root));
+});
