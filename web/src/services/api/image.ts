@@ -860,6 +860,12 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 }
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+    if (window.oneYesDesktop && config.apiFormat !== "gemini" && isOneYes(config.baseUrl)) {
+        const result = await window.oneYesDesktop.models.list(config.apiKey);
+        if (result.error) throw new Error(result.error);
+        if (!Array.isArray(result.data)) throw new Error(apiText("modelReadFailed"));
+        return result.data;
+    }
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });

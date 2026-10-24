@@ -8,7 +8,20 @@ async function createNetwork(directFetch) {
     const active = config => config.proxyEnabled && config.proxyMode !== 'forwarder';
     function configure(config = {}) { settings = { ...config, proxyMode: config.proxyMode || 'forwarder' }; }
     async function request(url, init, config) {
-        if (!active(config)) return directFetch(url, init);
+        if (!active(config)) {
+            if (config.proxyEnabled && config.proxyMode === 'forwarder') {
+                let base;
+                try {
+                    const value = config.proxyUrl?.trim();
+                    if (!value) throw new Error();
+                    const parsed = new URL(/^https?:\/\//i.test(value) ? value : 'http://' + value);
+                    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
+                    base = parsed.href.replace(/\/+$/, '');
+                } catch { throw new Error('代理转发地址无效，请检查本机转发服务地址后重试'); }
+                if (!url.startsWith(base + '/')) url = base + '/' + url;
+            }
+            return directFetch(url, init);
+        }
         let current, streaming = false;
         const release = () => { current?.close(); inflight.delete(current); };
         try {

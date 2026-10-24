@@ -9,6 +9,8 @@ async function runProxySmoke(window) {
         server.listen(0, '127.0.0.1', () => resolve(server.address().port));
     });
     try {
+        const invalidModel = await window.webContents.executeJavaScript("window.oneYesDesktop.models.list('')");
+        assert.match(invalidModel.error, /有效的 OneYes API Key/);
         let seen = 0;
         const origin = await listen(http.createServer(async (req, res) => {
             const chunks = []; for await (const chunk of req) chunks.push(chunk);

@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.18: retry automatic setup with existing OpenAI SVIP/VIP, DeepSeek/DeepSeek and Grok/Video keys. Desktop setup, diagnostics and manual model refresh must use the native fixed-origin model bridge, retain saved proxies and reuse existing keys; failed requests must preserve prior channels. Check HTTP/SOCKS authentication errors, offline access, 401/403, rate limits, invalid/empty catalogs and recovery after correcting proxy settings. Errors must show an action without raw keys or HTML, and checks must not invoke billed generation. Native IPC is checked in each packaged startup smoke test; real-account read-only setup is also verified locally. No new TODO item is required.
+
 - OneYes Canvas v0.20.17: on desktop, save an HTTP, HTTPS, SOCKS4/4a/5/5h proxy with optional authentication and verify model loading, account requests, media downloads, WebDAV and SSE image generation all use it. Authentication or connectivity failures must not fall back to direct access; cancelling a stream must abort upstream. Exported configuration must exclude proxy credentials and settings must survive restart. The web app continues to use the local forwarding service.
 
 - OneYes Canvas v0.20.16: automatic setup must create the Grok Video key both with independent sign-in and with OneYes Desktop v0.1.68 session sharing. MiniMax Video must remain blocked; repeat setup must reuse the Grok key. No billed generation request is sent.

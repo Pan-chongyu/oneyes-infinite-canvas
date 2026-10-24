@@ -116,3 +116,21 @@ test("desktop Axios transport forwards the custom scheme through Fetch", async (
         assert.equal(response.data.data[0].id, "gpt-image-test");
     } finally { globalThis.fetch = oldFetch; axios.defaults.adapter = oldAdapter; window.oneYesDesktop = originalDesktop; }
 });
+
+test("desktop setup reads every group through the native model bridge without renderer requests and preserves failed channels", async () => {
+    const { fetchChannelModels } = await import("./image");
+    const originalDesktop = window.oneYesDesktop, originalFetch = globalThis.fetch;
+    const seen: string[] = [];
+    try {
+        globalThis.fetch = async () => { throw new Error("model setup must not use renderer fetch"); };
+        window.oneYesDesktop = { models: { list: async (key: string) => { seen.push(key); return { data: await models({ apiKey: key }) }; } } } as NonNullable<Window["oneYesDesktop"]>;
+        const f = fixture();
+        const result = await configureOneYes(defaultConfig, user, f.call, fetchChannelModels);
+        assert.equal(result.configured, 3); assert.deepEqual(seen, ["test-2", "test-3", "test-4"]);
+        window.oneYesDesktop.models.list = async () => ({ error: "代理认证失败，请检查用户名和密码" });
+        const failed = await configureOneYes(result.config, user, f.call, fetchChannelModels);
+        assert.equal(failed.configured, 0);
+        assert.equal(failed.issues.length, 3); assert.ok(failed.issues.every(issue => issue.detail?.includes("代理认证失败")));
+        assert.deepEqual(failed.config.channels, result.config.channels); assert.equal(f.writes.length, 3);
+    } finally { window.oneYesDesktop = originalDesktop; globalThis.fetch = originalFetch; }
+});

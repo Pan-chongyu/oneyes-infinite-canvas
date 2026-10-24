@@ -5,6 +5,7 @@ const { route } = require('./protocol.cjs');
 const { createAccount } = require('./account.cjs');
 const { createAgent } = require('./agent.cjs');
 const { createNetwork } = require('./network.cjs');
+const { createModelCatalog } = require('./models.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 const smoke = process.argv.includes('--smoke-test');
@@ -18,6 +19,7 @@ app.whenReady().then(async () => {
     const network = await createNetwork((...args) => net.fetch(...args));
     network.configure(saved ? JSON.parse(saved).state?.config : {});
     const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: network.fetch });
+    const listModels = createModelCatalog(network.fetch);
     if (smoke) {
         const smokePort = await new Promise(resolve => { const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
         const fs = require('node:fs/promises');
@@ -60,6 +62,11 @@ app.whenReady().then(async () => {
     ipcMain.handle('account:call', async (event, operation, args) => {
         trusted(event);
         try { return { data: await account.call(operation, args) }; }
+        catch (error) { return { error: error.message }; }
+    });
+    ipcMain.handle('models:list', async (event, apiKey) => {
+        trusted(event);
+        try { return { data: await listModels(apiKey) }; }
         catch (error) { return { error: error.message }; }
     });
     ipcMain.handle('agent:call', async (event, operation) => {
