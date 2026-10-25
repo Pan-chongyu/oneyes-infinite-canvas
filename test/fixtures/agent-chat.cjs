@@ -22,8 +22,8 @@ app.whenReady().then(async () => {
         await wait(`chatTest.state().prompt === ${JSON.stringify(text)}`);
     };
     const enter = async () => {
-        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
-        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        // Hidden Linux windows have no OS keyboard focus; exercise the same React key handler through DOM events.
+        await js('document.querySelector("[role=textbox]").dispatchEvent(new KeyboardEvent("keydown", {key:"Enter", code:"Enter", keyCode:13, bubbles:true, cancelable:true}))');
         await js('new Promise(resolve => setTimeout(resolve, 50))');
     };
     try {
