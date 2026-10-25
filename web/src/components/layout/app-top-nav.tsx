@@ -83,7 +83,7 @@ export function AppTopNav() {
                             );
                         })}
                     </nav>
-                    <div className="hidden shrink-0 space-y-3 border-t border-border pb-4 pt-3 md:block">
+                    <div className={`hidden shrink-0 space-y-3 border-t border-border pt-3 md:block ${window.oneYesDesktop?.updates ? 'pb-12' : 'pb-4'}`}>
                         <button
                             type="button"
                             onClick={togglePanel}

@@ -6,6 +6,14 @@ contextBridge.exposeInMainWorld('oneYesDesktop', {
     models: { list: apiKey => ipcRenderer.invoke('models:list', apiKey) },
     account: { call: (operation, args) => ipcRenderer.invoke('account:call', operation, args) },
     agent: { call: operation => ipcRenderer.invoke('agent:call', operation) },
+    updates: {
+        call: operation => ipcRenderer.invoke('update:call', operation),
+        subscribe(callback) {
+            const listener = (_event, state) => callback(state);
+            ipcRenderer.on('update:state', listener);
+            return () => ipcRenderer.removeListener('update:state', listener);
+        },
+    },
     storage: {
         getItem(name) { check(name); return ipcRenderer.invoke('config:read'); },
         setItem(name, value) { check(name); return ipcRenderer.invoke('config:write', value); },

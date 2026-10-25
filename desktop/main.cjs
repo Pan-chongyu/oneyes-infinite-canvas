@@ -6,6 +6,9 @@ const { createAccount } = require('./account.cjs');
 const { createAgent } = require('./agent.cjs');
 const { createNetwork } = require('./network.cjs');
 const { createModelCatalog } = require('./models.cjs');
+const { createUpdater } = require('./updater.cjs');
+const { updateTarget } = require('./update-platform.cjs');
+const { prepareInstall } = require('./update-install.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 const smoke = process.argv.includes('--smoke-test');
@@ -28,7 +31,11 @@ app.whenReady().then(async () => {
     }
     const agent = createAgent({ directory: app.getPath('userData'), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
         ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
-    app.on('before-quit', () => { agent.stop(); network.close(); });
+    const updater = createUpdater({ currentVersion: app.getVersion(), directory: app.getPath('userData'), target: () => updateTarget(), fetcher: network.fetch,
+        enabled: app.isPackaged && !smoke,
+        changed: state => { if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
+        install: async plan => { const apply = await prepareInstall(plan); await apply(); app.quit(); } });
+    app.on('before-quit', () => { updater.close(); agent.stop(); network.close(); });
     protocol.handle('oneyes-canvas', async request => {
         try {
             const target = route(request.url, root);
@@ -75,6 +82,14 @@ app.whenReady().then(async () => {
         try { return { data: await agent[operation]() }; }
         catch (error) { return { error: error.message }; }
     });
+    ipcMain.handle('update:call', async (event, operation) => {
+        trusted(event);
+        if (operation === 'check') await updater.check();
+        else if (operation === 'install') await updater.apply();
+        else if (operation !== 'state') throw new Error('不支持的更新操作');
+        return updater.state();
+    });
+    let updateStarted = false;
     function createWindow() {
         window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#1c1917', icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         window.setMenuBarVisibility(false);
@@ -85,6 +100,18 @@ app.whenReady().then(async () => {
         window.webContents.session.setPermissionCheckHandler(() => false);
         window.webContents.session.on('will-download', (_event, item) => item.setSaveDialogOptions({ title: '保存文件' }));
         window.on('closed', () => { window = null; });
+        if (!smoke) window.webContents.once('did-finish-load', async () => {
+            await window.webContents.executeJavaScript(`new Promise(resolve => {
+                const ready = () => { if (!document.body.dataset.canvasReady) return; observer.disconnect(); resolve(true); };
+                const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
+            })`);
+            if (process.argv.includes('--oneyes-updated')) {
+                const fs = require('node:fs/promises'), root = join(app.getPath('userData'), 'ota');
+                await fs.mkdir(root, { recursive: true, mode: 0o700 });
+                await fs.writeFile(join(root, `installed-${app.getVersion()}.ok`), 'ready', { mode: 0o600 });
+            }
+            if (!updateStarted) { updateStarted = true; void updater.start(); }
+        });
         if (smoke) window.webContents.on('did-finish-load', async () => {
             try {
                 const info = await window.webContents.executeJavaScript(`new Promise(resolve => {
@@ -92,6 +119,8 @@ app.whenReady().then(async () => {
                     const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
+                const update = await window.webContents.executeJavaScript("window.oneYesDesktop.updates.call('state')");
+                if (update.currentVersion !== app.getVersion() || update.supported) throw new Error('Packaged updater bridge failed');
                 await require('./proxy-smoke.cjs').runProxySmoke(window);
                 const connection = await agent.setup();
                 if (!connection.configured || !(await agent.status()).configured) throw new Error('Persistent Codex setup failed');

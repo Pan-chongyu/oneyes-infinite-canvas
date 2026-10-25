@@ -65,6 +65,7 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == 'tag' ]]; then test "$GITHUB_REF_NAME" = "$(cat VERSION)"; fi
       - run: npm test
       - run: npm run test:chat
+      - run: npm run test:ota-ui
       - run: npm --prefix web run typecheck
       - run: npm run build
       - name: Verify automatic Windows-MCP dependency setup
@@ -118,6 +119,8 @@ jobs:
           path: release
           merge-multiple: true
       - name: Verify every platform and generate checksums
+        env:
+          CANVAS_OTA_PRIVATE_KEY: ${{ secrets.CANVAS_OTA_PRIVATE_KEY }}
         run: node scripts/verify-desktop-release.mjs release
       - name: Publish public desktop release
         env:
