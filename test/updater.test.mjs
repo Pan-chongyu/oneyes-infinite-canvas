@@ -110,4 +110,6 @@ test('Linux AppImage helper replaces and reopens, rolls back a failed launch wit
     await run('/bin/sh', args); await assert.rejects(access(destination + '.oneyes-previous')); await access(ack);
     await rm(ack); await writeFile(destination, old, { mode: 0o755 }); await writeFile(stage, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     await assert.rejects(run('/bin/sh', args)); assert.equal(await readFile(destination, 'utf8'), old); await access(errorFile);
+    // The rollback intentionally reopens the original app asynchronously; wait for that fixture to finish writing before cleanup.
+    while (!await access(oldMarker).then(() => true, () => false)) await new Promise(resolve => setTimeout(resolve, 10));
 });
