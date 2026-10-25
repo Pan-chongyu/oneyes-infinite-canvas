@@ -16,9 +16,8 @@ type ComposerCommand = { type: "skill" | "resource"; query: string; length: numb
 type ComposerCandidate = { type: "skill"; skill: AgentSkillSummary } | { type: "resource"; reference: CanvasResourceReference };
 type ReferenceHover = { reference: AgentCanvasReference; left: number; top: number; width: number; height: number };
 
-export function AgentChatPromptInput({ value, disabled, placeholder, theme, onChange, onSubmit, onAddFiles }: {
+export function AgentChatPromptInput({ value, placeholder, theme, onChange, onSubmit, onAddFiles }: {
     value: string;
-    disabled?: boolean;
     placeholder: string;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     onChange: (value: string) => void;
@@ -172,13 +171,13 @@ export function AgentChatPromptInput({ value, disabled, placeholder, theme, onCh
             {!value.trim() ? <div className="pointer-events-none absolute left-1 top-1 text-sm leading-6" style={{ color: theme.node.placeholder }}>{placeholder}</div> : null}
             <div
                 ref={editorRef}
-                contentEditable={!disabled}
+                contentEditable
                 suppressContentEditableWarning
                 role="textbox"
                 aria-multiline="true"
                 aria-label={placeholder}
                 className="thin-scrollbar max-h-32 min-h-20 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-1 py-1 text-sm leading-6 outline-none"
-                style={{ color: theme.node.text, cursor: disabled ? "default" : "text" }}
+                style={{ color: theme.node.text, cursor: "text" }}
                 onInput={() => {
                     if (!composingRef.current) syncFromEditor();
                 }}

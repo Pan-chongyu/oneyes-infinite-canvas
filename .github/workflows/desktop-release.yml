@@ -64,6 +64,7 @@ jobs:
           node -e "const fs=require('fs'),p=require('./package.json');if(fs.readFileSync('VERSION','utf8').trim()!=='v'+p.version||process.arch!=='${{ matrix.arch }}')process.exit(1)"
           if [[ "$GITHUB_REF_TYPE" == 'tag' ]]; then test "$GITHUB_REF_NAME" = "$(cat VERSION)"; fi
       - run: npm test
+      - run: npm run test:chat
       - run: npm --prefix web run typecheck
       - run: npm run build
       - name: Verify automatic Windows-MCP dependency setup

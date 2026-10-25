@@ -191,6 +191,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const clientIdRef = useRef("");
     const [clientReady, setClientReady] = useState(false);
     const loadThreadsSequenceRef = useRef(0);
+    const loadThreadsRequestRef = useRef(0);
     const threadMessagesRef = useRef(new Map<string, AgentChatItem[]>());
     const authoritativeHistoryTurnsRef = useRef(new Set<string>());
     const liveTurnKeysRef = useRef(new Set<string>());
@@ -296,6 +297,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     }, [applyWorkspaceChange, setAgentState]);
     const loadThreads = useCallback(async (skipHistory = false, expectedTurnId = "") => {
         if (!connectedRef.current && !useAgentStore.getState().connected) return;
+        const request = ++loadThreadsRequestRef.current;
         let sequence = ++loadThreadsSequenceRef.current;
         setAgentState({ loadingThreads: true });
         try {
@@ -319,7 +321,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         } catch (error) {
             addEventLog(rt("historyReadFailed"), error);
         } finally {
-            if (sequence === loadThreadsSequenceRef.current && !threadOperationRef.current) setAgentState({ loadingThreads: false });
+            // Snapshot invalidation must not leave its loading indicator owned forever.
+            if (request === loadThreadsRequestRef.current && !threadOperationRef.current) setAgentState({ loadingThreads: false });
         }
     }, [applyConversationState, applyWorkspaceChange, endpoint, loadThreadSnapshot, setAgentState, token]);
     // Imperatively subscribe to canvasContext to keep the ref current and debounce snapshot reports without rerendering the panel.
@@ -584,6 +587,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             source.close();
             connectedRef.current = false;
             loadThreadsSequenceRef.current += 1;
+            loadThreadsRequestRef.current += 1;
+            setAgentState({ loadingThreads: false });
             useAgentSkillStore.getState().reset();
         };
     }, [applyConversationState, applyWorkspaceChange, clientReady, enabled, endpoint, loadSkills, loadThreads, message, setAgentState, token]);
@@ -647,7 +652,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             message.warning(rt(canvasReferences.length ? "someCanvasReferencesMissing" : "canvasReferencesMissing"));
         }
         const requestPrompt = promptWithCanvasReferences(promptWithAttachments(text, files), canvasReferences);
-        if (!currentState.connected || !requestPrompt || currentState.sending || currentState.waiting || currentState.loadingThreads || !["ready", "warning"].includes(currentState.conversation.status)) return;
+        if (!currentState.connected || !requestPrompt || currentState.sending || currentState.waiting || threadOperationRef.current || !["ready", "warning"].includes(currentState.conversation.status)) return;
         let referenceImages: AgentAttachment[] = [];
         if (canvasReferences.some((item) => item.kind === "image")) {
             setAgentState({ sending: true, activity: rt("readingCanvasImages") });
@@ -1411,7 +1416,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                     <AgentChatComposer
                         prompt={prompt}
                         attachments={attachments.map((attachment) => agentAttachmentToChatAttachment(attachment, endpoint, token))}
-                        disabled={!connected || !conversationReady || loadingThreads}
+                        disabled={!connected || !conversationReady || Boolean(threadOperationRef.current)}
                         sending={sending || waiting}
                         placeholder={conversation.status === "idle" || conversation.status === "preparing"
                             ? t("agent.panel.mcpInitializing")
