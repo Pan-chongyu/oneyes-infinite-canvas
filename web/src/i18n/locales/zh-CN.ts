@@ -388,7 +388,7 @@ export default {
             email: "邮箱", password: "密码", code: "动态验证码", verify: "验证并登录", register: "注册账号", forgot: "忘记密码", setup: "一键配置", diagnose: "连接诊断", repair: "修复连接", manual: "手动配置 Key", saveManual: "保存并读取模型",
             image: "生图", text: "文本", video: "视频", keyHint: "一键配置将复用或创建 Canvas_无限画布。连接诊断不产生生成费用。",
             confirmSetup: "配置并检查", confirmHint: "将按平台分组复用 Canvas_无限画布；缺少时创建同名 Key。OpenAI 优先复用合规 Key，新建时优先 SVIP，其次 VIP。已停用或额度耗尽的 Key 请先在官网处理。此操作会更新对应分组的 Key 和可用模型，不会自动重试生成任务。",
-            manualHint: "接口固定为 api.oneyes.ai。分别填写对应官网分组的 Key；仅读取模型列表，保存后可继续编辑模型。留空表示暂不配置。",
+            manualHint: "接口固定为 oneyes.ai（不可修改，网络异常时自动回退 api.oneyes.ai）。分别填写对应官网分组的 Key；仅读取模型列表，保存后可继续编辑模型。留空表示暂不配置。",
             diagnosis: { ok: "连接正常", unconfigured: "尚未配置 Key", account: "请连接配置此 Key 的账户后检查", accountUnavailable: "暂时无法检查账户，请恢复登录后重试", deleted: "Key 已在官网删除，点击修复可重新创建并接入", inactive: "Key 已停用、过期或额度耗尽，请在官网处理", groupChanged: "Key 分组已变更，请重新配置", legacyPlatform: "当前仍使用旧 MiniMax 视频分组，请点击一键配置接入 Grok 视频分组", modelsChanged: "部分模型不再可用，请编辑模型设置", unavailable: "连接失败，请检查 Key 权限、余额和网络", setupFailed: "该分组未配置成功" },
         },
         title: "配置与用户偏好",

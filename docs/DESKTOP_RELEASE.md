@@ -35,4 +35,4 @@ Windows：选择 Windows-x64 / Windows-arm64 的 Setup.exe。
 macOS：Apple Silicon 选择 macOS-arm64，Intel 选择 macOS-x64；提供 DMG / ZIP。当前为 ad-hoc 签名，未经 Apple 公证。
 Linux：Intel/AMD 芯片选 x86_64 的 AppImage/RPM 或 amd64 的 DEB；ARM64 芯片选 arm64 的 AppImage/DEB 或 aarch64 的 RPM。
 
-首次安装可能有系统来源确认。真实 OneYes 付费生图由用户自行使用 Key 验证；流式能降低长等待导致的 524，仍依赖上游及时发送数据。
+首次安装可能有系统来源确认。安装完成后 Canvas 可从系统应用入口独立启动，不要求 OneYes Desktop 常驻；真实 OneYes 付费生图由用户自行使用 Key 验证。流式能降低长等待导致的 524，仍依赖上游及时发送数据。

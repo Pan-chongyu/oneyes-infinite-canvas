@@ -45,7 +45,7 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
         <div className="mb-3 mt-6 flex flex-wrap items-center justify-between gap-3">
             <div>
                 <h2 className="text-sm font-semibold">{t("config.account.services")}</h2>
-                <p className="mb-0 mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><LockKeyhole className="size-3" aria-hidden="true" />api.oneyes.ai</p>
+                <p className="mb-0 mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><LockKeyhole className="size-3" aria-hidden="true" />oneyes.ai · 自动回退 api.oneyes.ai</p>
             </div>
             <div className="flex flex-wrap gap-2">
                 <Button icon={<Stethoscope className="size-3.5" />} disabled={manualBusy} loading={state.busy} onClick={() => void state.diagnose()}>{t("config.account.diagnose")}</Button>

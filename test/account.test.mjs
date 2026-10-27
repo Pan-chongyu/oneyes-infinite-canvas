@@ -14,7 +14,7 @@ const user = { id: 7, email: 'test@example.test', password: 'must-not-return' };
 test('standalone login, 2FA and rotating refresh survive restart without saving password or exposing tokens', async () => {
     const vault = memory(), calls = [];
     const fetcher = async (url, options) => {
-        assert.ok(url.startsWith('https://api.oneyes.ai/api/v1/')); assert.equal(options.redirect, 'manual');
+        assert.ok(url.startsWith('https://oneyes.ai/api/v1/')); assert.equal(options.redirect, 'manual');
         calls.push(url);
         if (url.endsWith('/settings/public')) return ok({});
         if (url.endsWith('/auth/login')) return ok({ requires_2fa: true, temp_token: 'challenge-test' });
@@ -33,6 +33,28 @@ test('standalone login, 2FA and rotating refresh survive restart without saving 
     assert.equal(restored.user.id, 7); assert.equal(JSON.parse(await vault.read()).refresh_token, 'rotated-test');
     await assert.rejects(account.call('delete_key', { account_id: 7 }), /不支持/);
     await assert.rejects(account.call('keys', { account_id: 8 }), /账号已变更/);
+});
+test('account requests prefer the direct route and safely fall back on transport errors', async () => {
+    const vault = memory(), urls = [];
+    const fetcher = async (url) => {
+        urls.push(url);
+        if (url.startsWith('https://oneyes.ai/')) throw new Error('direct route unavailable');
+        return ok({});
+    };
+    const account = createAccount({ vault, fetcher });
+    await account.call('settings');
+    assert.ok(urls[0].startsWith('https://oneyes.ai/api/v1/'));
+    assert.ok(urls[1].startsWith('https://api.oneyes.ai/api/v1/'));
+});
+test('account never replays a write after an HTTP response', async () => {
+    const urls = [];
+    const account = createAccount({ vault: memory(), fetcher: async (url) => {
+        urls.push(url);
+        return new Response(JSON.stringify({ code: 1, message: 'rejected' }), { status: 500, headers: { 'content-type': 'application/json' } });
+    } });
+    await assert.rejects(account.call('login_2fa', { code: '123456' }));
+    assert.equal(urls.length, 1);
+    assert.ok(urls[0].startsWith('https://oneyes.ai/'));
 });
 test('desktop sharing binds every key operation to the account and disconnecting never logs out the host', async () => {
     const vault = memory(), calls = [];

@@ -44,11 +44,26 @@ app.whenReady().then(async () => {
             const headers = {};
             const skip = new Set(['host', 'connection', 'content-length', 'accept-encoding', 'origin', 'referer', 'proxy-authorization']);
             for (const [name, value] of request.headers) if (!skip.has(name) && !name.startsWith('sec-')) headers[name] = value;
-            const oneYes = new URL(target.api).origin === 'https://api.oneyes.ai';
-            const upstream = await network.fetch(target.api, {
-                method: request.method, headers, redirect: oneYes ? 'manual' : 'follow', signal: request.signal,
-                ...(!['GET', 'HEAD'].includes(request.method) ? { body: await request.arrayBuffer() } : {}),
-            }, target.proxy);
+            const body = !['GET', 'HEAD'].includes(request.method) ? await request.arrayBuffer() : undefined;
+            const urls = target.apis || [target.api];
+            let upstream;
+            for (let index = 0; index < urls.length; index += 1) {
+                const oneYes = ['oneyes.ai', 'api.oneyes.ai'].includes(new URL(urls[index]).hostname);
+                try {
+                    upstream = await network.fetch(urls[index], {
+                        method: request.method, headers, redirect: oneYes ? 'manual' : 'follow', signal: request.signal,
+                        ...(body ? { body } : {}),
+                    }, target.proxy);
+                } catch (error) {
+                    if (index + 1 < urls.length) continue;
+                    throw error;
+                }
+                // Only read requests may fail over after an HTTP gateway error.
+                // Never replay a write after a server has received it.
+                if (request.method === 'GET' && index + 1 < urls.length && (upstream.status === 408 || upstream.status >= 500)) continue;
+                break;
+            }
+            if (!upstream) throw new Error('OneYes 接口无响应');
             if (upstream.status >= 300 && upstream.status < 400) return Response.json({ error: { message: 'OneYes 接口发生重定向，已停止请求以保护 API Key' } }, { status: 502 });
             const responseHeaders = new Headers(upstream.headers);
             for (const name of ['content-encoding', 'content-length', 'transfer-encoding', 'connection']) responseHeaders.delete(name);

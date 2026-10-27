@@ -139,8 +139,8 @@ test("stored provider edits cannot remove OneYes, add providers, or change its e
     await useConfigStore.persist.rehydrate();
     config = useConfigStore.getState().config;
     assert.equal(config.channels.length, 1);
-    assert.equal(config.channels[0].baseUrl, "https://api.oneyes.ai");
-    assert.equal(config.baseUrl, "https://api.oneyes.ai");
+    assert.equal(config.channels[0].baseUrl, "https://oneyes.ai");
+    assert.equal(config.baseUrl, "https://oneyes.ai");
     assert.equal(config.apiFormat, "openai");
     assert.equal(config.channels[0].apiKey, "sk-oneyes-test");
     assert.equal(config.imageModel, "default::private-image-model");
@@ -156,7 +156,7 @@ test("imports accept OneYes credentials only and never copy another provider's k
     assert.equal(accepted.status, "updated");
     assert.equal(accepted.config.channels.length, 1);
     assert.equal(accepted.config.channels[0].apiKey, "sk-new-test");
-    assert.equal(accepted.config.channels[0].baseUrl, "https://api.oneyes.ai");
+    assert.equal(accepted.config.channels[0].baseUrl, "https://oneyes.ai");
     for (const baseUrl of ["https://example.test", "https://api.oneyes.ai.evil.test", "http://api.oneyes.ai", "https://api.oneyes.ai/other", "https://user:pass@api.oneyes.ai", "https://api.oneyes.ai?proxy=1"]) {
         const result = upsertChannelCredentials(config, { baseUrl, apiKey: "sk-foreign-test" });
         assert.equal(result.status, "invalid-base-url");

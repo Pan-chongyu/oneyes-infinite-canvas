@@ -22,7 +22,7 @@ test('vault survives restart, serializes writes, detects tampering without repla
 });
 test('protocol confines API credentials to OneYes and files to packaged assets', () => {
     const root = resolve('web/dist');
-    assert.deepEqual(route('oneyes-canvas://app/oneyes-api/v1/images/generations', root), {api:'https://api.oneyes.ai/v1/images/generations'});
+    assert.deepEqual(route('oneyes-canvas://app/oneyes-api/v1/images/generations', root), {apis:['https://oneyes.ai/v1/images/generations', 'https://api.oneyes.ai/v1/images/generations']});
     assert.ok(route('oneyes-canvas://app/canvas/example', root).file.endsWith('/index.html'));
     for(const input of ['https://api.oneyes.ai/v1/models','oneyes-canvas://evil/','oneyes-canvas://app/oneyes-api/admin','oneyes-canvas://app/%2e%2e%2f%2e%2e%2fsecrets.key']) assert.throws(() => route(input, root));
 });

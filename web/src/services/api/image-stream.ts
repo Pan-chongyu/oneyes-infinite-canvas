@@ -3,7 +3,7 @@ import { createParser } from "eventsource-parser";
 export type ImagePayload = { data: Array<Record<string, unknown>> };
 type Options = { signal?: AbortSignal; timeoutMs: number; onPartial?: (image: string) => void };
 export function isOneYes(baseUrl: string) {
-    try { return new URL(baseUrl).origin === "https://api.oneyes.ai"; } catch { return false; }
+    try { return ["https://oneyes.ai", "https://api.oneyes.ai"].includes(new URL(baseUrl).origin); } catch { return false; }
 }
 function failure(status: number) {
     if (status === 524) return "OneYes 上游响应超时（524）。请先在用量记录中确认结果，再手动重试，避免重复扣费。";

@@ -79,7 +79,9 @@ export type ChannelCredentialsImportResult = {
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
-export const OPENAI_BASE_URL = "https://api.oneyes.ai";
+/** Canonical OneYes route. The API hostname remains accepted for old configs. */
+export const OPENAI_BASE_URL = "https://oneyes.ai";
+const ONEYES_BASE_URLS = ["https://oneyes.ai", "https://api.oneyes.ai"] as const;
 // Keep the saved channel ID so existing video model selections remain valid.
 export const GROK_VIDEO_CHANNEL_ID = "oneyes-minimax";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
@@ -356,9 +358,11 @@ export function upsertChannelCredentials(config: AiConfig, input: { baseUrl?: st
 
 function normalizedBaseUrlKey(baseUrl: string) {
     try {
-        return stripTrailingApiVersion(normalizeImportedBaseUrl(baseUrl));
+        const normalized = stripTrailingApiVersion(normalizeImportedBaseUrl(baseUrl));
+        return ONEYES_BASE_URLS.includes(normalized as typeof ONEYES_BASE_URLS[number]) ? OPENAI_BASE_URL : normalized;
     } catch {
-        return stripTrailingApiVersion(baseUrl.trim().replace(/\/+$/, ""));
+        const normalized = stripTrailingApiVersion(baseUrl.trim().replace(/\/+$/, ""));
+        return ONEYES_BASE_URLS.includes(normalized as typeof ONEYES_BASE_URLS[number]) ? OPENAI_BASE_URL : normalized;
     }
 }
 
@@ -514,7 +518,7 @@ export function withLocalProxy(url: string) {
         const base = normalizeLocalProxyUrl(proxyUrl);
         if (base && !url.startsWith(`${base}/`)) return `${base}/${url}`;
     }
-    if (window.oneYesDesktop && new URL(url).origin === "https://api.oneyes.ai") {
+    if (window.oneYesDesktop && ONEYES_BASE_URLS.includes(new URL(url).origin as typeof ONEYES_BASE_URLS[number])) {
         const target = new URL(url);
         return `oneyes-canvas://app/oneyes-api${target.pathname}${target.search}`;
     }

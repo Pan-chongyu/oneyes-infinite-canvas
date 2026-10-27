@@ -38,22 +38,34 @@ function safeUser(value) {
 function createAccount({ vault, fetcher, broker = brokerCall }) {
     let session, access, challenge, queue = Promise.resolve();
     const serial = action => { const next = queue.then(action); queue = next.catch(() => {}); return next; };
+    // Canvas is a standalone application. Keep both official routes fixed and
+    // deterministic so it works without the OneYes Desktop broker.
+    const apiBases = ['https://oneyes.ai/api/v1', 'https://api.oneyes.ai/api/v1'];
     async function raw(method, path, payload, token) {
-        let response;
-        try {
-            response = await fetcher('https://api.oneyes.ai/api/v1' + path, {
-                method, redirect: 'manual', headers: { 'Content-Type': 'application/json', 'Accept-Language': 'zh-CN', ...(token ? { Authorization: 'Bearer ' + token, 'X-User-UI-Request': '1' } : {}) },
-                ...(method === 'GET' ? {} : { body: JSON.stringify(payload || {}) }),
-            });
-        } catch { throw new Error('无法连接 OneYes，请检查网络后重试'); }
-        if (response.status >= 300 && response.status < 400) throw new Error('OneYes 接口重定向，已停止请求');
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok || (body.code !== undefined && body.code !== 0)) {
-            const error = new Error(body.message || `OneYes 请求失败（${response.status}）`);
-            error.status = response.status;
-            throw error;
+        for (let index = 0; index < apiBases.length; index += 1) {
+            let response;
+            try {
+                response = await fetcher(apiBases[index] + path, {
+                    method, redirect: 'manual', headers: { 'Content-Type': 'application/json', 'Accept-Language': 'zh-CN', ...(token ? { Authorization: 'Bearer ' + token, 'X-User-UI-Request': '1' } : {}) },
+                    ...(method === 'GET' ? {} : { body: JSON.stringify(payload || {}) }),
+                });
+            } catch (error) {
+                if (index + 1 < apiBases.length) continue;
+                throw error instanceof Error ? error : new Error('无法连接 OneYes，请检查网络后重试');
+            }
+            if (response.status >= 300 && response.status < 400) throw new Error('OneYes 接口重定向，已停止请求');
+            // Reads can safely fall back after a gateway failure. A write that
+            // received an HTTP response is never replayed to avoid double charge.
+            if (method === 'GET' && index + 1 < apiBases.length && (response.status === 408 || response.status >= 500)) continue;
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || (body.code !== undefined && body.code !== 0)) {
+                const error = new Error(body.message || `OneYes 请求失败（${response.status}）`);
+                error.status = response.status;
+                throw error;
+            }
+            return body.code !== undefined ? body.data : body;
         }
-        return body.code !== undefined ? body.data : body;
+        throw new Error('无法连接 OneYes，请检查网络后重试');
     }
     async function save(next) { await vault.write(JSON.stringify(next)); session = next; }
     function view() { return session?.user ? { user: session.user, source: session.source } : { user: null }; }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [优化] Canvas 独立运行默认优先使用 oneyes.ai 直连线路，网络异常时对安全的只读请求回退 api.oneyes.ai；独立登录、手动 Key 与桌面转发不依赖 OneYes Desktop 常驻，并统一使用 Grok Video 分组。
+
 ## v0.20.23
 
 + [修复] 发布任务安装清单校验依赖，确保跨平台 OTA 清单可以生成并发布。
