@@ -14,21 +14,8 @@ import { useCanvasStore, flushCanvasStorage } from "@/stores/canvas/use-canvas-s
 import { markCanvasImageTask } from "@/lib/canvas/canvas-image-task";
 import { CanvasNodeType } from "@/types/canvas";
 
-const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), char => char.charCodeAt(0));
-const original = window.fetch.bind(window);
-window.fetch = async (input, options) => {
-    const url = String(input);
-    if (url.includes("/v1/images/")) {
-        if (options?.method === "POST") {
-            localStorage.setItem("posts", String(Number(localStorage.getItem("posts") || 0) + 1));
-            return Response.json({ task_id: "imgtask_restart", status: "processing", expires_at: Math.floor(Date.now() / 1000) + 86400 }, { status: 202 });
-        }
-        if (localStorage.getItem("offline") === "true") throw new TypeError("offline fixture");
-        return Response.json({ task_id: "imgtask_restart", status: "completed", result: { data: [{ url: "https://images.example.test/restarted.png" }] } });
-    }
-    if (url === "https://images.example.test/restarted.png") return new Response(bytes, { headers: { "Content-Type": "image/png" } });
-    return original(input, options);
-};
+// No renderer fetch mocks: the fixture serves the actual native API and image
+// download routes, including an image server with no CORS permission.
 await useConfigStore.persist.rehydrate();
 await useCanvasStore.persist.rehydrate();
 const submit = new URLSearchParams(location.search).has("submit");
@@ -40,21 +27,17 @@ if (submit) {
     const projectId = useCanvasStore.getState().createProject("重启恢复画布");
     useCanvasStore.getState().updateProject(projectId, { nodes: [{ id: "restart-node", type: CanvasNodeType.Image, title: "重启恢复", position: { x: 100, y: 100 }, width: 320, height: 320, metadata: { status: "loading", images: [{ id: "slot", status: "loading", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }] } }] });
     await flushCanvasStorage();
-    localStorage.setItem("offline", "true");
     const target = { projectId, nodeId: "restart-node", imageId: "slot" };
     void requestGeneration(config, "重启恢复", { taskTarget: target, onTask: async id => {
         const store = useCanvasStore.getState();
         store.updateProject(projectId, { nodes: markCanvasImageTask(store.openProject(projectId)!.nodes, target, id) });
         await flushCanvasStorage();
     } }).catch(() => {});
-} else {
-    localStorage.setItem("offline", "false");
 }
 initializeImageTasks();
 Object.assign(window, { restartTest: {
     state: () => useImageTaskStore.getState(),
     node: () => useCanvasStore.getState().projects[0].nodes[0],
-    posts: () => Number(localStorage.getItem("posts") || 0),
     keyRestored: () => useConfigStore.getState().config.channels[0].apiKey === "fixture-private-key",
     flush: flushCanvasStorage,
     blob: async () => { const image = useImageTaskStore.getState().tasks[0]?.images[0]; return image && (await getImageBlob(image.storageKey))?.size; },

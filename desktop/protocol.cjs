@@ -3,6 +3,11 @@ const { pathToFileURL } = require('node:url');
 function route(input, root) {
     const url = new URL(input);
     if (url.protocol !== 'oneyes-canvas:' || url.host !== 'app') throw new Error('拒绝访问');
+    if (url.pathname === '/image-download') {
+        const target = new URL(url.searchParams.get('url'));
+        if (target.protocol !== 'https:' || target.username || target.password) throw new Error('无效图片地址');
+        return { image: target.href };
+    }
     if (url.pathname === '/proxy') {
         const target = new URL(url.searchParams.get('url'));
         if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) throw new Error('无效代理目标');

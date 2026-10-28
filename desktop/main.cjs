@@ -2,6 +2,7 @@ const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog } = require('e
 const { join, resolve } = require('node:path');
 const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
+const { downloadImage } = require('./image-download.cjs');
 const { createAccount } = require('./account.cjs');
 const { createAgent } = require('./agent.cjs');
 const { createNetwork } = require('./network.cjs');
@@ -40,6 +41,7 @@ app.whenReady().then(async () => {
         try {
             const target = route(request.url, root);
             if (target.file) return net.fetch(target.file);
+            if (target.image) return await downloadImage(request, target.image, network.fetch);
             if (!['GET', 'HEAD', 'POST', 'DELETE', 'PATCH', 'PUT', 'OPTIONS', 'PROPFIND', 'MKCOL', 'COPY', 'MOVE', 'LOCK', 'UNLOCK', 'PROPPATCH'].includes(request.method)) return new Response(null, { status: 405 });
             const headers = {};
             const skip = new Set(['host', 'connection', 'content-length', 'accept-encoding', 'origin', 'referer', 'proxy-authorization']);

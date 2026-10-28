@@ -80,7 +80,10 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
         controller.abort();
     }, IMAGE_DOWNLOAD_TIMEOUT_MS);
     try {
-        const response = await fetch(withLocalProxy(url), { signal: controller.signal });
+        const target = window.oneYesDesktop && /^https:\/\//i.test(url)
+            ? `oneyes-canvas://app/image-download?url=${encodeURIComponent(url)}`
+            : withLocalProxy(url);
+        const response = await fetch(target, { signal: controller.signal });
         if (!response.ok) throw namedError(IMAGE_RESPONSE_ERROR);
         return await response.blob();
     } catch (error) {

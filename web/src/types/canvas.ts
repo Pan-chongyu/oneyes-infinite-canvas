@@ -29,6 +29,7 @@ export type CanvasNodeImage = {
     id: string;
     imageTaskId?: string;
     status: CanvasNodeStatus;
+    loadingMessage?: string;
     errorDetails?: string;
     content: string;
     storageKey?: string;
@@ -51,6 +52,7 @@ export type CanvasNodeMetadata = {
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
+    loadingMessage?: string;
     errorDetails?: string;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;

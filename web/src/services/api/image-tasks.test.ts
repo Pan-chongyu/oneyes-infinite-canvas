@@ -168,6 +168,8 @@ test("canvas recovery updates only the original node/slot and preserves successf
     const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 1, y: 2 }, width: 640, height: 480, metadata: { status: "loading", content: "old", primaryImageId: "slot-1", images: [ { id: "slot-1", status: "success", content: "old", naturalWidth: 1, naturalHeight: 1, bytes: 1, mimeType: "image/png" }, { id: "slot-2", status: "loading", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" } ] } };
     const marked = markCanvasImageTask([node], target, "local")[0];
     const task: ImageTask = { ...processing(), status: "completed", target, images: [image] };
+    const saving = applyCanvasImageTask(marked, { ...task, status: "waiting", expectedImages: 1, images: [] });
+    assert.match(saving.metadata?.images?.[1].loadingMessage || "", /图片已生成/);
     const applied = applyCanvasImageTask(marked, task, { ...image, url: "blob:restored" });
     assert.equal(applied.metadata?.images?.[1].content, "blob:restored"); assert.equal(applied.metadata?.images?.[0].content, "old");
     assert.equal(applied.metadata?.content, "old"); assert.equal(applied.metadata?.status, "success");
