@@ -42,5 +42,5 @@ app.whenReady().then(async () => {
         }
         console.log('ASYNC_IMAGE_OK: real IndexedDB receipt and Blob storage, generation/edit, offline reload, download interruption, original canvas target, no duplicate POST');
         app.exit(0);
-    } catch (error) { console.error(error); console.error(await js('({body:document.body.innerHTML.slice(0,2000),api:!!window.asyncImageTest,errors:window.fixtureErrors})')); app.exit(1); }
+    } catch (error) { console.error(error); console.error(await js('({body:document.body.innerText.slice(0,1000),api:!!window.asyncImageTest,errors:window.fixtureErrors,submitError:sessionStorage.getItem("submitError")})')); app.exit(1); }
 });

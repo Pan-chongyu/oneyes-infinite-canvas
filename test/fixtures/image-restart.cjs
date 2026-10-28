@@ -6,6 +6,7 @@ const { route } = require('../../desktop/protocol.cjs');
 const { downloadImage } = require('../../desktop/image-download.cjs');
 const { readFileSync, writeFileSync, existsSync } = require('node:fs');
 const { createServer } = require('node:http');
+const { createHash } = require('node:crypto');
 const base = process.argv[2], profile = process.env.CANVAS_IMAGE_TEST_PROFILE, phase = process.env.CANVAS_IMAGE_TEST_PHASE;
 console.log('ASYNC_IMAGE_RESTART_START', phase);
 app.setPath('userData', profile);
@@ -18,6 +19,8 @@ app.whenReady().then(async () => {
     const counter = resolve(profile, 'posts.json');
     const posts = () => existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0;
     let downloads = 0;
+    const uploads = [];
+    let attemptedPosts = 0;
     const signedImage = 'https://images.example.test/restarted.png?signature=a%2Fb%3D&x=1&x=2';
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
     const imageServer = createServer((req, res) => {
@@ -30,6 +33,22 @@ app.whenReady().then(async () => {
         const url = new URL(request.url);
         if (url.pathname.startsWith('/oneyes-api/')) {
             if (request.method === 'POST') {
+                attemptedPosts++;
+                const form = await request.formData();
+                const files = form.getAll('image[]');
+                assert.equal(files.length, 4, 'all reference images must survive native multipart transport');
+                assert.equal(form.get('image'), null);
+                assert.equal(form.get('stream'), null);
+                assert.equal(new Set(files.map(file => file.name)).size, 4, 'reference filenames must be unique');
+                const { fileTypeFromBuffer } = await import('../../web/node_modules/file-type/core.js');
+                for (const [index, file] of files.entries()) {
+                    const bytes = Buffer.from(await file.arrayBuffer());
+                    const type = await fileTypeFromBuffer(bytes);
+                    assert.equal(file.type, ['image/png', 'image/jpeg', 'image/webp', 'image/png'][index]);
+                    assert.equal(file.type, type.mime, 'MIME must match real image bytes, not the old storage label');
+                    assert.ok(file.name.endsWith('.' + type.ext));
+                    uploads.push(createHash('sha256').update(bytes).digest('hex'));
+                }
                 writeFileSync(counter, String(posts() + 1));
                 return Response.json({ task_id: 'imgtask_restart', status: 'processing', expires_at: Math.floor(Date.now() / 1000) + 86400 }, { status: 202 });
             }
@@ -54,6 +73,12 @@ app.whenReady().then(async () => {
         if (phase === 'submit') {
             await wait('restartTest.state().tasks[0]?.remoteId === "imgtask_restart"');
             assert.equal(posts(), 1);
+            assert.equal(attemptedPosts, 1, 'invalid references must fail before submitting a paid request');
+            const errors = await js('restartTest.invalidReferenceErrors()');
+            assert.equal(errors.length, 2);
+            assert.match(errors[0], /第 2 张参考图「损坏的图.png」/);
+            assert.match(errors[1], /第 2 张参考图「缓存丢失.png」/);
+            assert.deepEqual(uploads.slice(0, 3), await js('restartTest.expectedReferenceHashes()'), 'valid PNG/JPEG/WebP bytes must not be recompressed or reordered');
             assert.ok(await js('restartTest.node().metadata.images[0].imageTaskId'));
             await js('restartTest.refresh()');
             await wait('restartTest.state().tasks[0].status === "waiting"');

@@ -29,6 +29,7 @@
         "eventsource-parser": "^4.1.0",
         "fflate": "^0.8.3",
         "file-saver": "^2.0.5",
+        "file-type": "21.3.0",
         "i18next": "^26.3.6",
         "localforage": "^1.10.0",
         "lucide-react": "^1.16.0",

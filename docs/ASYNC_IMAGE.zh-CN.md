@@ -1,5 +1,7 @@
 # OneYes Canvas 异步生图与恢复
 
+参考图提交前按原始 Blob 的文件内容识别格式并实际解码，不能信任对象存储的 `application/octet-stream` 或节点标题的 `.png`。PNG/JPEG/WebP 保留原始字节、尺寸和顺序，其他能解码的格式按原尺寸转换为单帧 PNG；每张使用独立文件名和正确 MIME／扩展名，多图以 `image[]` 逐文件提交。损坏图片或 Blob 丢失时指出序号与名称，并在付费 POST 前停止；不丢弃失败参考图，也不重发任务。
+
 OneYes 的 OpenAI 兼容模型默认使用 `POST /v1/images/generations/async`，参考图编辑使用 `POST /v1/images/edits/async`，提交参数沿用原生生图 JSON / multipart，且不发送 `stream` 或 `partial_images`。服务端返回 `202`、`task_id`、`expires_at`，客户端通过 `GET /v1/images/tasks/{task_id}` 查询。真实协议对应 Sub2API 的 `image_task_handler.go`，与 Gemini 的 `/images/batches` 接口不同；保留原有自定义脚本和 Gemini 调用方式。
 
 发送前将本地任务及画布节点／多图槽对应关系写入 IndexedDB（localforage）；收到任务编号后立即持久化。断网保留任务，联网、重新打开应用或修复原 Key 后继续查询，遵从服务端 `Retry-After`，缺失时复用已有视频轮询间隔。每次请求沿用原有图片请求超时，没有新增总等待时长或尝试次数上限；到期时间以服务端 `expires_at` 为准，当前官网返回约 24 小时。

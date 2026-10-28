@@ -58,7 +58,10 @@ Object.assign(window, { asyncImageTest: {
             await flushCanvasStorage();
         } };
         sessionStorage.setItem("offline", "true");
-        void (edit ? requestEdit(config, "参考图断线恢复", [{ id: "ref", name: "ref.png", type: "image/png", dataUrl: `data:image/png;base64,${png}` }], options) : requestGeneration(config, "生图断线恢复", options)).catch(() => {});
+        const referenceCanvas = document.createElement("canvas");
+        referenceCanvas.width = 12; referenceCanvas.height = 8;
+        referenceCanvas.getContext("2d")!.fillRect(0, 0, 12, 8);
+        void (edit ? requestEdit(config, "参考图断线恢复", [{ id: "ref", name: "ref.png", type: "image/png", dataUrl: referenceCanvas.toDataURL("image/png") }], options) : requestGeneration(config, "生图断线恢复", options)).catch(error => sessionStorage.setItem("submitError", String(error)));
     },
     refresh: () => imageTasks.refresh(useImageTaskStore.getState().tasks[0].id),
     connect: async (downloadOffline = false) => {

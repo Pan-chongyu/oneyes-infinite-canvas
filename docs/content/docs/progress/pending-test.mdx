@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.28：多张参考图混合 JPG、PNG、WebP、二进制 MIME 的历史生图、同名文件以及 GIF 静态转换后提交，应保持参考顺序、像素尺寸及有效 PNG/JPEG/WebP 原始字节。损坏图片或本地 Blob 丢失时指出第几张与原名称，在提交前停止；不能丢弃坏图后继续生成。桌面原生 multipart 回归覆盖全部参考图、正确 MIME／扩展名、唯一文件名和跨进程恢复，不调用付费模型。请在 macOS 实际多图编辑及 OTA 后验证；TODO 已检查，无对应事项需要迁移。
+
 - OneYes Canvas v0.20.27: on macOS, submit an image, quit after receiving its task receipt, then relaunch after backend completion. Object-store images without CORS permission must download through the native anonymous image route and refill the original slot. Repeat offline and online; saved Blobs must survive a second restart, signed query bytes must be preserved, and image requests must not contain account keys/cookies. The isolated three-process Electron regression covers the real native protocol and an HTTP image server that explicitly fails renderer CORS access. Existing pending/failed downloads remain recoverable without a new paid POST. TODO reviewed; no matching item needs moving.
 
 - OneYes Canvas v0.20.26：On macOS, close Canvas while a OneYes image task is pending and relaunch it. The app should resume polling the same task, restore the original Key, and put the downloaded image back in the original canvas slot. Repeat after an offline restart. For multi-image tasks, a slot without a local receipt must leave the spinner and explain the safe next step while valid sibling tasks continue; no paid POST may be repeated. Isolated Electron tests cover IndexedDB, image Blobs, interrupted downloads, and process restarts; verify the published macOS package and OTA on hardware.
