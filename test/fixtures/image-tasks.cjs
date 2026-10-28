@@ -8,7 +8,7 @@ app.whenReady().then(async () => {
     const win = new BrowserWindow({ show: false, width: 1300, height: 850, webPreferences: { contextIsolation: true, nodeIntegration: false } });
     win.webContents.on('console-message', (...args) => { const details = args[0]; if (details.level === 'error' || details.level >= 2 || args[1] >= 2) console.error(details.message || args[2]); });
     const js = code => win.webContents.executeJavaScript(code);
-    const wait = async condition => { const end = Date.now() + 20000; while (!await js(condition)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
+    const wait = async condition => { const end = Date.now() + 20000; while (!await js(`typeof asyncImageTest !== 'undefined' && (${condition})`)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
     try {
         for (const edit of [false, true]) {
             if (edit) await js('sessionStorage.clear()');

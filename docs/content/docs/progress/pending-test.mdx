@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.29：实际双图参考编辑在发送前无损重编码为 WebP，不缩图、不改本机原图，去除相机 JPEG 多图扩展并减小大 PNG；WebP 编码不支持时使用原尺寸无损 PNG。已用用户私有 ZIP 的两张 4096×3072 图片经过真实桌面 multipart，核对输出原尺寸、解码像素哈希、顺序和三进程任务恢复；不提交真实图片或发送付费生图。合成测试包含 EXIF 旋转、MPF、透明度、同名混合格式、缺失/损坏图及取消。生产构建独立验证本机 Worker/WASM 无外网加载。请在 macOS 升级后，用同一画布验证真实服务端编辑；既有导出缺失任务记录不会凭空恢复，不能自动重复生成。TODO 已核对，无对应事项需要迁移。
+
 - OneYes Canvas v0.20.28：多张参考图混合 JPG、PNG、WebP、二进制 MIME 的历史生图、同名文件以及 GIF 静态转换后提交，应保持参考顺序、像素尺寸及有效 PNG/JPEG/WebP 原始字节。损坏图片或本地 Blob 丢失时指出第几张与原名称，在提交前停止；不能丢弃坏图后继续生成。桌面原生 multipart 回归覆盖全部参考图、正确 MIME／扩展名、唯一文件名和跨进程恢复，不调用付费模型。请在 macOS 实际多图编辑及 OTA 后验证；TODO 已检查，无对应事项需要迁移。
 
 - OneYes Canvas v0.20.27: on macOS, submit an image, quit after receiving its task receipt, then relaunch after backend completion. Object-store images without CORS permission must download through the native anonymous image route and refill the original slot. Repeat offline and online; saved Blobs must survive a second restart, signed query bytes must be preserved, and image requests must not contain account keys/cookies. The isolated three-process Electron regression covers the real native protocol and an HTTP image server that explicitly fails renderer CORS access. Existing pending/failed downloads remain recoverable without a new paid POST. TODO reviewed; no matching item needs moving.

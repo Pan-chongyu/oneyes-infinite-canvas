@@ -1,6 +1,6 @@
 # OneYes Canvas 异步生图与恢复
 
-参考图提交前按原始 Blob 的文件内容识别格式并实际解码，不能信任对象存储的 `application/octet-stream` 或节点标题的 `.png`。PNG/JPEG/WebP 保留原始字节、尺寸和顺序，其他能解码的格式按原尺寸转换为单帧 PNG；每张使用独立文件名和正确 MIME／扩展名，多图以 `image[]` 逐文件提交。损坏图片或 Blob 丢失时指出序号与名称，并在付费 POST 前停止；不丢弃失败参考图，也不重发任务。
+参考图提交前按原始 Blob 的文件内容识别格式并实际解码，不能信任对象存储的 `application/octet-stream` 或节点标题的 `.png`。从 v0.20.29 起，所有参考图在可取消的 Worker 中按实际显示方向和原尺寸无损重编码为 WebP，去掉 EXIF/MPF/ICC 等容器扩展数据并压缩低效率的大 PNG；保留解码后的像素、透明度、顺序及本机原图，不缩放、不采用有损质量参数。WebP 编码不可用或尺寸超出编码格式能力时，按原尺寸使用无损 PNG，不额外引入大小阈值。编码器和 WASM 随安装包提供，无需用户安装依赖或访问 CDN。每张使用独立文件名和正确 MIME／扩展名，多图以 `image[]` 逐文件提交。损坏图片或 Blob 丢失时指出序号与名称，并在付费 POST 前停止；不丢弃失败参考图，也不重发任务。
 
 OneYes 的 OpenAI 兼容模型默认使用 `POST /v1/images/generations/async`，参考图编辑使用 `POST /v1/images/edits/async`，提交参数沿用原生生图 JSON / multipart，且不发送 `stream` 或 `partial_images`。服务端返回 `202`、`task_id`、`expires_at`，客户端通过 `GET /v1/images/tasks/{task_id}` 查询。真实协议对应 Sub2API 的 `image_task_handler.go`，与 Gemini 的 `/images/batches` 接口不同；保留原有自定义脚本和 Gemini 调用方式。
 

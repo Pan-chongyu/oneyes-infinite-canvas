@@ -69,6 +69,7 @@ jobs:
       - run: npm run test:images
       - run: npm --prefix web run typecheck
       - run: npm run build
+      - run: npm run test:codec
       - name: Verify automatic Windows-MCP dependency setup
         if: matrix.target == 'win'
         run: node scripts/smoke-windows-mcp.mjs

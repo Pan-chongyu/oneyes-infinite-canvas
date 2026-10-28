@@ -4,9 +4,8 @@ const { resolve } = require('node:path');
 const { createVault } = require('../../desktop/vault.cjs');
 const { route } = require('../../desktop/protocol.cjs');
 const { downloadImage } = require('../../desktop/image-download.cjs');
-const { readFileSync, writeFileSync, existsSync } = require('node:fs');
+const { readFileSync, writeFileSync, existsSync, readdirSync } = require('node:fs');
 const { createServer } = require('node:http');
-const { createHash } = require('node:crypto');
 const base = process.argv[2], profile = process.env.CANVAS_IMAGE_TEST_PROFILE, phase = process.env.CANVAS_IMAGE_TEST_PHASE;
 console.log('ASYNC_IMAGE_RESTART_START', phase);
 app.setPath('userData', profile);
@@ -20,6 +19,9 @@ app.whenReady().then(async () => {
     const posts = () => existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0;
     let downloads = 0;
     const uploads = [];
+    // Optional private fixture directory is local-only; never commit user images.
+    const referenceDir = process.env.CANVAS_IMAGE_REFERENCE_DIR;
+    const references = referenceDir ? readdirSync(referenceDir).filter(name => /\.(png|jpe?g)$/i.test(name)).sort().map(name => readFileSync(resolve(referenceDir, name))) : [];
     let attemptedPosts = 0;
     const signedImage = 'https://images.example.test/restarted.png?signature=a%2Fb%3D&x=1&x=2';
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
@@ -31,23 +33,27 @@ app.whenReady().then(async () => {
     const imageOrigin = `http://127.0.0.1:${imageServer.address().port}/image.png`;
     protocol.handle('oneyes-canvas', async request => {
         const url = new URL(request.url);
+        if (url.pathname === '/fixture-references') return Response.json(references.length);
+        if (url.pathname.startsWith('/fixture-references/')) return new Response(references[Number(url.pathname.split('/').pop())]);
+        if (url.pathname.startsWith('/fixture-uploads/')) return new Response(uploads[Number(url.pathname.split('/').pop())], { headers: { 'Content-Type': 'image/webp' } });
         if (url.pathname.startsWith('/oneyes-api/')) {
             if (request.method === 'POST') {
                 attemptedPosts++;
                 const form = await request.formData();
                 const files = form.getAll('image[]');
-                assert.equal(files.length, 4, 'all reference images must survive native multipart transport');
+                assert.equal(files.length, references.length || 4, 'all reference images must survive native multipart transport');
                 assert.equal(form.get('image'), null);
                 assert.equal(form.get('stream'), null);
-                assert.equal(new Set(files.map(file => file.name)).size, 4, 'reference filenames must be unique');
+                assert.equal(new Set(files.map(file => file.name)).size, files.length, 'reference filenames must be unique');
                 const { fileTypeFromBuffer } = await import('../../web/node_modules/file-type/core.js');
                 for (const [index, file] of files.entries()) {
                     const bytes = Buffer.from(await file.arrayBuffer());
                     const type = await fileTypeFromBuffer(bytes);
-                    assert.equal(file.type, ['image/png', 'image/jpeg', 'image/webp', 'image/png'][index]);
+                    assert.equal(file.type, 'image/webp');
                     assert.equal(file.type, type.mime, 'MIME must match real image bytes, not the old storage label');
                     assert.ok(file.name.endsWith('.' + type.ext));
-                    uploads.push(createHash('sha256').update(bytes).digest('hex'));
+                    assert.equal(bytes.toString('ascii', 12, 16), 'VP8L', 'upload must use lossless WebP without camera metadata');
+                    uploads.push(bytes);
                 }
                 writeFileSync(counter, String(posts() + 1));
                 return Response.json({ task_id: 'imgtask_restart', status: 'processing', expires_at: Math.floor(Date.now() / 1000) + 86400 }, { status: 202 });
@@ -66,19 +72,22 @@ app.whenReady().then(async () => {
     });
     const win = new BrowserWindow({ show: false, width: 1300, height: 850, webPreferences: { preload: resolve('desktop/preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
     const js = code => win.webContents.executeJavaScript(code);
-    const wait = async condition => { const end = Date.now() + 20000; while (!await js(condition)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
+    const wait = async condition => { const end = Date.now() + 120000; while (!await js(condition)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
     try {
-        await win.loadURL(`oneyes-canvas://app/${phase === 'submit' ? '?submit' : ''}`);
+        await win.loadURL(`oneyes-canvas://app/${phase === 'submit' ? '?submit' + (referenceDir ? '&realReferences' : '') : ''}`);
         await wait('!!window.restartTest');
         if (phase === 'submit') {
             await wait('restartTest.state().tasks[0]?.remoteId === "imgtask_restart"');
             assert.equal(posts(), 1);
             assert.equal(attemptedPosts, 1, 'invalid references must fail before submitting a paid request');
+            assert.equal(await js('restartTest.canceled()'), true, 'cancellation must stop normalization without submitting a request');
             const errors = await js('restartTest.invalidReferenceErrors()');
             assert.equal(errors.length, 2);
             assert.match(errors[0], /第 2 张参考图「损坏的图.png」/);
             assert.match(errors[1], /第 2 张参考图「缓存丢失.png」/);
-            assert.deepEqual(uploads.slice(0, 3), await js('restartTest.expectedReferenceHashes()'), 'valid PNG/JPEG/WebP bytes must not be recompressed or reordered');
+            const { actual, expected } = await js('restartTest.validateUploads()');
+            assert.deepEqual(actual.map(({ bytes, ...pixels }) => pixels), expected.map(({ bytes, ...pixels }) => pixels), 'every native multipart file must preserve decoded pixels, alpha, dimensions and order');
+            console.log('REFERENCE_NORMALIZATION_OK', actual.map((image, index) => ({ width: image.width, height: image.height, originalBytes: expected[index].bytes, uploadBytes: image.bytes })));
             assert.ok(await js('restartTest.node().metadata.images[0].imageTaskId'));
             await js('restartTest.refresh()');
             await wait('restartTest.state().tasks[0].status === "waiting"');
