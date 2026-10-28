@@ -17,6 +17,7 @@ plugins/canvas/*/node_modules
 web/public/plugins
 .secrets/
 desktop-dist/
+release-base/
 *.key
 *.p12
 *.pfx

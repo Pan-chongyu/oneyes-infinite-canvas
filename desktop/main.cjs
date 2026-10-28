@@ -138,6 +138,7 @@ app.whenReady().then(async () => {
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
                 const update = await window.webContents.executeJavaScript("window.oneYesDesktop.updates.call('state')");
                 if (update.currentVersion !== app.getVersion() || update.supported) throw new Error('Packaged updater bridge failed');
+                await require('./update-delta-smoke.cjs').smokeDelta(app.getPath('userData'));
                 await require('./proxy-smoke.cjs').runProxySmoke(window);
                 const connection = await agent.setup();
                 if (!connection.configured || !(await agent.status()).configured) throw new Error('Persistent Codex setup failed');

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { generateKeyPairSync, sign, createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile, mkdir, rm, access } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir, rm, access, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -28,7 +28,7 @@ async function fixture(t, extra = {}) {
             requests.push(url); if (offline) throw new Error('network');
             if (url.endsWith('.sig')) return new Response(current.signature);
             if (url.endsWith('.json')) return new Response(current.text);
-            return new Response(corrupt ? Buffer.from('bad-installer') : current.payload);
+            return new Response(corrupt ? Buffer.from('bad-installer') : (url.endsWith('.delta') ? (current.deltaPayload || current.payload) : current.payload));
         }, install: async plan => installs.push(plan), ...extra };
     const updater = createUpdater(options); t.after(() => updater.close());
     return { updater, options, directory, installs, requests, setRelease: value => { current = value; }, corrupt: value => { corrupt = value; }, offline: value => { offline = value; } };
@@ -60,6 +60,61 @@ test('download persists verified bytes, restores offline after restart, revalida
     await tampered.check(); assert.equal(tampered.state().status, 'ready');
     const installed = createUpdater({ ...f.options, currentVersion: '0.21.0' }); t.after(() => installed.close());
     await installed.check(); assert.equal(installed.state().status, 'current'); await assert.rejects(access(join(f.directory, 'ota/0.21.0')));
+});
+async function deltaFixture(t, scenario = '') {
+    const f = await fixture(t);
+    const base = Buffer.from('fixture-installer-'.repeat(2000)), next = Buffer.from('fixture-installer-'.repeat(1999) + 'small-change');
+    const work = await mkdtemp(join(tmpdir(), 'canvas-delta-')); t.after(() => rm(work, { recursive: true, force: true }));
+    await writeFile(join(work, 'base.bin'), base); await writeFile(join(work, 'next.bin'), next);
+    const { loadBsdiff } = await import('bsdiff-wasm');
+    const module = await loadBsdiff(); module.FS.mkdir('/working'); module.FS.mount(module.NODEFS, { root: work }, '/working'); module.FS.chdir('/working'); module.callMain(['base.bin', 'next.bin', 'patch.bin']);
+    const patch = await readFile(join(work, 'patch.bin'));
+    const baseFile = filename('0.20.20', target.platform, target.arch, target.format), deltaFile = `${filename('0.21.0', target.platform, target.arch, target.format)}.from-0.20.20.delta`;
+    const baseHash = createHash('sha256').update(base).digest('hex'), nextHash = createHash('sha256').update(next).digest('hex'), patchHash = createHash('sha256').update(patch).digest('hex');
+    const delta = { from: '0.20.20', file: deltaFile, url: `${RELEASE_ROOT}/download/v0.21.0/${deltaFile}`, size: patch.length, sha256: patchHash, baseFile, baseSize: base.length, baseSha256: baseHash, targetSha256: nextHash, targetSize: next.length };
+    if (scenario === 'wrong-platform') delta.file = delta.file.replace('Windows-arm64', 'Windows-x64');
+    const text = JSON.stringify({ schema: 1, version: '0.21.0', notes: 'delta', platforms: { [target.platform + '-' + target.arch + '-' + target.format]: { file: filename('0.21.0', target.platform, target.arch, target.format), url: `${RELEASE_ROOT}/download/v0.21.0/${filename('0.21.0', target.platform, target.arch, target.format)}`, size: next.length, sha256: nextHash } }, deltas: { [target.platform + '-' + target.arch + '-' + target.format]: { '0.20.20': delta } } });
+    const signature = sign(null, Buffer.from(text), privateKey).toString('base64');
+    const baseText = JSON.stringify({ schema: 1, version: '0.20.20', notes: 'base', platforms: { [target.platform + '-' + target.arch + '-' + target.format]: { file: baseFile, url: `${RELEASE_ROOT}/download/v0.20.20/${baseFile}`, size: base.length, sha256: baseHash } } });
+    const baseFolder = join(f.directory, 'ota', scenario === 'legacy-cache' ? '0.20.20' : 'base-0.20.20');
+    await mkdir(baseFolder, { recursive: true }); await writeFile(join(baseFolder, baseFile), scenario === 'corrupt-base' ? Buffer.alloc(base.length) : base); await writeFile(join(baseFolder, 'canvas-latest.json'), baseText); await writeFile(join(baseFolder, 'canvas-latest.json.sig'), sign(null, Buffer.from(baseText), privateKey).toString('base64'));
+    if (scenario === 'missing-base') await rm(baseFolder, { recursive: true, force: true });
+    if (scenario === 'invalid-base-signature') await writeFile(join(baseFolder, 'canvas-latest.json.sig'), 'untrusted');
+    let deltaPayload = scenario === 'corrupt-patch' ? Buffer.alloc(patch.length) : scenario === 'truncated-patch' ? patch.subarray(0, 12) : patch;
+    if (scenario === 'wrong-target') {
+        // This patch has a valid signed hash but reconstructs different bytes.
+        await writeFile(join(work, 'next.bin'), Buffer.alloc(next.length)); module.callMain(['base.bin', 'next.bin', 'wrong.bin']);
+        deltaPayload = await readFile(join(work, 'wrong.bin'));
+        const data = JSON.parse(text), wrong = data.deltas['win32-arm64-nsis']['0.20.20'];
+        wrong.sha256 = createHash('sha256').update(deltaPayload).digest('hex'); wrong.size = deltaPayload.length;
+        const changed = JSON.stringify(data);
+        f.setRelease({ text: changed, signature: sign(null, Buffer.from(changed), privateKey).toString('base64'), payload: next, deltaPayload });
+    } else f.setRelease({ text, signature, payload: next, deltaPayload });
+    return { ...f, next, patch, baseFolder, baseFile };
+}
+test('uses a signed delta when the verified current installer is cached, then validates the reconstructed full installer', async t => {
+    const f = await deltaFixture(t), { next } = f;
+    await f.updater.check(); assert.equal(f.updater.state().mode, 'delta'); assert.equal(f.updater.state().status, 'ready');
+    await f.updater.apply(); assert.equal(f.installs.length, 1); assert.deepEqual(await readFile(f.installs[0].file), next); assert.ok(f.requests.some(url => url.endsWith('.delta')));
+});
+test('delta failures fall back to the signed full package and never execute partial updates', async t => {
+    for (const scenario of ['missing-base', 'corrupt-base', 'invalid-base-signature', 'wrong-platform', 'corrupt-patch', 'truncated-patch', 'wrong-target']) await t.test(scenario, async t => {
+        const f = await deltaFixture(t, scenario);
+        await f.updater.check(); assert.equal(f.updater.state().status, 'ready'); assert.equal(f.updater.state().mode, 'full');
+        await f.updater.apply(); assert.deepEqual(await readFile(f.installs[0].file), f.next);
+        const files = await readdir(join(f.directory, 'ota/0.21.0')); assert.ok(!files.some(file => /\.(delta|part)$/.test(file)));
+    });
+});
+test('promotes legacy OTA cache, retains the installed base after restart and removes older bases', async t => {
+    const f = await deltaFixture(t, 'legacy-cache');
+    await mkdir(join(f.directory, 'ota/base-0.19.0'), { recursive: true });
+    await f.updater.check(); assert.equal(f.updater.state().mode, 'delta');
+    await access(join(f.directory, 'ota/base-0.20.20', f.baseFile)); await assert.rejects(access(f.baseFolder)); await assert.rejects(access(join(f.directory, 'ota/base-0.19.0')));
+    f.offline(true);
+    const upgraded = createUpdater({ ...f.options, currentVersion: '0.21.0' }); t.after(() => upgraded.close());
+    await upgraded.check();
+    assert.deepEqual(await readFile(join(f.directory, 'ota/base-0.21.0', filename('0.21.0', target.platform, target.arch, target.format))), f.next);
+    await assert.rejects(access(join(f.directory, 'ota/base-0.20.20')));
 });
 test('corrupt/truncated downloads and network failures are retryable and never installed; newer cache is replaced', async t => {
     const f = await fixture(t); f.corrupt(true); await f.updater.check();

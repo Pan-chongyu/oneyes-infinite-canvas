@@ -122,13 +122,19 @@ jobs:
           cache: npm
       - name: Install manifest validation dependencies
         run: npm ci --omit=dev --ignore-scripts
+      - name: Install binary delta generator
+        run: sudo apt-get update -qq && sudo apt-get install -y bsdiff
       - uses: actions/download-artifact@v4
         with:
           path: release
           merge-multiple: true
+      - name: Download previous installers for delta OTA
+        run: npm run release:delta
       - name: Verify every platform and generate checksums
         env:
           CANVAS_OTA_PRIVATE_KEY: ${{ secrets.CANVAS_OTA_PRIVATE_KEY }}
+          CANVAS_OTA_BASE_DIR: ${{ github.workspace }}/release-base
+          CANVAS_OTA_BSDIFF: bsdiff
         run: node scripts/verify-desktop-release.mjs release
       - name: Publish public desktop release
         env:

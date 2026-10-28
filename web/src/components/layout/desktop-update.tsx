@@ -33,6 +33,7 @@ export function DesktopUpdate() {
             <div className="flex items-center justify-between gap-3"><span className="text-sm font-medium">软件更新</span><button onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="关闭更新面板"><X className="size-4" /></button></div>
             <p className="mb-0 mt-3 text-sm font-medium" aria-live="polite">{ready ? `新版本 v${state.version} 已下载完成` : label}</p>
             <p className="mb-0 mt-1 text-xs text-muted-foreground">当前版本 v{state.currentVersion}</p>
+            {state.status === 'downloading' ? <p className="mb-0 mt-1 text-xs text-muted-foreground">{state.phase === 'reconstructing' ? '下载完成，正在准备并校验更新' : state.mode === 'delta' ? '正在下载增量更新包' : '正在下载完整更新包'}</p> : null}
             {state.notes && ready ? <p className="mb-0 mt-3 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{state.notes}</p> : null}
             {state.error ? <p role="alert" className="mb-0 mt-3 text-xs leading-5 text-muted-foreground">{state.error}</p> : null}
             {state.status === 'downloading' ? <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={state.progress} aria-valuemin={0} aria-valuemax={100} aria-label="更新下载进度"><div className="h-full bg-foreground transition-[width] motion-reduce:transition-none" style={{ width: `${state.progress}%` }} /></div> : null}

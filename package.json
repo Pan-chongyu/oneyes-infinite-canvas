@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.30",
+  "version": "0.20.31",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -13,6 +13,7 @@
     "test:ota-ui": "node scripts/test-agent-chat.mjs --updates",
     "test:images": "node scripts/test-agent-chat.mjs --images",
     "test:codec": "node scripts/test-image-codec.mjs",
+    "release:delta": "node scripts/prepare-ota-base.mjs release-base",
     "desktop": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
@@ -34,6 +35,7 @@
       "desktop/**/*.cjs",
       "desktop/**/*.ps1",
       "desktop/**/*.sh",
+      "node_modules/bsdiff-wasm/**/*",
       "canvas-proxy/transport.js",
       "canvas-proxy/package.json",
       "web/dist/**/*",
@@ -117,6 +119,7 @@
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",
+    "bsdiff-wasm": "0.1.4",
     "http-proxy-agent": "7.0.2",
     "https-proxy-agent": "7.0.6",
     "node-fetch": "3.3.2",

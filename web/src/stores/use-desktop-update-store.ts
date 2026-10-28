@@ -1,9 +1,9 @@
 import { create } from "zustand";
 export type DesktopUpdateState = {
     status: 'idle' | 'checking' | 'current' | 'downloading' | 'ready' | 'installing' | 'error';
-    currentVersion: string; version: string; progress: number; downloaded: number; total: number; notes: string; error: string; supported: boolean;
+    currentVersion: string; version: string; progress: number; downloaded: number; total: number; notes: string; error: string; supported: boolean; mode: 'full' | 'delta'; phase?: '' | 'reconstructing';
 };
-export const useDesktopUpdateStore = create<DesktopUpdateState>(() => ({ status: 'idle', currentVersion: __APP_VERSION__.replace(/^v/, ''), version: '', progress: 0, downloaded: 0, total: 0, notes: '', error: '', supported: true }));
+export const useDesktopUpdateStore = create<DesktopUpdateState>(() => ({ status: 'idle', currentVersion: __APP_VERSION__.replace(/^v/, ''), version: '', progress: 0, downloaded: 0, total: 0, notes: '', error: '', supported: true, mode: 'full' }));
 export async function desktopUpdate(operation: 'check' | 'install') {
     const updates = window.oneYesDesktop?.updates;
     if (!updates) return;
