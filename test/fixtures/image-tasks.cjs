@@ -11,12 +11,13 @@ app.whenReady().then(async () => {
     const wait = async condition => { const end = Date.now() + 20000; while (!await js(`typeof asyncImageTest !== 'undefined' && (${condition})`)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
     try {
         for (const edit of [false, true]) {
+            console.log('ASYNC_IMAGE_PHASE', edit ? 'edit' : 'generation');
             if (edit) await js('sessionStorage.clear()');
             await win.webContents.session.clearStorageData();
             await win.loadURL(process.argv[2]);
             await wait('window.asyncImageTest && document.querySelector("main")');
             await js(`asyncImageTest.start(${edit})`);
-            await wait('asyncImageTest.state().tasks[0]?.status === "processing"');
+            await wait('asyncImageTest.state().tasks[0]?.remoteId === "imgtask_fixture"');
             assert.equal(await js('asyncImageTest.posts()'), 1);
             assert.ok(await js('asyncImageTest.node().metadata.imageTaskId'));
             await js('asyncImageTest.refresh()');
@@ -42,5 +43,5 @@ app.whenReady().then(async () => {
         }
         console.log('ASYNC_IMAGE_OK: real IndexedDB receipt and Blob storage, generation/edit, offline reload, download interruption, original canvas target, no duplicate POST');
         app.exit(0);
-    } catch (error) { console.error(error); console.error(await js('({body:document.body.innerText.slice(0,1000),api:!!window.asyncImageTest,errors:window.fixtureErrors,submitError:sessionStorage.getItem("submitError")})')); app.exit(1); }
+    } catch (error) { console.error(error); console.error(await js('({body:document.body.innerText.slice(0,1000),api:!!window.asyncImageTest,errors:window.fixtureErrors,submitError:sessionStorage.getItem("submitError"),tasks:window.asyncImageTest?.state(),posts:window.asyncImageTest?.posts()})')); app.exit(1); }
 });

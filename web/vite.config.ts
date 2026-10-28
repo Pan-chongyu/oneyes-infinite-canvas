@@ -39,6 +39,7 @@ function localPluginsManifest(): Plugin {
 export default defineConfig({
     build: { target: "esnext" },
     worker: { format: "es" },
+    optimizeDeps: { include: ["@jsquash/webp/encode", "wasm-feature-detect", "file-type/core"] },
     base: process.env.VITE_BASE || "/",
     plugins: [react(), builtinPlugins(), localPluginsManifest()],
     resolve: {

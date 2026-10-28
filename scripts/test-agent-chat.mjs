@@ -5,23 +5,20 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { builtinPlugins } from '../web/build/builtin-plugins.mjs';
+import { imageFixtureServer } from './image-fixture-server.mjs';
 const webRequire = createRequire(resolve('web/package.json'));
-const { createServer } = await import(pathToFileURL(webRequire.resolve('vite')).href);
+const { createServer, build, preview } = await import(pathToFileURL(webRequire.resolve('vite')).href);
 const { default: react } = await import(pathToFileURL(webRequire.resolve('@vitejs/plugin-react')).href);
 const updates = process.argv.includes('--updates');
 const images = process.argv.includes('--images');
 const fixture = images ? 'image-tasks' : updates ? 'desktop-update' : 'agent-chat';
-const server = await createServer({
+const server = images ? await imageFixtureServer({ build, preview, react, builtinPlugins }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {
         server.middlewares.use('/__agent-chat', async (_req, res) => {
             res.setHeader('Content-Type', 'text/html');
-            res.end(await server.transformIndexHtml('/__agent-chat', `<div id="root"></div>${images ? '<script>window.fixtureErrors=[];window.addEventListener("error",e=>window.fixtureErrors.push(e.message));window.addEventListener("unhandledrejection",e=>window.fixtureErrors.push(String(e.reason)));</script>' : ''}<script type="module" src="/test/${fixture}.tsx"></script>`));
-        });
-        if (images) server.middlewares.use('/__image-restart', async (_req, res) => {
-            res.setHeader('Content-Type', 'text/html');
-            res.end(await server.transformIndexHtml('/__image-restart', '<div id="root"></div><script>window.fixtureErrors=[];window.addEventListener("error",e=>window.fixtureErrors.push(e.message));window.addEventListener("unhandledrejection",e=>window.fixtureErrors.push(String(e.reason)));</script><script type="module" src="/test/image-restart.tsx"></script>'));
+            res.end(await server.transformIndexHtml('/__agent-chat', `<div id="root"></div><script type="module" src="/test/${fixture}.tsx"></script>`));
         });
     } }], server: { host: '127.0.0.1', port: 0 },
 });
