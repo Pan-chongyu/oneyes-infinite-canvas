@@ -80,7 +80,7 @@ let started = false;
 export function initializeImageTasks() {
     if (started) return;
     started = true;
-    const recover = () => { void imageTasks.resumeAll().catch(() => useImageTaskStore.setState({ error: "生图任务缓存暂不可读，请重启后再试。" })); };
+    const recover = () => { void imageTasks.resumeAll().then(() => useImageTaskStore.setState({ error: undefined })).catch(() => useImageTaskStore.setState({ error: "生图任务缓存暂不可读，请重启后再试。" })); };
     recover();
     window.addEventListener("online", recover);
     window.addEventListener("focus", recover);

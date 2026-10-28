@@ -63,7 +63,7 @@ export class ImageTaskManager {
     constructor(private deps: ImageTaskDependencies) {}
 
     initialize() {
-        return this.loading ||= (async () => {
+        if (!this.loading) this.loading = (async () => {
             for (let task of await this.deps.storage.list()) {
                 // A crash before the receipt was saved cannot be recovered by resubmitting.
                 if (task.status === "submitting") {
@@ -75,7 +75,11 @@ export class ImageTaskManager {
             }
             this.emit();
             for (const task of this.tasks.values()) if (this.recoverable(task)) this.schedule(task.id, 0);
-        })();
+        })().catch(error => {
+            this.loading = undefined;
+            throw error;
+        });
+        return this.loading;
     }
 
     private emit() {

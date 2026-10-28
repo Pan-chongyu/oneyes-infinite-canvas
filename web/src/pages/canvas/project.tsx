@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { imageTasks as durableImageTasks, storedTaskImage, storeGeneratedImage, useImageTaskStore } from "@/stores/use-image-task-store";
-import { applyCanvasImageTask, markCanvasImageTask } from "@/lib/canvas/canvas-image-task";
+import { applyCanvasImageTask, failMissingCanvasImageTasks, markCanvasImageTask } from "@/lib/canvas/canvas-image-task";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -277,6 +277,7 @@ function InfiniteCanvasPage() {
     const [referencePickerNodeId, setReferencePickerNodeId] = useState<string | null>(null);
 
     const nodesRef = useRef(nodes);
+    const imageTaskTargets = nodes.map(node => `${node.id}:${node.metadata?.imageTaskId || ""}:${node.metadata?.images?.map(image => `${image.id}:${image.imageTaskId || ""}`).join(",") || ""}`).join(";");
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
@@ -470,9 +471,11 @@ function InfiniteCanvasPage() {
             return;
         }
 
+        let cancelled = false;
         const restore = async () => {
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
             const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            if (cancelled) return;
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);
@@ -497,27 +500,30 @@ function InfiniteCanvasPage() {
             setProjectLoaded(true);
         };
         void restore();
+        return () => { cancelled = true; };
     }, [hydrated, navigate, openProject, projectId]);
 
     useEffect(() => {
         if (!projectLoaded) return;
         let cancelled = false;
         void (async () => {
-            const tasks = await Promise.all(imageTasks.filter(task => task.target?.projectId === projectId && nodesRef.current.some(node => node.id === task.target?.nodeId && (node.metadata?.imageTaskId === task.id || node.metadata?.images?.some(image => image.imageTaskId === task.id)))).map(async task => ({ task, image: task.status === "completed" && task.images[0] ? await storedTaskImage(task.images[0]) : undefined })));
+            await durableImageTasks.initialize();
+            if (cancelled) return;
+            const tasks = await Promise.all([...durableImageTasks.tasks.values()].filter(task => task.target?.projectId === projectId && nodesRef.current.some(node => node.id === task.target?.nodeId && (node.metadata?.imageTaskId === task.id || node.metadata?.images?.some(image => image.imageTaskId === task.id)))).map(async task => ({ task, image: task.status === "completed" && task.images[0] ? await storedTaskImage(task.images[0]) : undefined })));
             if (cancelled) return;
             setNodes(previous => {
                 let changed = false;
                 const next = previous.map(node => {
-                    let updated = node;
+                    let updated = failMissingCanvasImageTasks(node, durableImageTasks.tasks, projectId);
                     for (const { task, image } of tasks) updated = applyCanvasImageTask(updated, task, image);
                     if (updated !== node) changed = true;
                     return updated;
                 });
                 return changed ? next : previous;
             });
-        })();
+        })().catch(() => { if (!cancelled) message.error("暂时无法恢复生图任务，请重新打开画布继续取图；不会重新提交生成。"); });
         return () => { cancelled = true; };
-    }, [imageTasks, projectId, projectLoaded]);
+    }, [imageTasks, imageTaskTargets, message, projectId, projectLoaded]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -2813,6 +2819,10 @@ function InfiniteCanvasPage() {
         async (node: CanvasNodeData, imageId?: string) => {
             const taskId = imageId ? node.metadata?.images?.find(image => image.id === imageId)?.imageTaskId : node.metadata?.imageTaskId || node.metadata?.images?.find(image => image.imageTaskId && image.status !== "success")?.imageTaskId;
             const task = taskId && durableImageTasks.tasks.get(taskId);
+            if (taskId && !task) {
+                message.warning("本机缺少原任务记录，请先检查官网用量；不会自动重新生成。");
+                return;
+            }
             if (task && !["completed", "failed"].includes(task.status)) {
                 if (task.remoteId) { await durableImageTasks.resume(task.id); message.info("已继续查询原生图任务，不会重新生成"); }
                 else message.info("提交结果尚未确认，请先查看官网用量；需要重新生成时请明确发起新的生成任务。");

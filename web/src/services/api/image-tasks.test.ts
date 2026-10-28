@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ImageTaskManager, ImageTaskHttpError, imageCredentialFingerprint, imageTaskRequest, taskImageSources, type ImageTask, type ImageTaskDependencies } from "./image-tasks";
-import { applyCanvasImageTask, markCanvasImageTask } from "../../lib/canvas/canvas-image-task";
+import { applyCanvasImageTask, failMissingCanvasImageTasks, markCanvasImageTask } from "../../lib/canvas/canvas-image-task";
 import { CanvasNodeType, type CanvasNodeData } from "../../types/canvas";
 
 const image = { id: "local-0", storageKey: "image:blob", width: 1024, height: 768, bytes: 1234, mimeType: "image/png" };
@@ -52,6 +52,19 @@ test("restart recovers all pending slots and interrupted local downloads without
     assert.equal(restored.manager.tasks.get("local")?.status, "completed");
     assert.equal(restored.calls.submits, 0); assert.equal(download, 1); assert.equal(restored.calls.saves.length, 1);
     await restored.manager.resumeAll(); assert.equal(restored.calls.saves.length, 1);
+});
+
+test("a transient task-cache startup failure can retry recovery without resubmitting", async () => {
+    const saved = new Map([["local", processing()]]);
+    const f = fixture(saved);
+    const list = f.deps.storage.list;
+    let fail = true;
+    f.deps.storage.list = async () => { if (fail) { fail = false; throw new Error("temporary IndexedDB error"); } return list(); };
+    await assert.rejects(f.manager.initialize(), /temporary IndexedDB error/);
+    await f.manager.resumeAll();
+    assert.equal(f.manager.tasks.get("local")?.status, "completed");
+    assert.equal(f.calls.submits, 0);
+    assert.equal(f.calls.polls, 1);
 });
 
 test("a lost submission response, invalid receipt and crash before receipt never trigger a second generation", async () => {
@@ -161,4 +174,34 @@ test("canvas recovery updates only the original node/slot and preserves successf
     assert.equal(applied.metadata?.images?.[1].imageTaskId, undefined);
     assert.equal(applyCanvasImageTask(applied, task, { ...image, url: "blob:restored" }), applied);
     const newer = markCanvasImageTask([marked], target, "newer")[0]; assert.equal(applyCanvasImageTask(newer, task, { ...image, url: "blob:restored" }), newer);
+});
+
+test("missing durable task receipts clear orphaned canvas spinners without resubmitting", () => {
+    const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading", imageTaskId: "missing-task", images: [{ id: "slot", status: "loading", imageTaskId: "missing-task", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }] } };
+    const recovered = failMissingCanvasImageTasks(node, new Map(), "project");
+    assert.equal(recovered.metadata?.status, "error");
+    assert.equal(recovered.metadata?.images?.[0].status, "error");
+    assert.match(recovered.metadata?.errorDetails || "", /检查官网用量/);
+    assert.equal(node.metadata?.status, "loading", "recovery does not mutate the stored snapshot");
+});
+
+test("multi-image recovery settles slots without receipts while preserving active sibling tasks", () => {
+    const target = { projectId: "project", nodeId: "node", imageId: "slot-1" };
+    const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading", images: [ { id: "slot-1", status: "loading", imageTaskId: "active", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }, { id: "slot-2", status: "loading", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" } ] } };
+    const restored = failMissingCanvasImageTasks(node, new Map([["active", { ...processing(), id: "active", target }]]), "project");
+    assert.equal(restored.metadata?.images?.[0].status, "loading");
+    assert.equal(restored.metadata?.images?.[1].status, "error");
+    assert.equal(restored.metadata?.status, "loading", "the active sibling still owns a spinner");
+    const completed = applyCanvasImageTask(restored, { ...processing(), id: "active", target, status: "completed", images: [image] }, { ...image, url: "blob:restored" });
+    assert.equal(completed.metadata?.images?.[0].status, "success");
+    assert.equal(completed.metadata?.images?.[1].status, "error");
+    assert.equal(completed.metadata?.status, "success", "an orphaned sibling cannot leave the node spinning");
+});
+
+test("recovery rejects receipts associated with another node or image slot", () => {
+    const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading", images: [{ id: "slot", status: "loading", imageTaskId: "wrong", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }] } };
+    const wrongTask = { ...processing(), target: { projectId: "project", nodeId: "other-node", imageId: "slot" } };
+    assert.equal(failMissingCanvasImageTasks(node, new Map([["wrong", wrongTask]]), "project").metadata?.status, "error");
+    const wrongSlotTask = { ...processing(), target: { projectId: "project", nodeId: "node", imageId: "other-slot" } };
+    assert.equal(failMissingCanvasImageTasks(node, new Map([["wrong", wrongSlotTask]]), "project").metadata?.images?.[0].status, "error");
 });

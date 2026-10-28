@@ -1,12 +1,33 @@
 import type { ImageTask, ImageTaskTarget } from "@/services/api/image-tasks";
 import type { UploadedImage } from "@/services/image-storage";
-import type { CanvasNodeData, CanvasNodeImage } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage } from "@/types/canvas";
 import { fitNodeSize } from "./canvas-node-size";
 
 export function markCanvasImageTask(nodes: CanvasNodeData[], target: ImageTaskTarget, id: string) {
     return nodes.map(node => node.id !== target.nodeId ? node : {
         ...node, metadata: { ...node.metadata, ...(target.imageId ? { images: node.metadata?.images?.map(image => image.id === target.imageId ? { ...image, imageTaskId: id } : image) } : { imageTaskId: id }) },
     });
+}
+
+export function failMissingCanvasImageTasks(node: CanvasNodeData, tasks: ReadonlyMap<string, ImageTask>, projectId: string): CanvasNodeData {
+    if (node.type !== CanvasNodeType.Image || !node.metadata) return node;
+    const images = node.metadata.images;
+    const matches = (id?: string, imageId?: string) => {
+        const task = id ? tasks.get(id) : undefined;
+        return Boolean(task?.target?.projectId === projectId && task.target.nodeId === node.id && (task.target.imageId ? task.target.imageId === imageId : !imageId || images?.length === 1));
+    };
+    const missingNodeTask = Boolean(node.metadata.imageTaskId && !matches(node.metadata.imageTaskId));
+    const missingImages = images?.some(image => image.imageTaskId ? !matches(image.imageTaskId, image.id) : image.status === "loading" && !matches(node.metadata?.imageTaskId, image.id));
+    const orphanedNode = node.metadata.status === "loading" && !matches(node.metadata.imageTaskId) && !images?.some(image => matches(image.imageTaskId, image.id));
+    if (!missingNodeTask && !missingImages && !orphanedNode) return node;
+    const errorDetails = "本机缺少此生图任务记录，无法确认原任务结果。请先检查官网用量，勿直接重复生成。";
+    const updatedImages = images?.map(image => {
+        const linked = image.imageTaskId ? matches(image.imageTaskId, image.id) : matches(node.metadata?.imageTaskId, image.id);
+        const missing = image.status === "loading" && !linked || Boolean(image.imageTaskId && !matches(image.imageTaskId, image.id));
+        return missing ? { ...image, status: "error" as const, errorDetails } : image;
+    });
+    const status = updatedImages?.some(image => image.status === "loading") ? "loading" : node.metadata.content || updatedImages?.some(image => image.status === "success") ? "success" : "error";
+    return { ...node, metadata: { ...node.metadata, images: updatedImages, status, errorDetails: status === "error" ? errorDetails : undefined } };
 }
 
 export function applyCanvasImageTask(node: CanvasNodeData, task: ImageTask, image?: UploadedImage): CanvasNodeData {

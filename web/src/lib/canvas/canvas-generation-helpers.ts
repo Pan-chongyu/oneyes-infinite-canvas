@@ -131,7 +131,7 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) =>
         node.metadata?.status === "loading"
             ? hasResumableVideoTask(node) || node.metadata.imageTaskId || node.metadata.images?.some(image => image.imageTaskId)
-                ? node
+                ? { ...node, metadata: { ...node.metadata, images: node.metadata.images?.map(image => image.status === "loading" && !image.imageTaskId && !node.metadata?.imageTaskId ? { ...image, status: "error" as const, errorDetails: i18n.t("canvas.generation.interrupted") } : image) } }
                 : {
                       ...node,
                       metadata: {

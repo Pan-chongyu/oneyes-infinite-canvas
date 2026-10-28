@@ -1,7 +1,9 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { builtinPlugins } from '../web/build/builtin-plugins.mjs';
 const webRequire = createRequire(resolve('web/package.json'));
 const { createServer } = await import(pathToFileURL(webRequire.resolve('vite')).href);
@@ -17,6 +19,10 @@ const server = await createServer({
             res.setHeader('Content-Type', 'text/html');
             res.end(await server.transformIndexHtml('/__agent-chat', `<div id="root"></div>${images ? '<script>window.fixtureErrors=[];window.addEventListener("error",e=>window.fixtureErrors.push(e.message));window.addEventListener("unhandledrejection",e=>window.fixtureErrors.push(String(e.reason)));</script>' : ''}<script type="module" src="/test/${fixture}.tsx"></script>`));
         });
+        if (images) server.middlewares.use('/__image-restart', async (_req, res) => {
+            res.setHeader('Content-Type', 'text/html');
+            res.end(await server.transformIndexHtml('/__image-restart', '<div id="root"></div><script>window.fixtureErrors=[];window.addEventListener("error",e=>window.fixtureErrors.push(e.message));window.addEventListener("unhandledrejection",e=>window.fixtureErrors.push(String(e.reason)));</script><script type="module" src="/test/image-restart.tsx"></script>'));
+        });
     } }], server: { host: '127.0.0.1', port: 0 },
 });
 try {
@@ -26,4 +32,16 @@ try {
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
     const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env, stdio: 'inherit' }) : spawn(electron, args, { env, stdio: 'inherit', windowsHide: true });
     process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
+    if (images && !process.exitCode) {
+        const profile = await mkdtemp(join(tmpdir(), 'canvas-image-restart-'));
+        try {
+            for (const phase of ['submit', 'restore', 'completed']) {
+                const args = [resolve('test/fixtures/image-restart.cjs'), `http://127.0.0.1:${server.httpServer.address().port}`];
+                const restartEnv = { ...env, CANVAS_IMAGE_TEST_PROFILE: profile, CANVAS_IMAGE_TEST_PHASE: phase };
+                const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env: restartEnv, stdio: 'inherit' }) : spawn(electron, args, { env: restartEnv, stdio: 'inherit', windowsHide: true });
+                const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
+                if (code) { process.exitCode = code; break; }
+            }
+        } finally { await rm(profile, { recursive: true, force: true }); }
+    }
 } finally { await server.close(); }
