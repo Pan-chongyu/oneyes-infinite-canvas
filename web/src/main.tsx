@@ -11,6 +11,7 @@ import { initAnalytics } from "@/lib/analytics";
 import { useConfigStore } from "@/stores/use-config-store";
 import { router } from "@/router";
 import { initializeDesktopTransport } from "@/services/api/desktop-transport";
+import { initializeImageTasks } from "@/stores/use-image-task-store";
 
 initAnalytics();
 initializeDesktopTransport();
@@ -18,6 +19,7 @@ initializeDesktopTransport();
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 
 await useConfigStore.persist.rehydrate();
+initializeImageTasks();
 
 createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

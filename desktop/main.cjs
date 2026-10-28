@@ -55,7 +55,7 @@ app.whenReady().then(async () => {
                         ...(body ? { body } : {}),
                     }, target.proxy);
                 } catch (error) {
-                    if (index + 1 < urls.length) continue;
+                    if (['GET', 'HEAD'].includes(request.method) && index + 1 < urls.length) continue;
                     throw error;
                 }
                 // Only read requests may fail over after an HTTP gateway error.

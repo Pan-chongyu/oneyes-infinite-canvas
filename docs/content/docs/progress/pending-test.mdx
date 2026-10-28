@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.25：文生图与参考图编辑走官网异步任务接口，提交后断网、切页、刷新或重启应凭原任务编号自动取图，结果存入生成记录和本机 Blob；重新打开原画布应恢复原节点／图槽，不覆盖其他图片或后来任务。检查 Key 切换／删除、下载中断、服务端失败和到期；响应未返回任务编号时不自动重发或回退同步生成，应提示先检查用量。生图工作台任务面板可以继续取图，暂停等待不表示取消服务端任务。轮询遵从服务端 Retry-After，单次请求沿用已有超时，不新增任务总等待上限。已完成隔离 Electron 重启／IndexedDB／Blob 回归和官网单次付费生图的跨进程取图验证；TODO 已核对，无对应待办需迁移。
+
 - OneYes Canvas v0.20.24：从应用中心或公开 Release 安装后，在未安装 OneYes Desktop 的干净环境中启动 Canvas，确认独立登录、手动 Key、直连优先与只读请求回退均可用；关闭主客户端后 Canvas 仍可生成、恢复待处理任务并使用本地配置。验证 Windows、macOS、Linux 各架构安装包和 OTA 清单的签名、校验和、更新下载、安装重启及失败重试；Canvas 不应依赖主客户端进程、端口或配置文件。
 
 - OneYes Canvas v0.20.23: install this bootstrap release once from the application center, then use the compact built-in OTA entry. Verify background checks/downloads, version/progress, explicit install/relaunch, offline restoration, retry and cache cleanup. Native hardware must win over emulation and Linux formats stay separate. Check writable macOS Applications location, ad-hoc signing, package-manager authorization/cancellation and rollback on failed native launch. Installation flushes canvas storage and blocks active chat turns; users must finish other generation tasks first. Tampered manifests/packages must never run. Future releases require real full upgrade validation in addition to isolated CI. No TODO changes.

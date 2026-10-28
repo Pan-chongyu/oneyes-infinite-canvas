@@ -1,4 +1,5 @@
 import axios from "axios";
+import { MEDIA_POLL_INTERVAL_MS } from "./media-request-policy";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
@@ -54,7 +55,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
         if (state.status === "completed") return state.result;
         if (state.status === "failed") throw videoTaskFailed(state.error);
         if (attempt === 119) throw new Error(apiText("videoTimeout", { provider: "" }));
-        await delay(2500, options?.signal);
+        await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
     }
     throw new Error(apiText("videoTimeout", { provider: "" }));
 }

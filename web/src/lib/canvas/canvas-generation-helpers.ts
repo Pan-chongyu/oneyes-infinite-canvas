@@ -130,7 +130,7 @@ export function hasResumableVideoTask(node: CanvasNodeData) {
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) =>
         node.metadata?.status === "loading"
-            ? hasResumableVideoTask(node)
+            ? hasResumableVideoTask(node) || node.metadata.imageTaskId || node.metadata.images?.some(image => image.imageTaskId)
                 ? node
                 : {
                       ...node,

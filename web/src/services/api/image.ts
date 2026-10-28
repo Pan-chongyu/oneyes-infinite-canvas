@@ -1,4 +1,6 @@
-import { isOneYes, requestImageStream } from "./image-stream";
+import { isOneYes } from "./image-stream";
+import { IMAGE_REQUEST_TIMEOUT_MS } from "./media-request-policy";
+import { requestDurableImage, type AsyncImageOptions, type GeneratedImageResult } from "@/stores/use-image-task-store";
 import axios from "axios";
 
 import i18n from "@/i18n";
@@ -96,7 +98,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal; onPartial?: (image: string) => void };
+type RequestOptions = AsyncImageOptions & { onPartial?: (image: string) => void };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
@@ -107,7 +109,6 @@ const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
 // 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
-const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 
@@ -694,7 +695,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
+export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<GeneratedImageResult[]> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
@@ -741,17 +742,17 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             };
         const url = aiApiUrl(requestConfig, "/images/generations");
         const headers = aiHeaders(requestConfig, "application/json");
-        const payload = isOneYes(requestConfig.baseUrl)
-            ? await requestImageStream(url, requestBody, headers, { ...options, timeoutMs: IMAGE_REQUEST_TIMEOUT_MS })
-            : (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
+        if (isOneYes(requestConfig.baseUrl)) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/generations/async", requestBody, options);
+        const payload = (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
         const images = await parseImagePayload(payload);
         return images;
     } catch (error) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<GeneratedImageResult[]> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
@@ -811,12 +812,12 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     try {
         const url = aiApiUrl(requestConfig, "/images/edits"), headers = aiHeaders(requestConfig);
-        const payload = isOneYes(requestConfig.baseUrl)
-            ? await requestImageStream(url, formData, headers, { ...options, timeoutMs: IMAGE_REQUEST_TIMEOUT_MS })
-            : (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
+        if (isOneYes(requestConfig.baseUrl)) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/edits/async", formData, options, references);
+        const payload = (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
         const images = await parseImagePayload(payload);
         return images;
     } catch (error) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
 }

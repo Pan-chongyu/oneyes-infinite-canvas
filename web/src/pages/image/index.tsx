@@ -16,6 +16,8 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration } from "@/services/api/image";
+import { imageTasks as durableImageTasks, storedTaskImage, storeGeneratedImage, useImageTaskStore } from "@/stores/use-image-task-store";
+import { ImageTasksPanel } from "./image-tasks-panel";
 import { deleteStoredImages, ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -31,10 +33,12 @@ type GeneratedImage = {
     height: number;
     bytes: number;
     mimeType?: string;
+    taskId?: string;
 };
 
 type GenerationResult = {
     id: string;
+    taskId?: string;
     status: "pending" | "success" | "failed";
     image?: GeneratedImage;
     error?: string;
@@ -75,6 +79,7 @@ export default function ImagePage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const config = useConfigStore((state) => state.config);
+    const imageTasks = useImageTaskStore((state) => state.tasks);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -83,6 +88,8 @@ export default function ImagePage() {
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
+    const resultsRef = useRef(results);
+    resultsRef.current = results;
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
@@ -105,6 +112,7 @@ export default function ImagePage() {
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
+    const imageHistoryRevision = imageTasks.filter(task => task.status === "completed").map(task => task.id).join(":");
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -114,7 +122,19 @@ export default function ImagePage() {
 
     useEffect(() => {
         void refreshLogs();
-    }, []);
+        const recover = async () => {
+            const completed = await Promise.all(imageTasks.filter(task => task.status === "completed" && task.images[0] && resultsRef.current.some(result => result.taskId === task.id && result.status !== "success")).map(async task => ({ task, stored: await storedTaskImage(task.images[0]) })));
+            if (!completed.length) return;
+            setResults(previous => previous.map(result => {
+                const item = completed.find(item => item.task.id === result.taskId);
+                if (!item || result.status === "success") return result;
+                return { ...result, status: "success", image: { id: item.task.images[0].id, taskId: item.task.id, dataUrl: item.stored.url, ...item.stored, durationMs: Date.now() - item.task.createdAt }, error: undefined };
+            }));
+        };
+        void recover();
+        // Refresh history only when a task finishes, rather than on every poll.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [imageHistoryRevision]);
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -189,7 +209,7 @@ export default function ImagePage() {
         if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
 
         try {
-            saveLog(
+            if (!successImages.some(image => image.taskId)) saveLog(
                 buildLog({
                     prompt: text,
                     model,
@@ -278,7 +298,7 @@ export default function ImagePage() {
 
     const deleteSelectedLogs = () => {
         const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+        void Promise.all([...imageTasks.filter(task => task.status === "completed" && selectedLogIds.includes(task.logId)).map(task => durableImageTasks.remove(task.id))]).then(() => Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))])).then(refreshLogs);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -316,18 +336,18 @@ export default function ImagePage() {
             openConfigDialog(true);
             return null;
         }
-        return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
+        return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references], taskLogId: nanoid() };
     };
 
-    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
+    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[]; taskLogId: string }) => {
         const itemStartedAt = performance.now();
         try {
-            const options = { onPartial: (partial: string) => setResults(value => updateResultAt(value, index, { partial })) };
+            const options = { taskLogId: snapshot.taskLogId, onTask: (taskId: string) => setResults(value => updateResultAt(value, index, { taskId })), onPartial: (partial: string) => setResults(value => updateResultAt(value, index, { partial })) };
             const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, options) : await requestGeneration(snapshot.config, snapshot.text, options);
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
-            const stored = await uploadImage(image.dataUrl);
-            const nextImage: GeneratedImage = { id: image.id, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            const stored = await storeGeneratedImage(image);
+            const nextImage: GeneratedImage = { id: image.id, taskId: image.taskId, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
             setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
             return nextImage;
         } catch (error) {
@@ -337,6 +357,12 @@ export default function ImagePage() {
     };
 
     const retryResult = async (index: number) => {
+        const task = durableImageTasks.tasks.get(results[index]?.taskId || "");
+        if (task && !["completed", "failed"].includes(task.status)) {
+            if (task.remoteId) { await durableImageTasks.resume(task.id); message.info("已继续取图，不会重新生成"); }
+            else message.info("请先检查官网用量，确认提交结果后再发起新的生成任务。");
+            return;
+        }
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
         setPreviewLog(null);
@@ -344,7 +370,7 @@ export default function ImagePage() {
         const retryStartedAt = performance.now();
         try {
             const image = await runGenerationSlot(index, snapshot);
-            saveLog(
+            if (!image.taskId) saveLog(
                 buildLog({
                     prompt: snapshot.text,
                     model,
@@ -380,6 +406,7 @@ export default function ImagePage() {
 
                 <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
                     <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
+                        <ImageTasksPanel />
                         <div>
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
