@@ -54,7 +54,7 @@ app.whenReady().then(async () => {
         await js('updateTest.status("ready")');
         await wait('document.body.textContent.includes("新版本 v0.20.21")');
         const before = await js('document.querySelector("section").getBoundingClientRect().toJSON()');
-        assert.ok(before.width <= 321 && before.height < 320, 'compact update panel');
+        assert.ok(before.width <= 281 && before.height < 300, 'compact update panel');
         if (process.env.CANVAS_UPDATE_SCREENSHOT) {
             await js('new Promise(resolve => requestAnimationFrame(resolve))');
             writeFileSync(process.env.CANVAS_UPDATE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());

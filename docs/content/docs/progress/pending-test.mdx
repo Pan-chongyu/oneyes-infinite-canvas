@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.39：桌面打开更新面板，宽度约 280px，检查状态下减少卡片留白和按钮高度；下载进度、版本信息、错误提示与就绪安装说明仍清晰可读。浅色／深色下按钮文字和图标保持足够对比度；窄窗口时面板不超出窗口边缘。OTA 检查、签名、下载与安装行为不变。
+
 - OneYes Canvas v0.20.38：在浅色和深色主题打开软件更新面板，确认检查、下载、安装、就绪和错误状态的按钮文字与图标均清晰可读；检查或下载进行中按钮仍按既有流程禁用。回归覆盖生产环境的 Ant Design 重置样式，确保主题前景色不会被原生按钮规则覆盖；不改变更新签名校验、当前版本、代理和 OTA 缓存。TODO 已核对，无对应事项需迁移。
 
 - OneYes Canvas v0.20.36：在 macOS 环境中设置 HTTP/HTTPS/ALL_PROXY 且未添加本机例外时，升级并重新打开 Canvas，新建或恢复对话应正常加载 infinite-canvas 工具并允许发送。内置 Codex 只在子进程环境中合并 127.0.0.1、localhost、::1 代理例外，保留已有 NO_PROXY/no_proxy 规则、远程代理、账户、模型、MCP 和历史；不增加启动超时、重试或付费请求。自动回归用不可达代理验证真实 Codex 线程的 MCP 握手与 canvas_get_state 工具清单，六种平台打包检查执行相同验证。画布连接失败的提示不再声称对话仍可发送；TODO 已核对，无对应事项需迁移。

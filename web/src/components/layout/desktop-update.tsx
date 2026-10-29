@@ -29,16 +29,16 @@ export function DesktopUpdate() {
         await desktopUpdate('install');
     };
     return <div className="fixed bottom-3 left-3 z-[1300] max-w-[calc(100vw-24px)] text-foreground" data-canvas-no-zoom>
-        {open ? <section aria-label="软件更新" className="mb-2 w-[320px] max-w-full rounded-xl border border-border bg-popover p-4 shadow-lg">
-            <div className="flex items-center justify-between gap-3"><span className="text-sm font-medium">软件更新</span><button onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="关闭更新面板"><X className="size-4" /></button></div>
-            <p className="mb-0 mt-3 text-sm font-medium" aria-live="polite">{ready ? `新版本 v${state.version} 已下载完成` : label}</p>
-            <p className="mb-0 mt-1 text-xs text-muted-foreground">当前版本 v{state.currentVersion}</p>
+        {open ? <section aria-label="软件更新" className="mb-2 w-[280px] max-w-full rounded-xl border border-border bg-popover p-3 shadow-lg">
+            <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">软件更新</span><button onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="关闭更新面板"><X className="size-3.5" /></button></div>
+            <p className="mb-0 mt-2 text-[13px] font-medium" aria-live="polite">{ready ? `新版本 v${state.version} 已下载完成` : label}</p>
+            <p className="mb-0 mt-1 text-[11px] text-muted-foreground">当前版本 v{state.currentVersion}</p>
             {state.status === 'downloading' ? <p className="mb-0 mt-1 text-xs text-muted-foreground">{state.phase === 'reconstructing' ? '下载完成，正在准备并校验更新' : state.mode === 'delta' ? '正在下载增量更新包' : '正在下载完整更新包'}</p> : null}
             {state.notes && ready ? <p className="mb-0 mt-3 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{state.notes}</p> : null}
             {state.error ? <p role="alert" className="mb-0 mt-3 text-xs leading-5 text-muted-foreground">{state.error}</p> : null}
             {state.status === 'downloading' ? <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={state.progress} aria-valuemin={0} aria-valuemax={100} aria-label="更新下载进度"><div className="h-full bg-foreground transition-[width] motion-reduce:transition-none" style={{ width: `${state.progress}%` }} /></div> : null}
             {ready ? <p className="mb-0 mt-3 text-xs text-muted-foreground">点击后安装并重新打开应用；请先结束正在运行的生成任务。</p> : null}
-            <button type="button" disabled={busy || !state.supported} aria-busy={busy || undefined} onClick={() => ready ? void install() : void desktopUpdate('check')} style={{ color: 'var(--primary-foreground)' }} className="mt-4 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-primary text-xs font-medium disabled:cursor-default disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Icon className={`size-3.5 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} />{ready ? '更新并重启' : state.status === 'error' ? '重试更新' : busy ? label : '检查更新'}</button>
+            <button type="button" disabled={busy || !state.supported} aria-busy={busy || undefined} onClick={() => ready ? void install() : void desktopUpdate('check')} style={{ color: 'var(--primary-foreground)' }} className="mt-3 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium disabled:cursor-default disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Icon className={`size-3 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} />{ready ? '更新并重启' : state.status === 'error' ? '重试更新' : busy ? label : '检查更新'}</button>
         </section> : null}
         <button onClick={() => setOpen(!open)} aria-expanded={open} title={ready ? `v${state.version} 已就绪，点击更新` : '软件更新'} className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${ready ? 'bg-popover text-foreground shadow-sm' : 'text-muted-foreground'}`}>
             <Icon className={`size-3 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /><span aria-live="polite">{label}</span>{ready ? <span className="size-1.5 rounded-full bg-emerald-500" /> : null}
