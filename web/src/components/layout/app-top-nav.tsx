@@ -83,19 +83,19 @@ export function AppTopNav() {
                             );
                         })}
                     </nav>
-                    <div className={`hidden shrink-0 space-y-3 border-t border-border pt-3 md:block ${window.oneYesDesktop?.updates ? 'pb-12' : 'pb-4'}`}>
+                    <div className={`hidden shrink-0 space-y-1.5 border-t border-border/80 pt-2.5 md:block ${window.oneYesDesktop?.updates ? 'pb-12' : 'pb-3'}`}>
                         <button
                             type="button"
                             onClick={togglePanel}
                             aria-expanded={panelOpen}
-                            className={cn("flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors hover:bg-sidebar-accent", panelOpen ? "bg-sidebar-accent text-foreground" : "text-muted-foreground")}
+                            className={cn("flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-[13px] transition-colors duration-150 hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", panelOpen ? "bg-sidebar-accent text-foreground" : "text-muted-foreground")}
                         >
-                            <Bot className="size-4 shrink-0" />
+                            <Bot className="size-4 shrink-0" strokeWidth={1.8} />
                             <span className="flex-1">{t("topNav.assistant")}</span>
-                            {agentConnected ? <span className="size-1.5 rounded-full bg-emerald-500" aria-label={t("agent.status.connected")} /> : null}
+                            {agentConnected ? <span className="size-1.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/15" role="status" aria-label={t("agent.status.connected")} title={t("agent.status.connected")} /> : null}
                         </button>
-                        <div className="flex items-center justify-between px-2">
-                            <span className="min-w-0 truncate text-xs text-muted-foreground">{t("home.workspaceLabel")}</span>
+                        <div className="flex h-8 items-center justify-between gap-1 rounded-md px-1.5">
+                            <span className="min-w-0 truncate text-[11px] leading-none text-muted-foreground">{t("home.workspaceLabel")}</span>
                             <UserStatusActions showConfig={false} />
                         </div>
                     </div>
