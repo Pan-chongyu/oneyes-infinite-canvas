@@ -9,7 +9,7 @@ Canvas 是独立 Electron 应用；本通道不修改 OneYes Desktop 的 Tauri/S
 - `canvas-latest.json` 的原始 UTF-8 字节使用 Ed25519 签名；公钥固定在 `desktop/update-key.cjs`，私钥只放 GitHub Actions 的 `CANVAS_OTA_PRIVATE_KEY` 和本机忽略目录中的备份。不能随意换公钥，否则已安装客户端将拒绝后续更新；严禁把私钥提交到仓库或写进日志。
 - 客户端固定读取 `https://github.com/Pan-chongyu/oneyes-infinite-canvas/releases/latest/download/canvas-latest.json` 及同地址 `.sig`。签名校验后，严格检查版本、仓库、标签、文件名、大小和 SHA-256。下载完成后及安装前均验证文件，损坏或不可信的包不得执行。增量清单同时绑定源包和目标完整包哈希；源包缺失、增量损坏或重建结果不一致时自动回退同一签名清单中的完整包。
 - 启动时和每 6 小时检查，自动后台下载新版本；不开启退出时自动安装。完成后显示新版版本号，由用户点击“更新并重启”。失败保留当前版本并支持手动重试，已有完整且有效的新包在离线重启后可恢复。
-- Windows 通过原生 `os.machine()`（GetNativeSystemInfo）识别芯片；macOS 检查 `hw.optional.arm64`，避免 Rosetta 错配；Linux 使用原生 machine。DEB/RPM/AppImage 使用独立平台键，包管理器仅识别安装格式，不用于推断架构。
+- Windows 通过原生 `os.machine()`（GetNativeSystemInfo）识别芯片；macOS 检查 `hw.optional.arm64`，避免 Rosetta 错配；Linux 使用原生 machine。GitHub Actions 使用 `macos-15` 构建 Apple Silicon、`macos-15-intel` 构建 Intel。DEB/RPM/AppImage 使用独立平台键，包管理器仅识别安装格式，不用于推断架构。
 - Windows 使用 NSIS 静默覆盖原目录，安装后重新打开；macOS 使用已签名清单中的 ZIP，校验 Bundle ID、版本、可执行文件与 ad-hoc codesign，等待新应用完成界面启动后才删除旧应用；AppImage 同样等待启动确认，失败回滚。DEB/RPM 调用系统 `pkexec` 获取正常安装授权，取消后保留原应用并允许重试。
 - macOS 当前保留 ad-hoc 自签名，不声称 Apple 公证；应用必须放在可写目录，推荐“应用程序”。不调用系统钥匙串，不更换用户的 API Key、Codex 或 MCP 配置。
 - 更新缓存仅保留当前完整新包和一份经过验证的当前版本基包；中断的 `.part` 文件、增量临时文件和旧版本目录会清理。首次升级到支持增量的版本仍需完整包，后续同平台同格式升级才使用增量包。升级后首次成功加载界面即清理已安装及历史更新包。新版本准备失败时保留可继续运行的旧应用，不删除本地画布、账户或配置。
