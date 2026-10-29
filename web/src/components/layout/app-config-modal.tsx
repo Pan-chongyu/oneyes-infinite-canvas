@@ -279,7 +279,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         </div>
                                         <div className="text-xs text-stone-500">{webdav.lastSyncedAt ? t("config.webdav.lastSynced", { time: formatWebdavTime(webdav.lastSyncedAt, locale) }) : t("config.webdav.neverSynced")}</div>
                                     </div>
-                                    <div className="grid gap-4 md:grid-cols-2">
+                                    <fieldset disabled={testingWebdav || syncingWebdav} className="grid min-w-0 gap-4 border-0 p-0 md:grid-cols-2">
                                         <Form.Item label={t("config.webdav.url")} className="mb-4">
                                             <Input value={webdav.url} placeholder="https://nas.example.com/webdav" onChange={(event) => updateWebdavConfig("url", event.target.value)} />
                                         </Form.Item>
@@ -292,7 +292,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         <Form.Item label={t("config.webdav.password")} className="mb-0">
                                             <Input.Password value={webdav.password} autoComplete="current-password" onChange={(event) => updateWebdavConfig("password", event.target.value)} />
                                         </Form.Item>
-                                    </div>
+                                    </fieldset>
                                     <div className="mt-4 flex flex-wrap items-center gap-2">
                                         <Button icon={<Wifi className="size-4" />} disabled={!webdavReady || syncingWebdav} loading={testingWebdav} onClick={() => void testWebdav()}>
                                             {t("config.webdav.test")}

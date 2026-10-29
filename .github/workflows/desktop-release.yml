@@ -67,6 +67,7 @@ jobs:
       - run: npm run test:chat
       - run: npm run test:ota-ui
       - run: npm run test:images
+      - run: npm run test:webdav
       - run: npm --prefix web run typecheck
       - run: npm run build
       - run: npm run test:codec

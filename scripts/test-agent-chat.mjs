@@ -11,7 +11,8 @@ const { createServer, build, preview } = await import(pathToFileURL(webRequire.r
 const { default: react } = await import(pathToFileURL(webRequire.resolve('@vitejs/plugin-react')).href);
 const updates = process.argv.includes('--updates');
 const images = process.argv.includes('--images');
-const fixture = images ? 'image-tasks' : updates ? 'desktop-update' : 'agent-chat';
+const webdav = process.argv.includes('--webdav');
+const fixture = images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
 const server = images ? await imageFixtureServer({ build, preview, react, builtinPlugins }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },

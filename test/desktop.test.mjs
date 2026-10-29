@@ -51,3 +51,25 @@ test('native image downloads preserve signed URLs and never forward app credenti
     assert.equal((await downloadImage(request, url, async () => new Response('<html>login</html>', { headers: { 'Content-Type': 'text/html' } }))).status, 502);
     assert.equal((await downloadImage(request, url, async () => new Response(null, { status: 403 }))).status, 403);
 });
+
+test('WebDAV routes preserve methods and validators but reject credential-leaking redirects', async () => {
+    const { requestWebdav } = require('../desktop/webdav.cjs'), root = resolve('web/dist');
+    const target = 'https://dav.example.test/dav/';
+    assert.deepEqual(route('oneyes-canvas://app/webdav?url=' + encodeURIComponent(target), root), { webdav: target });
+    for (const value of ['file:///secret', 'https://u:p@dav.test/', 'https://dav.test/#secret']) assert.throws(() => route('oneyes-canvas://app/webdav?url=' + encodeURIComponent(value), root));
+    const request = new Request('https://app.test/', { method: 'PUT', body: 'original', headers: { Authorization: 'Basic test', Cookie: 'private', 'Proxy-Authorization': 'private', 'If-Match': '"v1"' } });
+    let calls = 0;
+    const response = await requestWebdav(request, target, async (url, init) => {
+        calls++; assert.equal(init.method, 'PUT'); assert.equal(Buffer.from(init.body).toString(), 'original'); assert.equal(init.headers.get('authorization'), 'Basic test');
+        assert.equal(init.headers.get('if-match'), '"v1"'); assert.equal(init.headers.has('cookie'), false); assert.equal(init.headers.has('proxy-authorization'), false);
+        assert.equal(init.redirect, 'manual'); assert.equal(init.credentials, 'omit');
+        return url === target ? new Response(null, { status: 308, headers: { location: 'files/' } }) : new Response(null, { status: 201 });
+    });
+    assert.equal(response.status, 201); assert.equal(calls, 2);
+    for (const location of ['https://evil.test/collect', 'http://dav.example.test/downgrade', target]) {
+        let seen = 0;
+        await assert.rejects(requestWebdav(new Request('https://app.test/'), target, async () => { seen++; return new Response(null, { status: 302, headers: { location } }); }), /WebDAV/);
+        assert.equal(seen, 1);
+    }
+    assert.equal((await requestWebdav(new Request('https://app.test/', { method: 'DELETE' }), target, () => { throw Error('must not execute'); })).status, 405);
+});

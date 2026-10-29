@@ -12,9 +12,20 @@ async function runProxySmoke(window) {
         const invalidModel = await window.webContents.executeJavaScript("window.oneYesDesktop.models.list('')");
         assert.match(invalidModel.error, /有效的 OneYes API Key/);
         let seen = 0;
+        const davFiles = new Map(), davMethods = new Set();
         const origin = await listen(http.createServer(async (req, res) => {
             const chunks = []; for await (const chunk of req) chunks.push(chunk);
             assert.equal(req.headers['proxy-authorization'], undefined);
+            if (req.url.startsWith('/dav/')) {
+                davMethods.add(req.method);
+                assert.equal(req.headers.authorization, 'Basic ' + Buffer.from('dav:app-password').toString('base64'));
+                assert.equal(req.headers.cookie, undefined);
+                if (req.method === 'PUT') { davFiles.set(req.url, Buffer.concat(chunks)); res.writeHead(201); }
+                else if (req.method === 'MKCOL') res.writeHead(201);
+                else if (req.method === 'PROPFIND') { assert.equal(req.headers.depth, '0'); res.writeHead(207); }
+                else { res.setHeader('content-type', 'application/octet-stream'); return res.end(davFiles.get(req.url)); }
+                return res.end(); // Deliberately no CORS headers.
+            }
             res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ value: Buffer.concat(chunks).toString() }));
         }));
         const proxy = await listen(http.createServer((req, res) => {
@@ -41,6 +52,26 @@ async function runProxySmoke(window) {
             }
         })()`);
         assert.equal(result.value, 'proxy-smoke'); assert.equal(seen, 1);
+        const webdav = 'oneyes-canvas://app/webdav?url=' + encodeURIComponent(`http://127.0.0.1:${origin}/dav/`);
+        await window.webContents.executeJavaScript(`(async () => {
+            const key = 'infinite-canvas:ai_config_store', previous = await window.oneYesDesktop.storage.getItem(key);
+            try {
+                for (const config of [{proxyEnabled:false}, ${JSON.stringify(settings)}]) {
+                    await window.oneYesDesktop.storage.setItem(key, JSON.stringify({state:{config}}));
+                    for (const method of ['MKCOL','PROPFIND','PUT','GET']) {
+                        const response = await fetch(${JSON.stringify(webdav)}, { method, headers: {Authorization:'Basic '+btoa('dav:app-password'),Depth:'0'}, ...(method === 'PUT' ? {body:'native-dav-bytes'} : {}) });
+                        if (!response.ok) throw Error('Packaged DAV '+method+' failed: '+response.status);
+                        if (method === 'GET') { if (await response.text() !== 'native-dav-bytes') throw Error('DAV media changed'); }
+                        else await response.body?.cancel();
+                    }
+                }
+            } finally {
+                if (previous) await window.oneYesDesktop.storage.setItem(key, previous);
+                else await window.oneYesDesktop.storage.removeItem(key);
+            }
+        })()`);
+        assert.deepEqual([...davMethods].sort(), ['GET', 'MKCOL', 'PROPFIND', 'PUT']);
+        assert.equal(seen, 5);
     } finally {
         for (const socket of sockets) socket.destroy();
         await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));

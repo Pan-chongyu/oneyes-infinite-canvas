@@ -631,7 +631,7 @@ export default {
         },
         webdav: {
             title: "WebDAV 同步",
-            description: "同步画布、我的资产、生成记录和本地媒体文件，不包含 AI API Key。开启本地代理时经本机代理转发，否则浏览器直连 WebDAV。",
+            description: "同步画布、我的资产、生成记录和本地原始媒体，不同步 AI API Key。桌面版直接连接 WebDAV，并沿用已保存的 HTTP / SOCKS 代理；网页版需服务端允许跨域或使用本地转发代理。",
             lastSynced: "上次同步 {{time}}",
             neverSynced: "尚未同步",
             url: "WebDAV 地址",
@@ -672,7 +672,7 @@ export default {
                 uploadManifest: "上传清单 {{size}}",
                 complete: "完成",
             },
-            errors: { testFailed: "WebDAV 连接测试失败", downloadFailed: "读取 WebDAV 同步文件失败", downloadTimeout: "读取 WebDAV 同步文件超时", emptyUpload: "上传文件为空，已取消上传", uploadFailed: "上传 WebDAV 同步文件失败", directoryFailed: "创建 WebDAV 远程目录失败", requestTimeout: "WebDAV 请求超时，请检查网络或远端服务状态", connectionFailed: "无法连接 WebDAV，请检查地址、HTTPS 证书、CORS 或网络状态", urlRequired: "请先填写 WebDAV 地址", authenticationFailed: "WebDAV 认证失败，请检查用户名、密码或应用密码", pathMissing: "WebDAV 路径不存在，请检查地址和远程目录", responseFailed: "{{fallback}}：{{status}}{{detail}}", syncFailed: "同步失败", invalidManifest: "{{domain}} 同步清单不是当前应用的数据" },
+            errors: { mediaCorrupt: "媒体文件 {{key}} 不完整或校验失败，已保留本地数据，请检查远端文件后重试", mediaMissing: "媒体文件 {{key}} 缺失，已停止该业务同步；请从原设备补齐后重试", busy: "同步仍在进行，请等待完成后再试", quota: "WebDAV 存储空间不足，请清理空间后重试", locked: "WebDAV 文件被锁定，请等待其他设备完成同步后重试", conflict: "其他设备已更新远端数据，本次未覆盖。请再次点击立即同步以合并最新数据", permissionDenied: "WebDAV 无访问或写入权限，请检查目录权限或应用密码", emptyDownload: "WebDAV 文件为空，已停止同步并保留本地数据", invalidPath: "远程目录不能包含 .、..、反斜杠或编码后的路径分隔符", invalidUrl: "请输入完整的 http:// 或 https:// WebDAV 地址；用户名和密码请分别填写，地址不要包含查询参数或锚点", testFailed: "WebDAV 连接测试失败", downloadFailed: "读取 WebDAV 同步文件失败", downloadTimeout: "读取 WebDAV 同步文件超时", emptyUpload: "上传文件为空，已取消上传", uploadFailed: "上传 WebDAV 同步文件失败", directoryFailed: "创建 WebDAV 远程目录失败", requestTimeout: "WebDAV 请求超时，请检查网络或远端服务状态", connectionFailed: "无法连接 WebDAV，请检查最终服务地址、证书和网络；网页版还需允许跨域或启用转发代理", urlRequired: "请先填写 WebDAV 地址", authenticationFailed: "WebDAV 认证失败，请检查用户名、密码或应用密码", pathMissing: "WebDAV 路径不存在，请检查地址和远程目录", responseFailed: "{{fallback}}：{{status}}{{detail}}", syncFailed: "同步失败", invalidManifest: "{{domain}} 同步清单损坏、版本不支持或格式不正确，已停止该业务同步并保留现有数据" },
         },
         protocols: {
         },

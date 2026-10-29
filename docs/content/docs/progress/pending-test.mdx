@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.35：在 Windows、macOS、Linux 桌面版分别用 Nextcloud、群晖或其他 WebDAV 服务测试中文/空格远程目录、应用密码、已保存的 HTTP/SOCKS 代理和无 CORS 服务；测试连接应创建缺失目录并接受已有目录，上传画布、资产、生成记录及原始媒体后在另一设备下载并校验 SHA-256。两台设备同时同步时，较新的 ETag 应阻止覆盖并提示再次同步；损坏清单、缺失媒体、锁定、权限和空间不足应保留本地数据，不应泄露 Basic Auth、Cookie 或服务端 HTML。网页版需验证 CORS/本地转发代理。已加入协议、路径、认证、代理、重定向、清单校验和冲突回归；TODO 已核对，无对应事项需迁移。
+
 - OneYes Canvas v0.20.34：Windows、macOS、Linux 的 x64/ARM64 原生 OTA 按当前版本选择 BSDIFF 增量包，基包缺失或不可信、增量篡改／截断、重建结果不符时回退完整包。自动回归覆盖签名、跨架构隔离、基包迁移与清理、全部十种目标的补丁重建；六种安装包启动检查实际离线运行 ASAR 内的 Worker/WASM。发布端对单个大包差分生成设置两分钟上限，超时或补丁不小于完整包时只发布完整包，避免阻塞正式发布；需在真实设备验证后续增量安装与自动重开。已核对 TODO，无对应事项需迁移。
 
 - OneYes Canvas v0.20.30：实际双图参考编辑在发送前无损重编码为 WebP，不缩图、不改本机原图，去除相机 JPEG 多图扩展并减小大 PNG；WebP 编码不支持时使用原尺寸无损 PNG。已用用户私有 ZIP 的两张 4096×3072 图片经过真实桌面 multipart，核对输出原尺寸、解码像素哈希、顺序和三进程任务恢复；不提交真实图片或发送付费生图。合成测试包含 EXIF 旋转、MPF、透明度、同名混合格式、缺失/损坏图及取消。生产构建独立验证本机 Worker/WASM 无外网加载。请在 macOS 升级后，用同一画布验证真实服务端编辑；既有导出缺失任务记录不会凭空恢复，不能自动重复生成。TODO 已核对，无对应事项需要迁移。

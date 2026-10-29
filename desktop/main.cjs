@@ -3,6 +3,7 @@ const { join, resolve } = require('node:path');
 const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
 const { downloadImage } = require('./image-download.cjs');
+const { requestWebdav } = require('./webdav.cjs');
 const { createAccount } = require('./account.cjs');
 const { createAgent } = require('./agent.cjs');
 const { createNetwork } = require('./network.cjs');
@@ -42,6 +43,7 @@ app.whenReady().then(async () => {
             const target = route(request.url, root);
             if (target.file) return net.fetch(target.file);
             if (target.image) return await downloadImage(request, target.image, network.fetch);
+            if (target.webdav) return await requestWebdav(request, target.webdav, network.fetch);
             if (!['GET', 'HEAD', 'POST', 'DELETE', 'PATCH', 'PUT', 'OPTIONS', 'PROPFIND', 'MKCOL', 'COPY', 'MOVE', 'LOCK', 'UNLOCK', 'PROPPATCH'].includes(request.method)) return new Response(null, { status: 405 });
             const headers = {};
             const skip = new Set(['host', 'connection', 'content-length', 'accept-encoding', 'origin', 'referer', 'proxy-authorization']);
@@ -70,7 +72,7 @@ app.whenReady().then(async () => {
             const responseHeaders = new Headers(upstream.headers);
             for (const name of ['content-encoding', 'content-length', 'transfer-encoding', 'connection']) responseHeaders.delete(name);
             return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
-        } catch (error) { return Response.json({ error: { message: /^(代理|请填写代理)/.test(error.message) ? error.message : '连接服务失败，请检查网络后重试' } }, { status: 502 }); }
+        } catch (error) { return Response.json({ error: { message: /^(代理|请填写代理|WebDAV)/.test(error.message) ? error.message : '连接服务失败，请检查网络后重试' } }, { status: 502 }); }
     });
     const trusted = event => {
         if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('oneyes-canvas://app/')) throw new Error('拒绝访问配置');

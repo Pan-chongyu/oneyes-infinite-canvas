@@ -15,4 +15,4 @@ Canvas 是独立 Electron 应用；本通道不修改 OneYes Desktop 的 Tauri/S
 - 更新缓存仅保留当前完整新包和一份经过验证的当前版本基包；中断的 `.part` 文件、增量临时文件和旧版本目录会清理。首次升级到支持增量的版本仍需完整包，后续同平台同格式升级才使用增量包。升级后首次成功加载界面即清理已安装及历史更新包。新版本准备失败时保留可继续运行的旧应用，不删除本地画布、账户或配置。
 - UI 安装前检查活动对话并刷新画布本地持久化；用户需先结束其他媒体生成任务。应用中心仍保留首次安装／手动恢复入口。v0.20.20 及更早版本需从应用中心先安装支持 OTA 的版本，此后可使用内置 OTA。
 
-发布前检查：`npm test`、`npm run test:chat`、`npm run test:ota-ui`、`npm run test:images`、前端类型检查、构建、`npm run test:codec` 和打包启动验证。异步生图恢复测试在六种平台／芯片的发布构建中运行，使用隔离 IndexedDB 和模拟传输，不发出付费请求；生产编码器测试使用真实原生协议加载打包 Worker/WASM 并核对无损像素，不依赖 CDN 或开发服务器。用户大图可通过 `CANVAS_IMAGE_REFERENCE_DIR` 在本机私有目录运行 `test:images`，不上传真实照片。Actions 成功后检查公开 Release 的 12 个完整包、签名清单、增量资源和全部 10 种 OTA 目标，再更新应用中心目录并核对公开接口。不能只触发构建就宣称已可更新。
+发布前检查：`npm test`、`npm run test:chat`、`npm run test:ota-ui`、`npm run test:images`、`npm run test:webdav`、前端类型检查、构建、`npm run test:codec` 和打包启动验证。异步生图恢复测试在六种平台／芯片的发布构建中运行，使用隔离 IndexedDB 和模拟传输，不发出付费请求；生产编码器测试使用真实原生协议加载打包 Worker/WASM 并核对无损像素，不依赖 CDN 或开发服务器。用户大图可通过 `CANVAS_IMAGE_REFERENCE_DIR` 在本机私有目录运行 `test:images`，不上传真实照片。Actions 成功后检查公开 Release 的 12 个完整包、签名清单、增量资源和全部 10 种 OTA 目标，再更新应用中心目录并核对公开接口。不能只触发构建就宣称已可更新。

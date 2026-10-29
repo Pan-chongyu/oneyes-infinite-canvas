@@ -162,6 +162,23 @@ test('forwarding service preserves uploads, signed query bytes and redacts logs'
     assert.ok(logs.length); assert.doesNotMatch(logs.join('\n'), /private|test-key|proxy-user|p@ss|secret/);
 });
 
+test('native DAV methods and Basic auth survive saved HTTP/SOCKS proxy transport', async t => {
+    const { requestWebdav } = createRequire(import.meta.url)('../desktop/webdav.cjs');
+    const originPort = await listen(t, http.createServer(origin()));
+    for (const [scheme, proxy] of [['http', httpProxy()], ['socks5h', socksProxy()]]) {
+        const proxyPort = await listen(t, proxy.server);
+        const network = await createNetwork(() => { throw Error('must not bypass proxy'); }); t.after(() => network.close());
+        network.configure({ proxyEnabled: true, proxyMode: 'upstream', upstreamProxyUrl: `${scheme}://127.0.0.1:${proxyPort}`, upstreamProxyUsername: username, upstreamProxyPassword: password });
+        for (const method of ['MKCOL', 'PROPFIND', 'PUT', 'GET']) {
+            const request = new Request('https://app.test', { method, headers: { Authorization: 'Basic dav-account-only', Depth: '0', 'If-Match': '"version-1"' }, ...(method === 'PUT' ? { body: new Uint8Array([0, 1, 255, 128]) } : {}) });
+            const result = await (await requestWebdav(request, `http://127.0.0.1:${originPort}/dav/%E7%94%BB%E5%B8%83/`, network.fetch)).json();
+            assert.equal(result.method, method); assert.equal(result.headers.authorization, 'Basic dav-account-only'); assert.equal(result.headers.depth, '0'); assert.equal(result.headers['if-match'], '"version-1"');
+            assert.equal(result.headers['proxy-authorization'], undefined);
+            if (method === 'PUT') assert.equal(result.body, Buffer.from([0, 1, 255, 128]).toString('base64'));
+        }
+    }
+});
+
 test('desktop streams immediately, cancels upstream and switches proxy without breaking active streams', { timeout: 10000 }, async t => {
     let closed; const cancelled = new Promise(resolve => { closed = resolve; });
     const server = http.createServer((req, res) => { if (req.url === '/stream') req.once('close', closed); void origin()(req, res); });

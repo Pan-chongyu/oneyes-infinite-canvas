@@ -13,6 +13,11 @@ function route(input, root) {
         if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) throw new Error('无效代理目标');
         return { api: target.href, proxy: true };
     }
+    if (url.pathname === '/webdav') {
+        const target = new URL(url.searchParams.get('url'));
+        if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.hash) throw new Error('无效 WebDAV 地址');
+        return { webdav: target.href };
+    }
     if (url.pathname.startsWith('/oneyes-api/')) {
         const path = url.pathname.slice('/oneyes-api'.length);
         if (!/^\/v1\//.test(path)) throw new Error('无效接口');

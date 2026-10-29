@@ -265,6 +265,7 @@ export const useConfigStore = create<ConfigStore>()(
                     webdav: {
                         ...state.webdav,
                         [key]: value,
+                        ...(key !== "lastSyncedAt" ? { lastSyncedAt: "" } : {}),
                     },
                 })),
             replaceConfig: (config) => set((state) => ({ config: normalizeOneYesConfig(config, state.config) })),
