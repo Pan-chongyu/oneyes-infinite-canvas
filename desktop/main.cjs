@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, nativeTheme } = require('electron');
 const { join, resolve } = require('node:path');
 const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
@@ -11,6 +11,7 @@ const { createModelCatalog } = require('./models.cjs');
 const { createUpdater } = require('./updater.cjs');
 const { updateTarget } = require('./update-platform.cjs');
 const { prepareInstall } = require('./update-install.cjs');
+const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 const smoke = process.argv.includes('--smoke-test');
@@ -77,6 +78,8 @@ app.whenReady().then(async () => {
     const trusted = event => {
         if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('oneyes-canvas://app/')) throw new Error('拒绝访问配置');
     };
+    ipcMain.handle('window:theme', (event, theme) => { trusted(event); syncWindowTheme(window, nativeTheme, theme); });
+    ipcMain.handle('window:fullscreen', event => { trusted(event); return window.isFullScreen(); });
     ipcMain.handle('config:read', event => { trusted(event); return vault.read(); });
     ipcMain.handle('config:write', async (event, value) => { trusted(event); const config = JSON.parse(value).state?.config; await vault.write(value); network.configure(config); });
     ipcMain.handle('config:remove', async event => { trusted(event); await vault.remove(); network.configure({}); });
@@ -110,7 +113,8 @@ app.whenReady().then(async () => {
     });
     let updateStarted = false;
     function createWindow() {
-        window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#1c1917', icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+        window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#0a0a0a', ...windowChromeOptions(), icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+        for (const name of ['enter-full-screen', 'leave-full-screen']) window.on(name, () => window.webContents.send('window:fullscreen', window.isFullScreen()));
         window.setMenuBarVisibility(false);
         const external = url => { try { const u = new URL(url); if (u.protocol === 'https:' && !u.username && !u.password) void shell.openExternal(u.href); } catch {} };
         window.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
@@ -138,6 +142,15 @@ app.whenReady().then(async () => {
                     const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
+                const chrome = await window.webContents.executeJavaScript(`(async () => {
+                    const bar = document.querySelector('.desktop-titlebar'), api = window.oneYesDesktop.windowChrome;
+                    return { platform: api.platform, fullscreen: await api.fullscreen(), height: bar?.getBoundingClientRect().height,
+                        drag: bar && getComputedStyle(bar).getPropertyValue('-webkit-app-region'), theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light' };
+                })()`);
+                if (chrome.platform !== process.platform || chrome.fullscreen || chrome.height !== 36 || chrome.drag !== 'drag') throw new Error('Integrated titlebar layout failed');
+                await window.webContents.executeJavaScript("window.oneYesDesktop.windowChrome.theme('light')");
+                if (nativeTheme.themeSource !== 'light') throw new Error('Native titlebar theme sync failed');
+                await window.webContents.executeJavaScript(`window.oneYesDesktop.windowChrome.theme('${chrome.theme}')`);
                 const update = await window.webContents.executeJavaScript("window.oneYesDesktop.updates.call('state')");
                 if (update.currentVersion !== app.getVersion() || update.supported) throw new Error('Packaged updater bridge failed');
                 await require('./update-delta-smoke.cjs').smokeDelta(app.getPath('userData'));

@@ -2,6 +2,12 @@ export {};
 declare global {
     interface Window {
         oneYesDesktop?: {
+            windowChrome?: {
+                platform: string;
+                theme(theme: 'light' | 'dark'): Promise<void>;
+                fullscreen(): Promise<boolean>;
+                subscribe(callback: (fullscreen: boolean) => void): () => void;
+            };
             updates: {
                 call(operation: 'state' | 'check' | 'install'): Promise<import('./stores/use-desktop-update-store').DesktopUpdateState>;
                 subscribe(callback: (state: import('./stores/use-desktop-update-store').DesktopUpdateState) => void): () => void;

@@ -1,0 +1,6 @@
+.desktop-titlebar {
+    height: 36px;
+    -webkit-app-region: drag;
+    app-region: drag;
+    user-select: none;
+}
