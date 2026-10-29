@@ -135,6 +135,7 @@ jobs:
           CANVAS_OTA_PRIVATE_KEY: ${{ secrets.CANVAS_OTA_PRIVATE_KEY }}
           CANVAS_OTA_BASE_DIR: ${{ github.workspace }}/release-base
           CANVAS_OTA_BSDIFF: bsdiff
+          CANVAS_OTA_DELTA_TIMEOUT_MS: 120000
         run: node scripts/verify-desktop-release.mjs release
       - name: Publish public desktop release
         env:

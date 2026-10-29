@@ -2,7 +2,7 @@
 
 Canvas 是独立 Electron 应用；本通道不修改 OneYes Desktop 的 Tauri/Sparkle 更新器和签名身份。
 
-增量 OTA 使用随应用打包的 `bsdiff-wasm`，无需用户安装依赖；重建在可取消的桌面 Worker 中执行。六种平台／芯片的打包启动检查都必须离线应用参考 BSDIFF40 包，验证 ASAR 内 Worker 与 WASM 可用。发布端用系统 BSDIFF 生成补丁并重建全部十种 OTA 目标，逐项核对目标大小和 SHA-256 后签名发布。`SHA256SUMS.txt` 保持只含 12 个完整安装包，兼容应用中心既有同步器；增量校验值另放 `SHA256SUMS-deltas.txt`，并由签名 OTA 清单绑定。
+增量 OTA 使用随应用打包的 `bsdiff-wasm`，无需用户安装依赖；重建在可取消的桌面 Worker 中执行。六种平台／芯片的打包启动检查都必须离线应用参考 BSDIFF40 包，验证 ASAR 内 Worker 与 WASM 可用。发布端用系统 BSDIFF 生成补丁并重建目标，单个大包差分生成超过两分钟或补丁不小于完整包时跳过该目标，保留签名完整包继续发布；已生成的补丁逐项核对目标大小和 SHA-256 后签名发布。`SHA256SUMS.txt` 保持只含 12 个完整安装包，兼容应用中心既有同步器；增量校验值另放 `SHA256SUMS-deltas.txt`，并由签名 OTA 清单绑定。
 
 - 每个正式 Canvas 版本递增 `package.json`、`package-lock.json`、`VERSION`，提交并推送源码和同版本标签。公开仓库的 `desktop-release.yml` 必须完成六种平台／芯片构建、测试与打包后才发布。
 - Release 必须包含 Windows x64/ARM64 EXE、macOS Intel/Apple Silicon DMG/ZIP、Linux x64/ARM64 AppImage/DEB/RPM 共 12 个完整安装包，另有 `SHA256SUMS.txt`、`canvas-latest.json` 和 `canvas-latest.json.sig`；有上一版完整包时还会发布按平台、芯片和安装格式绑定的 BSDIFF 增量包。缺失任一平台或签名身份不匹配时发布失败。

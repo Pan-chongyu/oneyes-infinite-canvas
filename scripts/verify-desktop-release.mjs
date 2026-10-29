@@ -32,6 +32,7 @@ for(const platform of ['win32','darwin','linux'])for(const arch of ['x64','arm64
 const changelog=await readFile('CHANGELOG.md','utf8'),section=changelog.split(`## v${version}`)[1]?.split('\n## ')[0]?.trim()||'';
 const deltas={},deltaSums=[];
 const baseRoot=process.env.CANVAS_OTA_BASE_DIR;
+const deltaTimeoutMs=Number.isSafeInteger(Number(process.env.CANVAS_OTA_DELTA_TIMEOUT_MS))&&Number(process.env.CANVAS_OTA_DELTA_TIMEOUT_MS)>0?Number(process.env.CANVAS_OTA_DELTA_TIMEOUT_MS):120000;
 if(baseRoot){
   const baseText=await readFile(join(baseRoot,'canvas-latest.json'),'utf8');
   const baseSignature=await readFile(join(baseRoot,'canvas-latest.json.sig'),'utf8');
@@ -40,14 +41,22 @@ if(baseRoot){
     if(!require('semver').lt(base.version,version))throw new Error('Delta base must be older than release');
     const basePath=join(baseRoot,base.file), deltaFile=deltaFilename(version,base.version,platform,arch,format), deltaPath=join(root,deltaFile), targetEntry=platforms[platformKey(target)];
     await validateFile(basePath,base);
-    if(process.env.CANVAS_OTA_BSDIFF){
-      await promisify(execFile)(process.env.CANVAS_OTA_BSDIFF,[basePath,join(root,currentFile),deltaPath]);
-    }else{
-      // Portable fixture/local generator. CI uses the native reference bsdiff
-      // producer so large installers do not hit WebAssembly address limits.
-      const {loadBsdiff}=await import('bsdiff-wasm'), engine=await loadBsdiff();
-      for(const [mount,folder] of [['/base',resolve(baseRoot)],['/release',root]]){engine.FS.mkdir(mount);engine.FS.mount(engine.NODEFS,{root:folder},mount);}
-      if(engine.callMain([`/base/${base.file}`,`/release/${currentFile}`,`/release/${deltaFile}`])!==0)throw new Error(`Failed to generate ${deltaFile}`);
+    try {
+      if(process.env.CANVAS_OTA_BSDIFF){
+        await promisify(execFile)(process.env.CANVAS_OTA_BSDIFF,[basePath,join(root,currentFile),deltaPath],{timeout:deltaTimeoutMs});
+      }else{
+        // Portable fixture/local generator. CI uses the native reference bsdiff
+        // producer so large installers do not hit WebAssembly address limits.
+        const {loadBsdiff}=await import('bsdiff-wasm'), engine=await loadBsdiff();
+        for(const [mount,folder] of [['/base',resolve(baseRoot)],['/release',root]]){engine.FS.mkdir(mount);engine.FS.mount(engine.NODEFS,{root:folder},mount);}
+        if(engine.callMain([`/base/${base.file}`,`/release/${currentFile}`,`/release/${deltaFile}`])!==0)throw new Error(`Failed to generate ${deltaFile}`);
+      }
+      const generated=await stat(deltaPath);
+      if(generated.size>=targetEntry.size){await rm(deltaPath,{force:true});console.log(`${platformKey(target)}: skipped delta because it is not smaller`);continue;}
+    } catch(error) {
+      await rm(deltaPath,{force:true});
+      console.log(`${platformKey(target)}: skipped delta generation (${error.code==='ETIMEDOUT'?'timeout':error.message})`);
+      continue;
     }
     const reconstructed=join(root,currentFile+'.reconstructed');
     try{
@@ -62,6 +71,7 @@ if(baseRoot){
 }
 await writeFile(join(root,'SHA256SUMS.txt'),sums.join('\n')+'\n');
 if(deltaSums.length)await writeFile(join(root,'SHA256SUMS-deltas.txt'),deltaSums.join('\n')+'\n');
+else await rm(join(root,'SHA256SUMS-deltas.txt'),{force:true});
 const text=JSON.stringify({schema:1,version,notes:section.replace(/^\+\s*/gm,''),platforms,...(Object.keys(deltas).length?{deltas}: {})},null,2)+'\n';
 const signature=sign(null,Buffer.from(text),privateKey);
 if(!verify(null,Buffer.from(text),publicKey,signature))throw new Error('OTA signing identity does not match pinned Canvas key');

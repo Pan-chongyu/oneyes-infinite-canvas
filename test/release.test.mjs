@@ -11,11 +11,12 @@ test('release requires all twelve native installers and hashes RPM architecture 
   const dir=await mkdtemp(join(tmpdir(),'canvas-release-'));
   try {
     const {version}=JSON.parse(await readFile('package.json','utf8'));
+    const currentPayload=Buffer.from('shared installer fixture '.repeat(2000)+'new release');
     const files=[];
     // Actual electron-builder filenames, including target-specific Linux aliases.
     for(const suffix of ['Windows-x64-Setup.exe','Windows-arm64-Setup.exe','macOS-x64.dmg','macOS-x64.zip','macOS-arm64.dmg','macOS-arm64.zip','Linux-x86_64.AppImage','Linux-amd64.deb','Linux-x86_64.rpm','Linux-arm64.AppImage','Linux-arm64.deb','Linux-aarch64.rpm']) {
       const name=`OneYes-Canvas-${version}-${suffix}`;
-      await writeFile(join(dir,name),'fixture');files.push(name);
+      await writeFile(join(dir,name),currentPayload);files.push(name);
     }
     const keys=generateKeyPairSync('ed25519'),publicKey=keys.publicKey.export({format:'pem',type:'spki'}),privateKey=keys.privateKey.export({format:'pem',type:'pkcs8'});
     const run=()=>spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8',env:{...process.env,CANVAS_OTA_PRIVATE_KEY:privateKey,CANVAS_OTA_TEST_PUBLIC_KEY:publicKey}});
@@ -28,7 +29,7 @@ test('release requires all twelve native installers and hashes RPM architecture 
     assert.ok(JSON.parse(text).platforms['linux-arm64-rpm'].file.endsWith('Linux-aarch64.rpm'));
     const baseDir=await mkdtemp(join(tmpdir(),'canvas-release-base-'));
     try {
-      const previous='0.20.20',basePayload=Buffer.from('previous fixture'),basePlatforms={};
+      const previous='0.20.20',basePayload=Buffer.from('shared installer fixture '.repeat(2000)+'previous release'),basePlatforms={};
       for(const platform of ['win32','darwin','linux'])for(const arch of ['x64','arm64'])for(const format of {win32:['nsis'],darwin:['zip'],linux:['AppImage','deb','rpm']}[platform]){
         const file=filename(previous,platform,arch,format);
         basePlatforms[platformKey({platform,arch,format})]={file,url:`${RELEASE_ROOT}/download/v${previous}/${file}`,size:basePayload.length,sha256:createHash('sha256').update(basePayload).digest('hex')};
@@ -49,6 +50,8 @@ test('release requires all twelve native installers and hashes RPM architecture 
       }
       assert.equal((await readFile(join(dir,'SHA256SUMS.txt'),'utf8')).trim().split('\n').length,12);
       assert.equal((await readFile(join(dir,'SHA256SUMS-deltas.txt'),'utf8')).trim().split('\n').length,10);
+      const skipped=spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8',env:{...process.env,CANVAS_OTA_PRIVATE_KEY:privateKey,CANVAS_OTA_TEST_PUBLIC_KEY:publicKey,CANVAS_OTA_BASE_DIR:baseDir,CANVAS_OTA_BSDIFF:process.execPath,CANVAS_OTA_DELTA_TIMEOUT_MS:'1000'}});
+      assert.equal(skipped.status,0,skipped.stderr);assert.equal(JSON.parse(await readFile(join(dir,'canvas-latest.json'),'utf8')).deltas,undefined);await assert.rejects(readFile(join(dir,'SHA256SUMS-deltas.txt')));
       await writeFile(join(baseDir,Object.values(basePlatforms)[0].file),'tampered');assert.notEqual(runDelta().status,0);
     } finally {await rm(baseDir,{recursive:true,force:true});}
     await rm(join(dir,files[0]));assert.notEqual(run().status,0);
