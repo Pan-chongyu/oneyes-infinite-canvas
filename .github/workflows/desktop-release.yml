@@ -26,7 +26,7 @@ jobs:
             platform: macOS
             arch: x64
             target: mac
-          - os: macos-26
+          - os: macos-14
             platform: macOS
             arch: arm64
             target: mac
