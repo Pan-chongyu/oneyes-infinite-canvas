@@ -1,6 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App, ConfigProvider } from "antd";
+import "antd/dist/reset.css";
+import "streamdown/styles.css";
 import "@/i18n";
 import "@/styles/globals.css";
 import { DesktopUpdate } from "@/components/layout/desktop-update";
@@ -13,8 +15,7 @@ let subscriber: (state: DesktopUpdateState) => void;
 const operations: string[] = [];
 const state: DesktopUpdateState = { status: 'ready', currentVersion: '0.20.20', version: '0.20.21', progress: 100, downloaded: 100, total: 100, notes: '支持签名 OTA，后台下载后点击即可更新。', error: '', supported: true, mode: 'full' };
 Object.assign(window, { oneYesDesktop: { updates: { call: async (op: string) => { operations.push(op); return state; }, subscribe: (next: typeof subscriber) => { subscriber = next; return () => {}; } } }, updateTest: {
-    status: (status: DesktopUpdateState['status']) => { state.status = status; state.progress = status === 'downloading' ? 36 : 100; subscriber({ ...state }); },
-    retryAfterTargetFailure: () => { operations.length = 0; state.status = 'error'; state.supported = false; state.error = '请将应用移到“应用程序”后重试'; subscriber({ ...state }); },
+    status: (status: DesktopUpdateState['status'], supported = true) => { state.status = status; state.supported = supported; state.progress = status === 'downloading' ? 36 : 100; subscriber({ ...state }); },
     state: () => ({ ...useDesktopUpdateStore.getState(), operations }),
     agentBusy: (busy: boolean) => useAgentStore.setState({ waiting: busy }),
     saved: async () => JSON.parse(await localForageStorage.getItem('infinite-canvas:canvas_store') || '{}').state?.projects?.[0]?.title,

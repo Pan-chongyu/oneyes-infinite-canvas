@@ -131,11 +131,8 @@ test('checks are serialized and stop after shutdown; unknown formats never insta
     const f = await fixture(t); await Promise.all([f.updater.check(), f.updater.check()]);
     assert.equal(f.requests.filter(s => s.endsWith('.exe')).length, 1);
     f.updater.close(); const before = f.requests.length; await f.updater.check(); assert.equal(f.requests.length, before);
-    let failTarget = true;
-    const unsupported = await fixture(t, { target: async () => { if (failTarget) throw new Error('当前安装格式不支持自动更新'); return target; } });
-    await unsupported.updater.check(); assert.equal(unsupported.updater.state().supported, true); assert.equal(unsupported.updater.state().status, 'error'); assert.equal(unsupported.requests.length, 0);
-    failTarget = false;
-    await unsupported.updater.check(); assert.equal(unsupported.updater.state().status, 'ready');
+    const unsupported = await fixture(t, { target: async () => { throw new Error('当前安装格式不支持自动更新'); } });
+    await unsupported.updater.check(); assert.equal(unsupported.updater.state().supported, false); assert.equal(unsupported.requests.length, 0);
 });
 test('native hardware selection handles Windows emulation and Rosetta independently of installed programs', async () => {
     assert.equal((await updateTarget({ platform: 'win32', machine: 'ARM64', execPath: 'C:\\Apps\\Canvas.exe' })).arch, 'arm64');

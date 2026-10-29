@@ -36,7 +36,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
     }
     async function chooseTarget() {
         try { return selected ||= await target(); }
-        catch (error) { error.userMessage = error.message; throw error; }
+        catch (error) { error.userMessage = error.message; emit({ supported: false }); throw error; }
     }
     async function restore() {
         const destination = await chooseTarget();

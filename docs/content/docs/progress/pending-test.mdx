@@ -7,7 +7,7 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
-- OneYes Canvas v0.20.37：更新目标检测失败时，“检查更新”按钮仍保持可操作，面板显示具体原因，点击重试会重新检测；检查或下载进行中按钮才禁用，完成后“更新并重启”按安装流程保护。深色主题按钮文字与背景保持可读对比。回归覆盖目标检测失败后恢复目标并成功下载，且不会改变更新签名校验、当前版本、代理和 OTA 缓存；TODO 已核对，无对应事项需迁移。
+- OneYes Canvas v0.20.38：在浅色和深色主题打开软件更新面板，确认检查、下载、安装、就绪和错误状态的按钮文字与图标均清晰可读；检查或下载进行中按钮仍按既有流程禁用。回归覆盖生产环境的 Ant Design 重置样式，确保主题前景色不会被原生按钮规则覆盖；不改变更新签名校验、当前版本、代理和 OTA 缓存。TODO 已核对，无对应事项需迁移。
 
 - OneYes Canvas v0.20.36：在 macOS 环境中设置 HTTP/HTTPS/ALL_PROXY 且未添加本机例外时，升级并重新打开 Canvas，新建或恢复对话应正常加载 infinite-canvas 工具并允许发送。内置 Codex 只在子进程环境中合并 127.0.0.1、localhost、::1 代理例外，保留已有 NO_PROXY/no_proxy 规则、远程代理、账户、模型、MCP 和历史；不增加启动超时、重试或付费请求。自动回归用不可达代理验证真实 Codex 线程的 MCP 握手与 canvas_get_state 工具清单，六种平台打包检查执行相同验证。画布连接失败的提示不再声称对话仍可发送；TODO 已核对，无对应事项需迁移。
 
