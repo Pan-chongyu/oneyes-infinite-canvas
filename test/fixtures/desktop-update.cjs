@@ -26,6 +26,11 @@ app.whenReady().then(async () => {
         assert.equal(await js('document.querySelector("[role=progressbar]").getAttribute("aria-valuenow")'), '36');
         await js('updateTest.status("ready")');
         await wait('document.body.textContent.includes("新版本 v0.20.21")');
+        await js('updateTest.retryAfterTargetFailure()');
+        await wait('document.body.textContent.includes("请将应用移到")');
+        assert.equal(await js('Array.from(document.querySelectorAll("section button")).find(x=>x.textContent === "重试更新").disabled'), false, 'target errors must remain retryable');
+        await js('Array.from(document.querySelectorAll("section button")).find(x=>x.textContent === "重试更新").click()');
+        await wait('updateTest.state().operations.includes("check")');
         const before = await js('document.querySelector("section").getBoundingClientRect().toJSON()');
         assert.ok(before.width <= 321 && before.height < 320, 'compact update panel');
         if (process.env.CANVAS_UPDATE_SCREENSHOT) {

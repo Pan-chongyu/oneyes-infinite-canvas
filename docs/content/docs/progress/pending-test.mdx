@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.37：更新目标检测失败时，“检查更新”按钮仍保持可操作，面板显示具体原因，点击重试会重新检测；检查或下载进行中按钮才禁用，完成后“更新并重启”按安装流程保护。深色主题按钮文字与背景保持可读对比。回归覆盖目标检测失败后恢复目标并成功下载，且不会改变更新签名校验、当前版本、代理和 OTA 缓存；TODO 已核对，无对应事项需迁移。
+
 - OneYes Canvas v0.20.36：在 macOS 环境中设置 HTTP/HTTPS/ALL_PROXY 且未添加本机例外时，升级并重新打开 Canvas，新建或恢复对话应正常加载 infinite-canvas 工具并允许发送。内置 Codex 只在子进程环境中合并 127.0.0.1、localhost、::1 代理例外，保留已有 NO_PROXY/no_proxy 规则、远程代理、账户、模型、MCP 和历史；不增加启动超时、重试或付费请求。自动回归用不可达代理验证真实 Codex 线程的 MCP 握手与 canvas_get_state 工具清单，六种平台打包检查执行相同验证。画布连接失败的提示不再声称对话仍可发送；TODO 已核对，无对应事项需迁移。
 
 - OneYes Canvas v0.20.35：在 Windows、macOS、Linux 桌面版分别用 Nextcloud、群晖或其他 WebDAV 服务测试中文/空格远程目录、应用密码、已保存的 HTTP/SOCKS 代理和无 CORS 服务；测试连接应创建缺失目录并接受已有目录，上传画布、资产、生成记录及原始媒体后在另一设备下载并校验 SHA-256。两台设备同时同步时，较新的 ETag 应阻止覆盖并提示再次同步；损坏清单、缺失媒体、锁定、权限和空间不足应保留本地数据，不应泄露 Basic Auth、Cookie 或服务端 HTML。网页版需验证 CORS/本地转发代理。已加入协议、路径、认证、代理、重定向、清单校验和冲突回归；TODO 已核对，无对应事项需迁移。
