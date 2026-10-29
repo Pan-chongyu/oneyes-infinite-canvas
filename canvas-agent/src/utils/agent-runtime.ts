@@ -1,5 +1,11 @@
 import stripAnsi from "strip-ansi";
 
+/** Keep local MCP traffic on this machine while preserving the user's upstream proxy. */
+export function codexEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    const bypass = [...new Set([env.NO_PROXY, env.no_proxy, "127.0.0.1,localhost,::1"].flatMap(value => (value || "").split(",")).map(value => value.trim()).filter(Boolean))].join(",");
+    return { ...env, NO_PROXY: bypass, no_proxy: bypass };
+}
+
 /** Redact bearer tokens, sk- keys, and explicit credential assignments before a string is logged or sent to the browser. */
 export function redactAgentLog(text: string): string {
     return text

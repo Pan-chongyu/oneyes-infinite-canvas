@@ -711,7 +711,7 @@ export default {
             },
             impact: {
                 windows: "Windows automation is unavailable. Canvas and other ready tools can still be used.",
-                canvas: "Canvas tools are unavailable. Chat and other ready tools can still be used.",
+                canvas: "The required canvas connection is not ready, so this conversation cannot send messages yet. Reconnect, then create or resume a conversation to continue.",
                 other: "Only {{name}} is unavailable. Other ready tools can still be used.",
             },
             check: {

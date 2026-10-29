@@ -90,9 +90,11 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         const { promisify } = require('node:util');
         const { stdout } = await promisify(execFile)(process.execPath, [cli, 'mcp', 'get', 'infinite-canvas', '--json'], { env: { ...process.env, CODEX_HOME: options.codexHome } });
         assert.equal(JSON.parse(stdout).transport.url, `${connection.url}/mcp`);
-        // Initialize the real bundled app-server without login, model calls, or user files.
-        const script = `const {CodexAppClient}=await import('./canvas-agent/dist/agent/codex-client.js');await CodexAppClient.start(()=>{},()=>{});console.log('CODEX_APP_SERVER_READY');process.exit(0);`;
-        const started = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, CODEX_HOME: options.codexHome, ONEYES_CANVAS_AGENT_HOME: options.agentHome, ONEYES_DESKTOP_AGENT: '1' }, timeout: 20_000 });
+        // A real thread must discover canvas tools even with an unavailable inherited proxy.
+        // No login, model turns, user config, or paid requests are needed.
+        const script = `const {CodexAppClient}=await import('./canvas-agent/dist/agent/codex-client.js');const events=[];const c=await CodexAppClient.start((type,value)=>{if(type==='agent_bootstrap')events.push(value)},()=>{});const thread=await c.startThread(${JSON.stringify(dir)},'request',true);const status=await c.request('mcpServerStatus/list',{threadId:thread.id,limit:100,detail:'toolsAndAuthOnly'});const canvas=status.data.find(s=>s.name==='infinite-canvas');if(events.some(e=>e.name==='infinite-canvas'&&e.status==='failed')||!canvas?.tools?.canvas_get_state)throw Error('Canvas MCP handshake/tools failed');console.log('CODEX_APP_SERVER_READY');process.exit(0);`;
+        const proxy = 'http://127.0.0.1:1';
+        const started = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, CODEX_HOME: options.codexHome, ONEYES_CANVAS_AGENT_HOME: options.agentHome, ONEYES_DESKTOP_AGENT: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy, ALL_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, all_proxy: proxy, NO_PROXY: '', no_proxy: '' }, timeout: 20_000 });
         assert.ok(started.stdout.includes('CODEX_APP_SERVER_READY'));
     } finally { agent.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true }); }
 });

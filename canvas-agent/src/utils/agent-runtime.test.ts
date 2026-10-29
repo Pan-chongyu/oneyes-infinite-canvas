@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createAgentLogWriter, redactAgentLog } from "./agent-runtime.js";
+import { codexEnvironment, createAgentLogWriter, redactAgentLog } from "./agent-runtime.js";
+
+test("Codex bypasses proxies for local MCP without changing remote proxy settings or caller environment", () => {
+    const env = { HTTP_PROXY: "http://proxy.invalid:8080", HTTPS_PROXY: "http://proxy.invalid:8081", ALL_PROXY: "socks5://proxy.invalid:1080", NO_PROXY: "company.internal,127.0.0.1", no_proxy: " .example.org,company.internal ", CODEX_HOME: "/preserved" };
+    const result = codexEnvironment(env);
+    assert.equal(result.NO_PROXY, "company.internal,127.0.0.1,.example.org,localhost,::1");
+    assert.equal(result.no_proxy, result.NO_PROXY);
+    for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "CODEX_HOME"] as const) assert.equal(result[name], env[name]);
+    assert.equal(env.no_proxy, " .example.org,company.internal ");
+    assert.equal(codexEnvironment({}).NO_PROXY, "127.0.0.1,localhost,::1");
+    assert.equal(codexEnvironment({ NO_PROXY: "*" }).NO_PROXY, "*,127.0.0.1,localhost,::1");
+    assert.deepEqual(codexEnvironment(result), result);
+});
 
 test("redactAgentLog masks bearer tokens", () => {
     assert.equal(redactAgentLog("Error: Bearer abc.def-ghi123=="), "Error: Bearer [REDACTED]");
