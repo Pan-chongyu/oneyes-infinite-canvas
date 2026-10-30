@@ -19,6 +19,7 @@ type LogDomainData = { logs: StoredLog[] };
 type SyncDomainOptions<T> = {
     key: DomainKey;
     label: string;
+    remote: ReturnType<typeof readDomainManifest<T>>;
     localData: () => Promise<T>;
     mergeData: (local: T, remote: T) => T;
     applyData?: (data: T) => Promise<void>;
@@ -66,45 +67,61 @@ let syncing = false;
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     if (syncing) throw new Error(i18n.t("config.webdav.errors.busy"));
     syncing = true;
-    try { return await syncAppData({ ...config }, onProgress); } finally { syncing = false; }
+    try { return await syncAppData({ ...config }, onProgress); }
+    catch (error) {
+        emitProgress(onProgress, { stage: error instanceof Error ? error.message : i18n.t("config.webdav.errors.syncFailed"), status: "exception" });
+        throw error;
+    } finally { syncing = false; }
 }
 
 async function syncAppData(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     emitProgress(onProgress, { stage: "等待本地数据加载" });
     await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
+    emitProgress(onProgress, { stage: "同步中", status: "active" });
+    const remotes = {
+        canvas: readDomainManifest<CanvasDomainData>(config, "canvas"),
+        assets: readDomainManifest<AssetDomainData>(config, "assets"),
+        image: readDomainManifest<LogDomainData>(config, "image-workbench"),
+        video: readDomainManifest<LogDomainData>(config, "video-workbench"),
+    };
+    const sharedFiles = Promise.allSettled(Object.values(remotes)).then(results => results.flatMap(result => result.status === "fulfilled" ? result.value?.manifest.files || [] : []));
 
     const [canvasResult, assetsResult, imageLogsResult, videoLogsResult] = await Promise.allSettled([
         syncDomain<CanvasDomainData>(config, onProgress, {
             key: "canvas",
             label: "画布",
+            remote: remotes.canvas,
             localData: async () => {
                 const { projects, deletedProjects } = useCanvasStore.getState();
                 return { projects, deleted: deletedProjects };
             },
             mergeData: mergeCanvasData,
             applyData: async (data) => useCanvasStore.getState().replaceProjects(data.projects, data.deleted),
-        }),
+        }, sharedFiles),
         syncDomain<AssetDomainData>(config, onProgress, {
             key: "assets",
             label: "我的资产",
+            remote: remotes.assets,
             localData: async () => ({ assets: useAssetStore.getState().assets }),
             mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
             applyData: async (data) => useAssetStore.getState().replaceAssets(await Promise.all(data.assets.map(hydrateAsset))),
-        }),
+        }, sharedFiles),
         syncDomain<LogDomainData>(config, onProgress, {
             key: "image-workbench",
             label: "生图工作台",
+            remote: remotes.image,
             localData: async () => ({ logs: await readStoredLogs(imageLogStore) }),
             mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
             applyData: async (data) => replaceStoredLogs(imageLogStore, data.logs),
-        }),
+        }, sharedFiles),
         syncDomain<LogDomainData>(config, onProgress, {
             key: "video-workbench",
             label: "视频创作台",
+            remote: remotes.video,
             localData: async () => ({ logs: await readStoredLogs(videoLogStore) }),
             mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
             applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs),
-        }),
+        }, sharedFiles),
     ]);
 
     // Wait until every domain settles before enabling another attempt.
@@ -126,20 +143,18 @@ async function syncAppData(config: WebdavSyncConfig, onProgress?: AppSyncProgres
     return result;
 }
 
-async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgress | undefined, options: SyncDomainOptions<T>): Promise<SyncDomainResult<T>> {
+async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgress | undefined, options: SyncDomainOptions<T>, sharedFiles: Promise<AppSyncFile[]>): Promise<SyncDomainResult<T>> {
     try {
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取远端清单", status: "active" });
-        const remote = await readDomainManifest<T>(config, options.key);
+        const remote = await options.remote;
         const remoteManifest = remote?.manifest;
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取本地数据", status: "active" });
         const localData = await options.localData();
         let mergedData = remoteManifest ? options.mergeData(localData, remoteManifest.data) : localData;
 
-        if (remoteManifest) {
-            emitProgress(onProgress, { domain: options.key, label: options.label, stage: "下载缺失媒体", status: "active" });
-            await downloadMissingFiles(config, options.key, mergedData, remoteManifest.files, onProgress);
-            mergedData = options.mergeData(await options.localData(), remoteManifest.data);
-        }
+        emitProgress(onProgress, { domain: options.key, label: options.label, stage: "下载缺失媒体", status: "active" });
+        await downloadMissingFiles(config, options.key, mergedData, remoteManifest?.files || [], sharedFiles, onProgress);
+        if (remoteManifest) mergedData = options.mergeData(await options.localData(), remoteManifest.data);
 
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "上传新增媒体", status: "active" });
         const uploaded = await uploadChangedFiles(config, options.key, mergedData, remoteManifest?.files || [], onProgress);
@@ -176,21 +191,38 @@ async function readDomainManifest<T>(config: WebdavSyncConfig, domain: DomainKey
     catch { throw new Error(i18n.t("config.webdav.errors.invalidManifest", { domain })); }
 }
 
-async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainKey, data: T, remoteFiles: AppSyncFile[], onProgress?: AppSyncProgress) {
+async function localMediaBlob(storageKey: string) {
+    const image = storageKey.startsWith("image:");
+    const stored = await (image ? getImageBlob(storageKey) : getMediaBlob(storageKey));
+    if (stored?.size) return stored;
+    // These resolvers only return URLs cached from the original local Blob.
+    // Never substitute previews or fetch a record's arbitrary remote URL.
+    const url = await (image ? resolveImageUrl(storageKey) : resolveMediaUrl(storageKey));
+    if (!url.startsWith("blob:")) return null;
+    let blob: Blob;
+    try {
+        const response = await fetch(url, { credentials: "omit" });
+        if (!response.ok) return null;
+        blob = await response.blob();
+    } catch { return null; }
+    if (!blob.size) return null;
+    await (image ? setImageBlob(storageKey, blob) : setMediaBlob(storageKey, blob));
+    return blob;
+}
+
+async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainKey, data: T, remoteFiles: AppSyncFile[], sharedFiles: Promise<AppSyncFile[]>, onProgress?: AppSyncProgress) {
     const remoteFileMap = new Map(remoteFiles.map((item) => [item.storageKey, item]));
-    const tasks: AppSyncFile[] = [];
+    const tasks: string[] = [];
     const storageKeys = collectStorageKeys(data);
     let scanned = 0;
     for (const storageKey of storageKeys) {
-        const localBlob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+        const localBlob = await localMediaBlob(storageKey);
         scanned += 1;
         if (localBlob) {
             emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "检查缺失媒体", current: scanned, total: storageKeys.length, status: "active" });
             continue;
         }
-        const remoteFile = remoteFileMap.get(storageKey);
-        if (!remoteFile) throw new Error(i18n.t("config.webdav.errors.mediaMissing", { key: storageKey }));
-        tasks.push(remoteFile);
+        tasks.push(storageKey);
         emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "检查缺失媒体", current: scanned, total: storageKeys.length, status: "active" });
     }
     if (!tasks.length) {
@@ -198,12 +230,21 @@ async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainK
         return;
     }
     let downloaded = 0;
-    await runWithConcurrency(tasks, FILE_CONCURRENCY, async (remoteFile) => {
-        const blob = await downloadWebdavFile(config, remoteFile.path);
-        if (!blob) throw new Error(i18n.t("config.webdav.errors.mediaMissing", { key: remoteFile.storageKey }));
-        if (blob.size !== remoteFile.bytes || (remoteFile.sha256 && await blobSha256(blob) !== remoteFile.sha256)) throw new Error(i18n.t("config.webdav.errors.mediaCorrupt", { key: remoteFile.storageKey }));
-        const typedBlob = blob.slice(0, blob.size, remoteFile.mimeType);
-        await (remoteFile.storageKey.startsWith("image:") ? setImageBlob(remoteFile.storageKey, typedBlob) : setMediaBlob(remoteFile.storageKey, typedBlob));
+    await runWithConcurrency(tasks, FILE_CONCURRENCY, async (storageKey) => {
+        const primary = remoteFileMap.get(storageKey);
+        let source = primary, blob = primary ? await downloadWebdavFile(config, primary.path) : null;
+        if (!blob) {
+            const candidates = (await sharedFiles).filter(file => file.storageKey === storageKey && file.sha256 && file.path !== primary?.path && (!primary || file.sha256 === primary.sha256 && file.bytes === primary.bytes));
+            if (!primary && new Set(candidates.map(file => `${file.sha256}:${file.bytes}`)).size > 1) throw new Error(i18n.t("config.webdav.errors.mediaCorrupt", { key: mediaLocation(data, storageKey) }));
+            for (const file of candidates) {
+                blob = await downloadWebdavFile(config, file.path);
+                if (blob) { source = file; break; }
+            }
+        }
+        if (!blob || !source) throw new Error(i18n.t("config.webdav.errors.mediaMissing", { key: mediaLocation(data, storageKey) }));
+        if (blob.size !== source.bytes || (source.sha256 && await blobSha256(blob) !== source.sha256)) throw new Error(i18n.t("config.webdav.errors.mediaCorrupt", { key: mediaLocation(data, storageKey) }));
+        const typedBlob = blob.slice(0, blob.size, source.mimeType);
+        await (storageKey.startsWith("image:") ? setImageBlob(storageKey, typedBlob) : setMediaBlob(storageKey, typedBlob));
         downloaded += 1;
         emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "下载媒体", current: downloaded, total: tasks.length, status: "active" });
     });
@@ -219,11 +260,11 @@ async function uploadChangedFiles<T>(config: WebdavSyncConfig, domain: DomainKey
     const storageKeys = collectStorageKeys(data);
     let scanned = 0;
     for (const storageKey of storageKeys) {
-        const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+        const blob = await localMediaBlob(storageKey);
         const remoteFile = remoteFileMap.get(storageKey);
         if (!blob) {
             if (remoteFile) files.push(remoteFile);
-            else throw new Error(i18n.t("config.webdav.errors.mediaMissing", { key: storageKey }));
+            else throw new Error(i18n.t("config.webdav.errors.mediaMissing", { key: mediaLocation(data, storageKey) }));
             scanned += 1;
             emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "检查本地媒体", current: scanned, total: storageKeys.length, status: "active" });
             continue;
@@ -287,14 +328,20 @@ async function replaceStoredLogs(store: LogStore, logs: StoredLog[]) {
 }
 
 function collectStorageKeys(value: unknown, keys = new Set<string>()) {
-    if (typeof value === "string") {
-        if (storageKeyPattern.test(value)) keys.add(value);
-        return [...keys];
-    }
     if (!value || typeof value !== "object") return [...keys];
     if ("storageKey" in value && typeof value.storageKey === "string" && storageKeyPattern.test(value.storageKey)) keys.add(value.storageKey);
+    if ("references" in value && Array.isArray(value.references)) for (const key of value.references) if (typeof key === "string" && storageKeyPattern.test(key)) keys.add(key);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectStorageKeys(child, keys)) : collectStorageKeys(item, keys)));
     return [...keys];
+}
+
+function mediaLocation(data: unknown, key: string) {
+    if (data && typeof data === "object") for (const rows of Object.values(data)) {
+        if (!Array.isArray(rows)) continue;
+        const row = rows.find(item => collectStorageKeys(item).includes(key));
+        if (row && typeof row.title === "string" && row.title) return `${row.title} · ${key}`;
+    }
+    return key;
 }
 
 function domainPath(domain: DomainKey, path: string) {

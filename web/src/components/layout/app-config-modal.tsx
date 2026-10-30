@@ -123,8 +123,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const updateWebdavProgress = (event: AppSyncProgressEvent) => {
-        setWebdavSyncStatus(event.stage);
-        if (!event.domain) return;
+        if (!event.domain) { setWebdavSyncStatus(event.stage); return; }
         setWebdavDomainProgress((current) => ({
             ...current,
             [event.domain as AppSyncDomainKey]: {
@@ -393,7 +392,7 @@ function WebdavProgressGrid({ progress, t }: { progress: Record<AppSyncDomainKey
                     <div key={key} className="rounded-md border border-stone-200 px-3 py-2 dark:border-stone-800">
                         <div className="mb-1 flex min-w-0 items-center justify-between gap-3 text-xs">
                             <span className="shrink-0 font-medium text-stone-700 dark:text-stone-200">{t(`config.webdav.domains.${domainTranslationKey(key)}`)}</span>
-                            <span className="min-w-0 truncate text-right text-stone-500">
+                            <span className="min-w-0 truncate text-right text-stone-500" title={syncStageLabel(item.stage, t)}>
                                 {syncStageLabel(item.stage, t)}
                                 {count ? ` · ${count}` : ""}
                             </span>
@@ -413,6 +412,7 @@ function domainTranslationKey(domain: AppSyncDomainKey) {
 }
 
 function syncStageLabel(stage: string, t: TFunction) {
+    if (stage === "同步中") return t("config.webdav.syncing");
     if (stage === "等待本地数据加载") return t("config.webdav.stages.localWaiting");
     if (stage === "同步完成") return t("config.webdav.stages.syncComplete");
     if (stage === "等待同步") return t("config.webdav.stages.waiting");
