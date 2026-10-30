@@ -98,12 +98,103 @@ test('uses a signed delta when the verified current installer is cached, then va
     await f.updater.apply(); assert.equal(f.installs.length, 1); assert.deepEqual(await readFile(f.installs[0].file), next); assert.ok(f.requests.some(url => url.endsWith('.delta')));
 });
 test('delta failures fall back to the signed full package and never execute partial updates', async t => {
-    for (const scenario of ['missing-base', 'corrupt-base', 'invalid-base-signature', 'wrong-platform', 'corrupt-patch', 'truncated-patch', 'wrong-target']) await t.test(scenario, async t => {
+    for (const scenario of ['missing-base', 'corrupt-base', 'invalid-base-signature', 'wrong-platform', 'corrupt-patch', 'missing-patch', 'wrong-target']) await t.test(scenario, async t => {
         const f = await deltaFixture(t, scenario);
-        await f.updater.check(); assert.equal(f.updater.state().status, 'ready'); assert.equal(f.updater.state().mode, 'full');
-        await f.updater.apply(); assert.deepEqual(await readFile(f.installs[0].file), f.next);
+        const updater = scenario === 'missing-patch' ? createUpdater({ ...f.options, fetcher: (url, init) => url.endsWith('.delta') ? new Response(null, { status: 404 }) : f.options.fetcher(url, init) }) : f.updater;
+        t.after(() => updater.close());
+        await updater.check(); assert.equal(updater.state().status, 'ready'); assert.equal(updater.state().mode, 'full');
+        await updater.apply(); assert.deepEqual(await readFile(f.installs[0].file), f.next);
         const files = await readdir(join(f.directory, 'ota/0.21.0')); assert.ok(!files.some(file => /\.(delta|part)$/.test(file)));
     });
+});
+
+test('a ready cached update installs on the first click without waiting for a stalled background check', async t => {
+    const f = await fixture(t); await f.updater.check();
+    let entered; const started = new Promise(resolve => { entered = resolve; });
+    const requests = [];
+    const updater = createUpdater({ ...f.options, fetcher: async (_url, { signal }) => {
+        entered(); requests.push(signal);
+        return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    } }); t.after(() => updater.close());
+    const checking = updater.check(); await started;
+    assert.equal(updater.state().status, 'ready');
+    const first = updater.apply(), duplicate = updater.apply();
+    assert.equal(updater.state().status, 'installing');
+    assert.equal(first, duplicate);
+    await Promise.all([first, duplicate, checking]);
+    assert.equal(f.installs.length, 1);
+    assert.ok(requests.every(signal => signal.aborted));
+});
+
+test('full downloads resume across restart, send If-Range, and hash the whole assembled file', async t => {
+    const r = release(), prefix = r.payload.subarray(0, 7), ranges = [];
+    let interrupted = true;
+    const f = await fixture(t, { fetcher: async (url, init) => {
+        if (url.endsWith('.sig')) return new Response(r.signature);
+        if (url.endsWith('.json')) return new Response(r.text);
+        ranges.push(init.headers);
+        if (interrupted) {
+            interrupted = false;
+            return new Response(new ReadableStream({ start(controller) { controller.enqueue(prefix); }, pull(controller) { controller.error(new Error('disconnected')); } }), { headers: { ETag: '"fixed"' } });
+        }
+        assert.equal(init.headers.Range, `bytes=${prefix.length}-`);
+        assert.equal(init.headers['If-Range'], '"fixed"');
+        return new Response(r.payload.subarray(prefix.length), { status: 206, headers: { 'Content-Range': `bytes ${prefix.length}-${r.payload.length - 1}/${r.payload.length}`, ETag: '"fixed"' } });
+    } });
+    await f.updater.check(); assert.equal(f.updater.state().status, 'error');
+    const file = join(f.directory, 'ota/0.21.0', r.entry.file);
+    assert.deepEqual(await readFile(file + '.part'), prefix);
+    f.updater.close();
+    const restarted = createUpdater(f.options); t.after(() => restarted.close());
+    await restarted.check(); assert.equal(restarted.state().status, 'ready');
+    assert.deepEqual(await readFile(file), r.payload);
+    await assert.rejects(access(file + '.part')); await assert.rejects(access(file + '.part.json'));
+    assert.equal(ranges.length, 2);
+    await restarted.apply(); assert.equal(f.installs.length, 1);
+});
+
+test('resume handles ignored, invalid and stale ranges without mixing releases or installing corrupt bytes', async t => {
+    for (const scenario of ['ignored', 'wrong-range', 'unsatisfiable', 'bad-prefix', 'different-release']) await t.test(scenario, async t => {
+        const r = release(), f = await fixture(t), prefix = r.payload.subarray(0, 5);
+        const folder = join(f.directory, 'ota/0.21.0'), file = join(folder, r.entry.file);
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, 'canvas-latest.json'), r.text); await writeFile(join(folder, 'canvas-latest.json.sig'), r.signature);
+        await writeFile(file + '.part', scenario === 'bad-prefix' ? Buffer.alloc(5) : prefix);
+        await writeFile(file + '.part.json', JSON.stringify({ url: r.entry.url, size: r.entry.size, sha256: scenario === 'different-release' ? 'wrong' : r.entry.sha256 }));
+        const ranges = [];
+        const updater = createUpdater({ ...f.options, fetcher: async (url, init) => {
+            if (url.endsWith('.sig')) return new Response(r.signature);
+            if (url.endsWith('.json')) return new Response(r.text);
+            ranges.push(init.headers?.Range);
+            if (init.headers?.Range && scenario === 'unsatisfiable') return new Response(null, { status: 416 });
+            if (init.headers?.Range && scenario === 'wrong-range') return new Response(prefix, { status: 206, headers: { 'Content-Range': `bytes 0-4/${r.payload.length}` } });
+            if (init.headers?.Range && scenario === 'bad-prefix') return new Response(r.payload.subarray(5), { status: 206, headers: { 'Content-Range': `bytes 5-${r.payload.length - 1}/${r.payload.length}` } });
+            return new Response(r.payload);
+        } }); t.after(() => updater.close());
+        await updater.check();
+        if (scenario === 'bad-prefix') {
+            assert.equal(updater.state().status, 'error'); await updater.apply(); assert.equal(f.installs.length, 0);
+            await assert.rejects(access(file + '.part'));
+            await updater.check();
+        }
+        assert.equal(updater.state().status, 'ready'); assert.deepEqual(await readFile(file), r.payload);
+        assert.equal(ranges[0], scenario === 'different-release' ? undefined : 'bytes=5-');
+    });
+});
+
+test('an interrupted delta retains its prefix for retry instead of downloading the full installer', async t => {
+    const f = await deltaFixture(t, 'truncated-patch');
+    await f.updater.check(); assert.equal(f.updater.state().status, 'error');
+    const partial = join(f.directory, 'ota/0.21.0', filename('0.21.0', target.platform, target.arch, target.format) + '.from-0.20.20.delta.part');
+    assert.equal((await readFile(partial)).length, 12);
+    assert.ok(!f.requests.some(url => url.endsWith('.exe')), 'a network interruption should not discard the delta and fetch a full package');
+    const updater = createUpdater({ ...f.options, fetcher: async (url, init) => {
+        if (!url.endsWith('.delta')) return f.options.fetcher(url, init);
+        assert.equal(init.headers.Range, 'bytes=12-');
+        return new Response(f.patch.subarray(12), { status: 206, headers: { 'Content-Range': `bytes 12-${f.patch.length - 1}/${f.patch.length}` } });
+    } }); t.after(() => updater.close());
+    await updater.check(); assert.equal(updater.state().status, 'ready'); assert.equal(updater.state().mode, 'delta');
+    await updater.apply(); assert.deepEqual(await readFile(f.installs[0].file), f.next);
 });
 test('promotes legacy OTA cache, retains the installed base after restart and removes older bases', async t => {
     const f = await deltaFixture(t, 'legacy-cache');

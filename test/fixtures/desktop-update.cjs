@@ -1,15 +1,67 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, net } = require('electron');
 const assert = require('node:assert/strict');
 const { mkdtempSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 app.setPath('userData', mkdtempSync(join(tmpdir(), 'canvas-update-ui-')));
+async function nativeResume() {
+    const { createServer } = require('node:http');
+    const { generateKeyPairSync, sign, createHash } = require('node:crypto');
+    const { readFile, rm } = require('node:fs/promises');
+    const { createUpdater } = require('../../desktop/updater.cjs');
+    const { filename, RELEASE_ROOT } = require('../../desktop/update-policy.cjs');
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const payload = Buffer.from('native signed update fixture '.repeat(128)), prefix = payload.subarray(0, 256);
+    const file = filename('0.21.0', 'win32', 'x64', 'nsis');
+    const text = JSON.stringify({ schema: 1, version: '0.21.0', notes: 'fixture', platforms: { 'win32-x64-nsis': { file, size: payload.length, sha256: createHash('sha256').update(payload).digest('hex'), url: `${RELEASE_ROOT}/download/v0.21.0/${file}` } } });
+    const signature = sign(null, Buffer.from(text), privateKey).toString('base64');
+    let pending, first = true, installs = 0;
+    const ranges = [];
+    const server = createServer((request, response) => {
+        if (request.url === '/probe') { response.end(); return; }
+        if (request.url.endsWith('.sig')) { response.end(signature); return; }
+        if (request.url.endsWith('.json')) { response.end(text); return; }
+        ranges.push(request.headers.range);
+        if (first) {
+            first = false; pending = response;
+            response.writeHead(200, { ETag: '"native"', 'Content-Length': payload.length, 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }); response.write(prefix);
+        } else {
+            assert.equal(request.headers.range, `bytes=${prefix.length}-`);
+            assert.equal(request.headers['if-range'], '"native"');
+            response.writeHead(206, { ETag: '"native"', 'Content-Range': `bytes ${prefix.length}-${payload.length - 1}/${payload.length}`, 'Content-Length': payload.length - prefix.length });
+            response.end(payload.subarray(prefix.length));
+        }
+    });
+    for (;;) {
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        try { await (await fetch(`http://127.0.0.1:${server.address().port}/probe`)).arrayBuffer(); break; }
+        catch (error) { await new Promise(resolve => server.close(resolve)); if (error.cause?.message !== 'bad port') throw error; }
+    }
+    const directory = join(app.getPath('userData'), 'native-ota');
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const options = { currentVersion: '0.20.20', directory, publicKey, target: async () => ({ platform: 'win32', arch: 'x64', format: 'nsis' }),
+        fetcher: (url, init) => net.fetch(origin + new URL(url).pathname, init),
+        install: async plan => { assert.deepEqual(await readFile(plan.file), payload); installs++; },
+        changed: state => { if (state.downloaded === prefix.length && pending) { pending.destroy(); pending = null; } },
+    };
+    const updater = createUpdater(options), restarted = createUpdater(options);
+    try {
+        await updater.check(); assert.equal(updater.state().status, 'error');
+        assert.deepEqual(await readFile(join(directory, 'ota/0.21.0', file + '.part')), prefix);
+        updater.close();
+        await restarted.check(); assert.equal(restarted.state().status, 'ready');
+        await restarted.apply(); assert.equal(installs, 1);
+        assert.deepEqual(ranges, [undefined, `bytes=${prefix.length}-`]);
+        console.log('NATIVE_OTA_RESUME_OK: Electron HTTP socket interruption, restored prefix, Range/If-Range, complete-file hash before installation');
+    } finally { updater.close(); restarted.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
+}
 app.whenReady().then(async () => {
     const win = new BrowserWindow({ show: false, width: 1000, height: 720, webPreferences: { contextIsolation: true, nodeIntegration: false } });
     win.webContents.on('console-message', details => { if (details.level >= 2) console.error(details.message); });
     const js = async code => { try { return await win.webContents.executeJavaScript(code); } catch(error) { throw new Error(code + ': ' + error.message); } };
     const wait = async condition => { const end = Date.now() + 20000; while (!await js(condition)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
     try {
+        await nativeResume();
         await win.loadURL(process.argv[2]);
         await wait('window.updateTest && document.querySelector("[aria-expanded]")');
         await js('document.querySelector("[aria-expanded]").click()');

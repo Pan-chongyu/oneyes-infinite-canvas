@@ -1,22 +1,30 @@
-import {mkdir,writeFile} from 'node:fs/promises';
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {createRequire} from 'node:module';
 import {join,resolve} from 'node:path';
 const require=createRequire(import.meta.url);
-const {FEED,readManifest,newer}=require('../desktop/update-policy.cjs');
+const {FEED,readManifest,newer,platformKey}=require('../desktop/update-policy.cjs');
 const {validateFile}=require('../desktop/updater.cjs');
 const root=resolve(process.argv[2]),version=require('../package.json').version;
 const response=async url=>{const result=await fetch(url);if(!result.ok)throw new Error(`Cannot download OTA base (${result.status})`);return result;};
-const text=await (await response(FEED)).text(),signature=await (await response(FEED+'.sig')).text();
+const pinned=process.argv.includes('--pinned'),manifestOnly=process.argv.includes('--manifest-only');
+const targetKey=process.argv.find(value=>value.startsWith('--target='))?.slice('--target='.length);
+const [text,signature]=await Promise.all(['canvas-latest.json','canvas-latest.json.sig'].map(file=>pinned?readFile(join(root,file),'utf8'):response(FEED+(file.endsWith('.sig')?'.sig':'')).then(result=>result.text())));
+const publicKey=process.env.CANVAS_OTA_TEST_PUBLIC_KEY||undefined;
+let matched=false;
 await mkdir(root,{recursive:true});
 await writeFile(join(root,'canvas-latest.json'),text);await writeFile(join(root,'canvas-latest.json.sig'),signature);
 for(const platform of ['win32','darwin','linux'])for(const arch of ['x64','arm64'])for(const format of {win32:['nsis'],darwin:['zip'],linux:['AppImage','deb','rpm']}[platform]){
-    const base=readManifest(text,signature,{platform,arch,format});
+    if(targetKey&&platformKey({platform,arch,format})!==targetKey)continue;
+    matched=true;
+    const base=readManifest(text,signature,{platform,arch,format},publicKey);
     if(!newer(version,base.version))throw new Error('Previous release must be older than this tag');
+    if(manifestOnly)continue;
     const result=await response(base.url),file=join(root,base.file);
     let bytes=0;
     await pipeline(Readable.from((async function*(){for await(const chunk of result.body){bytes+=chunk.length;if(bytes>base.size)throw new Error('Invalid OTA base size');yield chunk;}})()),createWriteStream(file,{flags:'wx'}));
     await validateFile(file,base);console.log(`Verified previous ${base.version} ${platform}/${arch}/${format}`);
 }
+if(!matched)throw new Error('Unknown OTA base target');

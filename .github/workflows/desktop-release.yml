@@ -9,6 +9,23 @@ concurrency:
   group: canvas-release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  ota-base:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --omit=dev --ignore-scripts
+      - name: Pin the signed previous release for every delta task
+        run: node scripts/prepare-ota-base.mjs release-base --manifest-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Canvas-OTA-Base
+          path: release-base/*
+          if-no-files-found: error
   build:
     strategy:
       fail-fast: false
@@ -111,9 +128,68 @@ jobs:
             desktop-dist/*.deb
             desktop-dist/*.rpm
           if-no-files-found: error
+  delta:
+    if: github.ref_type == 'tag'
+    needs: [build, ota-base]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64-nsis
+            installer: Windows-x64
+          - target: win32-arm64-nsis
+            installer: Windows-arm64
+          - target: darwin-x64-zip
+            installer: macOS-x64
+          - target: darwin-arm64-zip
+            installer: macOS-arm64
+          - target: linux-x64-AppImage
+            installer: Linux-x64
+          - target: linux-x64-deb
+            installer: Linux-x64
+          - target: linux-x64-rpm
+            installer: Linux-x64
+          - target: linux-arm64-AppImage
+            installer: Linux-arm64
+          - target: linux-arm64-deb
+            installer: Linux-arm64
+          - target: linux-arm64-rpm
+            installer: Linux-arm64
+    name: Delta ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --omit=dev --ignore-scripts
+      - run: sudo apt-get update -qq && sudo apt-get install -y bsdiff
+      - uses: actions/download-artifact@v4
+        with:
+          name: OneYes-Canvas-${{ matrix.installer }}
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: Canvas-OTA-Base
+          path: release-base
+      - name: Download only this target's signed base
+        run: node scripts/prepare-ota-base.mjs release-base --pinned --target=${{ matrix.target }}
+      - name: Generate and reconstruct this target's delta
+        env:
+          CANVAS_OTA_BASE_DIR: ${{ github.workspace }}/release-base
+          CANVAS_OTA_BSDIFF: bsdiff
+          CANVAS_OTA_DELTA_TIMEOUT_MS: 120000
+          CANVAS_OTA_DELTA_TARGET: ${{ matrix.target }}
+        run: node scripts/verify-desktop-release.mjs release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Canvas-OTA-Delta-${{ matrix.target }}
+          path: release/*.delta
+          if-no-files-found: ignore
   publish:
     if: github.ref_type == 'tag'
-    needs: build
+    needs: [build, ota-base, delta]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -125,20 +201,27 @@ jobs:
           cache: npm
       - name: Install manifest validation dependencies
         run: npm ci --omit=dev --ignore-scripts
-      - name: Install binary delta generator
-        run: sudo apt-get update -qq && sudo apt-get install -y bsdiff
       - uses: actions/download-artifact@v4
         with:
+          pattern: OneYes-Canvas-*
           path: release
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Canvas-OTA-Delta-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: Canvas-OTA-Base
+          path: release-base
       - name: Download previous installers for delta OTA
-        run: npm run release:delta
+        run: node scripts/prepare-ota-base.mjs release-base --pinned
       - name: Verify every platform and generate checksums
         env:
           CANVAS_OTA_PRIVATE_KEY: ${{ secrets.CANVAS_OTA_PRIVATE_KEY }}
           CANVAS_OTA_BASE_DIR: ${{ github.workspace }}/release-base
-          CANVAS_OTA_BSDIFF: bsdiff
-          CANVAS_OTA_DELTA_TIMEOUT_MS: 120000
+          CANVAS_OTA_PREBUILT_DELTAS: '1'
         run: node scripts/verify-desktop-release.mjs release
       - name: Publish public desktop release
         env:
