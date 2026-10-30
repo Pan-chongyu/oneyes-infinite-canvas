@@ -230,6 +230,7 @@ async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainK
         return;
     }
     let downloaded = 0;
+    emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "下载媒体", current: 0, total: tasks.length, status: "active" });
     await runWithConcurrency(tasks, FILE_CONCURRENCY, async (storageKey) => {
         const primary = remoteFileMap.get(storageKey);
         let source = primary, blob = primary ? await downloadWebdavFile(config, primary.path) : null;
@@ -289,6 +290,7 @@ async function uploadChangedFiles<T>(config: WebdavSyncConfig, domain: DomainKey
         return { files, uploadedFiles, uploadedBytes };
     }
 
+    emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "上传新增媒体", current: 0, total: tasks.length, status: "active" });
     await runWithConcurrency(tasks, FILE_CONCURRENCY, async ({ item, blob }) => {
         await uploadWebdavFile(config, item.path, blob, item.mimeType);
         uploadedFiles += 1;

@@ -20,8 +20,10 @@ const control = (operation: string, args = {}) => fetch('oneyes-canvas://app/fix
     useCanvasStore.getState().updateProject(canvasId,{nodes:[{id:'image-node',type:CanvasNodeType.Image,x:0,y:0,width:100,height:100,metadata:{content:image.url,storageKey:image.storageKey}}]});
     useAssetStore.getState().addAsset({kind:'image',title:'Image asset',coverUrl:image.url,tags:[],data:{dataUrl:image.url,storageKey:image.storageKey,width:1,height:1,bytes:image.bytes,mimeType:image.mimeType}});
     await logs.setItem('log-a',{id:'log-a',createdAt:Date.now(),status:'success',images:[{storageKey:image.storageKey,dataUrl:image.url}]});
-    const first = await syncAppDataToWebdav(config);
+    const firstProgress:AppSyncProgressEvent[]=[];
+    const first = await syncAppDataToWebdav(config,event=>firstProgress.push(event));
     check(first.projects===1 && first.assets===1 && first.imageLogs===1 && first.uploadedFiles===3,'initial upload failed');
+    for(const domain of ['canvas','assets','image-workbench']) check(firstProgress.some(event=>event.domain===domain && event.stage==='上传新增媒体' && event.current===0 && event.total===1),'upload start remained stuck on the completed scan');
     const project = () => useCanvasStore.getState().projects.find(item=>item.id===canvasId)!;
     useCanvasStore.getState().updateProject(canvasId,{nodes:project().nodes.map(node=>({...node,metadata:{...node.metadata,prompt:'image:ordinary-prompt-not-a-file'}}))});
     const unchanged = await syncAppDataToWebdav(config);check(unchanged.uploadedFiles===0,'plain text was treated as media or unchanged media reuploaded');
@@ -36,7 +38,9 @@ const control = (operation: string, args = {}) => fetch('oneyes-canvas://app/fix
     await files.setItem(image.storageKey!,await (await fetch(png)).blob());
     await syncAppDataToWebdav(config);
     useCanvasStore.getState().replaceProjects([],[]);useAssetStore.getState().replaceAssets([]);await deleteStoredImages([image.storageKey!]);await logs.clear();
-    const restored=await syncAppDataToWebdav(config);
+    const restoredProgress:AppSyncProgressEvent[]=[];
+    const restored=await syncAppDataToWebdav(config,event=>restoredProgress.push(event));
+    check(restoredProgress.some(event=>event.stage==='下载媒体' && event.current===0 && event.total===1),'download start remained stuck on the completed scan');
     check(restored.projects===1 && restored.assets===1 && restored.imageLogs===1,'remote records not restored');
     check((await getImageBlob(image.storageKey!))?.size===image.bytes,'original media not restored');
     check((await logs.getItem('log-a'))!==null,'history not restored');
