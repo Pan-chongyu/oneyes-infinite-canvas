@@ -51,3 +51,6 @@ Group nodes collect several nodes so you can move them together and reference th
 3. Compare the connected rewritten node with the original.
 4. Select **Generate Image** on the chosen text node.
 5. Adjust parameters or regenerate from the generated configuration node.
+
+
+Grok Imagine Video models use native xAI JSON: `/v1/videos/generations` for creation, `/v1/videos/edits` for editing, and `request_id` for polling. Frames use `image` / `last_frame`; references use `reference_images` / `reference_audios`, subject to model capabilities. Version 1.5 requires an image. Editing accepts one video without additional image/audio inputs; unsupported combinations fail before submission. Authenticated site video URLs download through the account endpoint; external signed media never receives the API key. See the [official xAI OpenAPI](https://github.com/xai-org/xai-sdk-ts/blob/main/spec/openapi.json) and [keyframe example](https://github.com/xai-org/xai-sdk-python/blob/main/examples/sync/video_keyframes.py).

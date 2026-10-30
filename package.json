@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.43",
+  "version": "0.20.44",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -19,7 +19,8 @@
     "dist": "electron-builder",
     "pretest": "npm --prefix canvas-agent run build",
     "test:webdav": "node scripts/test-agent-chat.mjs --webdav",
-    "test:plugins": "node scripts/test-agent-chat.mjs --plugins"
+    "test:plugins": "node scripts/test-agent-chat.mjs --plugins",
+    "test:videos": "node scripts/test-agent-chat.mjs --videos"
   },
   "devDependencies": {
     "electron": "44.9.1",

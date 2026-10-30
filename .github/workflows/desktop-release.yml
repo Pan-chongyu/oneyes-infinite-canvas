@@ -66,6 +66,7 @@ jobs:
       - run: npm test
       - run: npm run test:chat
       - run: npm run test:ota-ui
+      - run: npm run test:videos
       - run: npm run test:images
       - run: npm run test:plugins
       - run: npm run test:webdav

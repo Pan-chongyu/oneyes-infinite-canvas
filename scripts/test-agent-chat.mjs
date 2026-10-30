@@ -13,8 +13,9 @@ const updates = process.argv.includes('--updates');
 const images = process.argv.includes('--images');
 const webdav = process.argv.includes('--webdav');
 const plugins = process.argv.includes('--plugins');
-const fixture = plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
-const server = images ? await imageFixtureServer({ build, preview, react, builtinPlugins }) : await createServer({
+const videos = process.argv.includes('--videos');
+const fixture = videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const server = (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {

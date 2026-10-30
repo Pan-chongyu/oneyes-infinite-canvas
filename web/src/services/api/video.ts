@@ -9,10 +9,11 @@ import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } fro
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
+import { prepareReferenceFiles } from "./image-references";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
+type VideoResponse = { id?: string; request_id?: string; status?: string; error?: { message?: string } | string; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null; video?: { url?: string; respect_moderation?: boolean } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
@@ -148,6 +149,7 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    if (/^grok-imagine-video(?:$|-)/i.test(modelOptionName(model))) return createGrokVideoTask(config, model, prompt, references, options);
     const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
@@ -191,17 +193,57 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     }
 }
 
+// Grok's native API accepts JSON, not the generic OpenAI multipart fields.
+async function createGrokVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const videos = options?.videos || [], audios = options?.audios || [];
+    if (videos.length && (videos.length !== 1 || references.length || audios.length)) throw new Error(apiText("grokVideoEditReferences"));
+    if (modelOptionName(model) === "grok-imagine-video-1.5" && !references.length && !videos.length) throw new Error(apiText("grokVideoImageRequired"));
+    const body: Record<string, unknown> = { model: modelOptionName(model), prompt };
+    if (videos.length) {
+        body.video = { url: await readFileAsDataUrl(await referenceMediaToFile(videos[0], "ref.mp4", "invalidReferenceVideo", options)) };
+    } else {
+        body.duration = Number(normalizeVideoSeconds(config.videoSeconds));
+        body.aspect_ratio = videoAspectRatio(config.size);
+        body.resolution = normalizeVideoResolution(config.vquality);
+        const images = await Promise.all((await prepareReferenceFiles(references, options?.signal)).map(readFileAsDataUrl));
+        if (resolveVideoMode(config.videoMode, images.length) === "reference" || audios.length) {
+            if (images.length) body.reference_images = images.map(url => ({ url }));
+        } else {
+            if (images[0]) body.image = { url: images[0] };
+            if (images[1]) body.last_frame = { url: images[1] };
+        }
+        if (audios.length) body.reference_audios = await Promise.all(audios.map(async audio => ({ url: await readFileAsDataUrl(await referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)) })));
+    }
+    options?.signal?.throwIfAborted();
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, videos.length ? "/videos/edits" : "/videos/generations"), body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const id = created.request_id || created.id;
+        if (!id) throw new Error(apiText("noVideoTaskId"));
+        return { id, provider: "openai", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
+}
+
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
-        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
+        const taskPath = `/videos/${encodeURIComponent(task.id)}`;
+        const response = await axios.get<ApiVideoResponse>(aiApiUrl(config, taskPath), { headers: aiHeaders(config), signal: options?.signal });
+        if (response.status === 202 && !response.data) return { status: "pending" };
+        const video = unwrapVideoResponse(response.data);
+        if (["failed", "cancelled", "expired"].includes(video.status || "")) return { status: "failed", error: readApiErrorMessage(video.error) || apiText(video.status === "expired" ? "videoTaskExpired" : "videoGenerationFailed") };
+        if (video.video?.respect_moderation === false) return { status: "failed", error: apiText("videoModerationRejected") };
         const url = videoResultUrl(video);
-        if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
-        if (video.status === "completed") {
-            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
+        // Sub2API returns an authenticated relay URL. Rebuild it from the fixed
+        // account endpoint; never attach the API key to an upstream media URL.
+        const contentPath = `${taskPath}/content`;
+        if (url && !isVideoContentRelay(url, config.baseUrl, contentPath)) return { status: "completed", result: await videoResultFromUrl(url, options) };
+        if (url || video.status === "completed") {
+            const content = await axios.get<Blob>(aiApiUrl(config, contentPath), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
+        if (video.status === "done") return { status: "failed", error: apiText("noPlayableVideo") };
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
@@ -358,7 +400,14 @@ function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
 }
 
 function videoResultUrl(payload: VideoResponse) {
-    return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
+    return [payload.video?.url, payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || url.startsWith("/v1/videos/")));
+}
+
+function isVideoContentRelay(value: string, baseUrl: string, path: string) {
+    try {
+        const url = new URL(value, baseUrl);
+        return ["https://oneyes.ai", "https://api.oneyes.ai", new URL(baseUrl).origin].includes(url.origin) && url.pathname === `/v1${path}`;
+    } catch { return false; }
 }
 
 function readApiErrorMessage(value: unknown): string {
@@ -395,7 +444,9 @@ function readAxiosError(error: unknown, fallback: string) {
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; message?: string; code?: number | string }>(error)) {
         if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
-        return readApiErrorMessage(responseData) || statusMessage(error.response?.status, fallback);
+        const message = readApiErrorMessage(responseData);
+        if (error.response?.status === 415 || /(?:status|HTTP)\s*415\b/i.test(message)) return apiText("videoUnsupportedMedia");
+        return message || statusMessage(error.response?.status, fallback);
     }
     if (error instanceof DOMException && error.name === "AbortError") return apiText("requestCanceled");
     return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;

@@ -73,3 +73,6 @@ description: 当前画布节点的主要用途与操作流程
 3. 改写结果会生成到新的文本节点，保留原始文本方便对比。
 4. 确认文本节点内容后，点击顶部工具栏“生图”。
 5. 在自动创建的生成配置节点中继续调整图片参数或重新生成。
+
+
+Grok Imagine Video 系列使用 xAI 原生 JSON 协议：创建 `/v1/videos/generations`，视频编辑使用 `/v1/videos/edits`，按 `request_id` 查询状态。首帧／首尾帧使用 `image`／`last_frame`，全部参考使用 `reference_images`，音频使用 `reference_audios`；素材支持情况由所选模型决定。1.5 模型需要图片，视频编辑仅接受一个视频，混用素材会在提交前提示。站点返回的鉴权视频地址通过账号接口下载，外部签名地址不附带 API Key。协议依据 [xAI 官方 OpenAPI](https://github.com/xai-org/xai-sdk-ts/blob/main/spec/openapi.json)、[官方首尾帧示例](https://github.com/xai-org/xai-sdk-python/blob/main/examples/sync/video_keyframes.py) 和 [sub2api Grok 转发实现](https://github.com/Wei-Shaw/sub2api/blob/main/backend/internal/service/grok_media.go)。
