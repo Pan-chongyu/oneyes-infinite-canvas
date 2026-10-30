@@ -10,7 +10,7 @@ const identified = (value: unknown) => record(value) && typeof value.id === "str
 const timestamp = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value));
 
 export function parseDomainManifest<T>(text: string, domain: AppSyncDomainKey): DomainManifest<T> {
-    const value: unknown = JSON.parse(text);
+    const value: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
     if (!record(value) || value.app !== "infinite-canvas" || value.version !== 1 || value.domain !== domain || !record(value.data) || !Array.isArray(value.files)) throw new Error("Invalid manifest");
     const data = value.data;
     const rows = domain === "canvas" ? data.projects : domain === "assets" ? data.assets : data.logs;

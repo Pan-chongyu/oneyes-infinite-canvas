@@ -161,7 +161,12 @@ async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgre
         const manifest: DomainManifest<T> = { app: "infinite-canvas", version: 1, domain: options.key, exportedAt: new Date().toISOString(), data: mergedData, files: uploaded.files };
         const manifestFile = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: `上传清单 ${formatBytes(manifestFile.size)}`, status: "active" });
-        await uploadWebdavFile(config, domainPath(options.key, WEBDAV_MANIFEST_FILE_NAME), manifestFile, "application/json", remote ? { ifMatch: remote.etag?.startsWith('"') ? remote.etag : undefined } : { ifNoneMatch: "*" });
+        const strongEtag = remote?.etag?.startsWith('"') ? remote.etag : undefined;
+        if (remote && !strongEtag) {
+            const current = await readWebdavFile(config, domainPath(options.key, WEBDAV_MANIFEST_FILE_NAME));
+            if (!current || await current.blob.text() !== remote.text) throw new Error(i18n.t("config.webdav.errors.conflict"));
+        }
+        await uploadWebdavFile(config, domainPath(options.key, WEBDAV_MANIFEST_FILE_NAME), manifestFile, "application/json", remote ? { ifMatch: strongEtag, ifUnmodifiedSince: !strongEtag && remote.lastModified && Number.isFinite(Date.parse(remote.lastModified)) ? remote.lastModified : undefined } : { ifNoneMatch: "*" });
         if (remoteManifest) {
             emitProgress(onProgress, { domain: options.key, label: options.label, stage: "写入本地合并结果", status: "active" });
             // Edits and newly generated records made while uploading always win
@@ -187,27 +192,44 @@ async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgre
 async function readDomainManifest<T>(config: WebdavSyncConfig, domain: DomainKey) {
     const resource = await readWebdavFile(config, domainPath(domain, WEBDAV_MANIFEST_FILE_NAME));
     if (!resource) return null;
-    try { return { manifest: parseDomainManifest<T>(await resource.blob.text(), domain), etag: resource.etag }; }
+    const text = await resource.blob.text();
+    try { return { manifest: parseDomainManifest<T>(text, domain), text, etag: resource.etag, lastModified: resource.lastModified }; }
     catch { throw new Error(i18n.t("config.webdav.errors.invalidManifest", { domain })); }
 }
 
-async function localMediaBlob(storageKey: string) {
+async function localMediaBlob(storageKey: string, data: unknown) {
     const image = storageKey.startsWith("image:");
     const stored = await (image ? getImageBlob(storageKey) : getMediaBlob(storageKey));
     if (stored?.size) return stored;
     // These resolvers only return URLs cached from the original local Blob.
     // Never substitute previews or fetch a record's arbitrary remote URL.
-    const url = await (image ? resolveImageUrl(storageKey) : resolveMediaUrl(storageKey));
-    if (!url.startsWith("blob:")) return null;
-    let blob: Blob;
-    try {
-        const response = await fetch(url, { credentials: "omit" });
-        if (!response.ok) return null;
-        blob = await response.blob();
-    } catch { return null; }
-    if (!blob.size) return null;
-    await (image ? setImageBlob(storageKey, blob) : setMediaBlob(storageKey, blob));
-    return blob;
+    const cached = await (image ? resolveImageUrl(storageKey) : resolveMediaUrl(storageKey));
+    const urls = new Set([cached]);
+    const findOriginal = (value: unknown) => {
+        if (!value || typeof value !== "object") return;
+        if ("storageKey" in value && value.storageKey === storageKey) for (const name of ["content", "dataUrl", "url"] as const) {
+            const url = (value as Record<string, unknown>)[name];
+            if (typeof url === "string" && /^(blob:|data:(image|video|audio)\/)/i.test(url)) urls.add(url);
+        }
+        Object.values(value).forEach(findOriginal);
+    };
+    findOriginal(data);
+    let original: Blob | null = null, hash = "";
+    for (const url of urls) {
+        if (!/^(blob:|data:(image|video|audio)\/)/i.test(url)) continue;
+        let blob: Blob;
+        try {
+            const response = await fetch(url, { credentials: "omit" });
+            if (!response.ok) continue;
+            blob = await response.blob();
+        } catch { continue; }
+        if (!blob.size) continue;
+        const current = await blobSha256(blob);
+        if (original && current !== hash) throw new Error(i18n.t("config.webdav.errors.mediaCorrupt", { key: mediaLocation(data, storageKey) }));
+        original = blob; hash = current;
+    }
+    if (original) await (image ? setImageBlob(storageKey, original) : setMediaBlob(storageKey, original));
+    return original;
 }
 
 async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainKey, data: T, remoteFiles: AppSyncFile[], sharedFiles: Promise<AppSyncFile[]>, onProgress?: AppSyncProgress) {
@@ -216,7 +238,7 @@ async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainK
     const storageKeys = collectStorageKeys(data);
     let scanned = 0;
     for (const storageKey of storageKeys) {
-        const localBlob = await localMediaBlob(storageKey);
+        const localBlob = await localMediaBlob(storageKey, data);
         scanned += 1;
         if (localBlob) {
             emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "检查缺失媒体", current: scanned, total: storageKeys.length, status: "active" });
@@ -234,16 +256,21 @@ async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainK
     await runWithConcurrency(tasks, FILE_CONCURRENCY, async (storageKey) => {
         const primary = remoteFileMap.get(storageKey);
         let source = primary, blob = primary ? await downloadWebdavFile(config, primary.path) : null;
+        const valid = async (value: Blob, file: AppSyncFile) => value.size === file.bytes && (!file.sha256 || await blobSha256(value) === file.sha256);
+        let corrupt = Boolean(blob && primary && !await valid(blob, primary));
+        if (corrupt) blob = null;
         if (!blob) {
             const candidates = (await sharedFiles).filter(file => file.storageKey === storageKey && file.sha256 && file.path !== primary?.path && (!primary || file.sha256 === primary.sha256 && file.bytes === primary.bytes));
             if (!primary && new Set(candidates.map(file => `${file.sha256}:${file.bytes}`)).size > 1) throw new Error(i18n.t("config.webdav.errors.mediaCorrupt", { key: mediaLocation(data, storageKey) }));
             for (const file of candidates) {
-                blob = await downloadWebdavFile(config, file.path);
-                if (blob) { source = file; break; }
+                const candidate = await downloadWebdavFile(config, file.path);
+                if (!candidate) continue;
+                if (await valid(candidate, file)) { blob = candidate; source = file; break; }
+                corrupt = true;
             }
         }
+        if (!blob && corrupt) throw new Error(i18n.t("config.webdav.errors.mediaCorrupt", { key: mediaLocation(data, storageKey) }));
         if (!blob || !source) throw new Error(i18n.t("config.webdav.errors.mediaMissing", { key: mediaLocation(data, storageKey) }));
-        if (blob.size !== source.bytes || (source.sha256 && await blobSha256(blob) !== source.sha256)) throw new Error(i18n.t("config.webdav.errors.mediaCorrupt", { key: mediaLocation(data, storageKey) }));
         const typedBlob = blob.slice(0, blob.size, source.mimeType);
         await (storageKey.startsWith("image:") ? setImageBlob(storageKey, typedBlob) : setMediaBlob(storageKey, typedBlob));
         downloaded += 1;
@@ -261,7 +288,7 @@ async function uploadChangedFiles<T>(config: WebdavSyncConfig, domain: DomainKey
     const storageKeys = collectStorageKeys(data);
     let scanned = 0;
     for (const storageKey of storageKeys) {
-        const blob = await localMediaBlob(storageKey);
+        const blob = await localMediaBlob(storageKey, data);
         const remoteFile = remoteFileMap.get(storageKey);
         if (!blob) {
             if (remoteFile) files.push(remoteFile);

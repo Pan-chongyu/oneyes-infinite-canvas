@@ -3,10 +3,10 @@
 async function requestWebdav(request, target, fetcher) {
     if (!['GET', 'HEAD', 'PROPFIND', 'MKCOL', 'PUT'].includes(request.method)) return new Response(null, { status: 405 });
     const headers = new Headers();
-    for (const name of ['authorization', 'content-type', 'depth', 'if-match', 'if-none-match']) {
+    for (const name of ['authorization', 'content-type', 'depth', 'if-match', 'if-none-match', 'if-unmodified-since']) {
         if (request.headers.has(name)) headers.set(name, request.headers.get(name));
     }
-    const body = request.method === 'PUT' ? await request.arrayBuffer() : undefined;
+    const body = ['PUT', 'PROPFIND'].includes(request.method) ? await request.arrayBuffer() : undefined;
     const origin = new URL(target).origin, visited = new Set();
     while (!visited.has(target)) {
         visited.add(target);

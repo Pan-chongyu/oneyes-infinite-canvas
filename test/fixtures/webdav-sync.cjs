@@ -10,21 +10,34 @@ const base=process.argv[2], profile=mkdtempSync(join(tmpdir(),'canvas-webdav-reg
 app.setPath('userData',profile);
 protocol.registerSchemesAsPrivileged([{scheme:'oneyes-canvas',privileges:{standard:true,secure:true,supportFetchAPI:true,stream:true}}]);
 app.whenReady().then(async()=>{
-    let stored=null, revision=0, conflict=false, savedManifest, recoveryManifests;
+    let stored=null, revision=0, conflict=false, savedManifest, recoveryManifests, compatibility=false, changedDuringRead=false;
     const collections=new Set(['/dav/']),files=new Map();
     const server=createServer(async(req,res)=>{
         try{
             assert.equal(req.headers.authorization,'Basic '+Buffer.from('test-user:test-password').toString('base64'));
             assert.equal(req.headers.cookie,undefined);
-            if(req.method==='MKCOL'){const status=collections.has(req.url)?405:201;collections.add(req.url);res.writeHead(status);return res.end();}
-            if(req.method==='PROPFIND'){res.writeHead(collections.has(req.url)?207:404);return res.end();}
+            if(req.method==='MKCOL'){const status=collections.has(req.url)?(compatibility?403:405):201;collections.add(req.url);res.writeHead(status);return res.end();}
+            if(req.method==='PROPFIND'){
+                const chunks=[];for await(const chunk of req)chunks.push(chunk);assert.match(Buffer.concat(chunks).toString(),/resourcetype/);
+                const exists=collections.has(req.url)||files.has(req.url),isDirectory=collections.has(req.url);
+                res.writeHead(207,{'Content-Type':'application/xml'});
+                return res.end(`<d:multistatus xmlns:d="DAV:"><d:response><d:href>${req.url.replaceAll('&','&amp;')}</d:href>${exists?`<d:propstat><d:prop><d:resourcetype>${isDirectory?'<d:collection/>':''}</d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>`:'<d:status>HTTP/1.1 404 Not Found</d:status>'}</d:response></d:multistatus>`);
+            }
             const current=files.get(req.url);
+            if(req.method==='HEAD'&&compatibility){res.writeHead(405);return res.end();}
             if(req.method==='PUT'){
-                if(conflict&&req.url.endsWith('/manifest.json')||(req.headers['if-match']&&req.headers['if-match']!==current?.etag)||(req.headers['if-none-match']==='*'&&current)){res.writeHead(412);return res.end();}
+                assert.ok(!req.headers['if-match']?.startsWith('W/'),'weak ETag is not a valid If-Match validator');
+                if(compatibility&&current&&req.url.endsWith('/manifest.json'))assert.equal(req.headers['if-unmodified-since'],'Fri, 30 Oct 2026 00:00:00 GMT');
+                if(conflict&&req.url.endsWith('/manifest.json')||(req.headers['if-match']&&req.headers['if-match']!==current?.etag)||(req.headers['if-none-match']==='*'&&current)||(req.headers['if-unmodified-since']&&req.headers['if-unmodified-since']!=='Fri, 30 Oct 2026 00:00:00 GMT')){res.writeHead(412);return res.end();}
                 const chunks=[];for await(const chunk of req)chunks.push(chunk);files.set(req.url,{bytes:Buffer.concat(chunks),etag:'"'+(++revision)+'"'});res.writeHead(201);return res.end();
             }
             if(!current){res.writeHead(404);return res.end();}
-            res.writeHead(200,{'content-type':'application/octet-stream',etag:current.etag});res.end(current.bytes);
+            res.writeHead(200,{'content-type':'application/octet-stream',...(compatibility==='no-etag'?{}:{etag:compatibility?'W/'+current.etag:current.etag}),'last-modified':'Fri, 30 Oct 2026 00:00:00 GMT'});
+            const bytes=compatibility&&req.url.endsWith('/manifest.json')?Buffer.concat([Buffer.from([239,187,191]),current.bytes]):current.bytes;
+            res.end(bytes);
+            if(changedDuringRead&&req.method==='GET'&&req.url.endsWith('/assets/manifest.json')){
+                const value=JSON.parse(current.bytes.toString());value.exportedAt='concurrent-edit';files.set(req.url,{...current,bytes:Buffer.from(JSON.stringify(value))});changedDuringRead=false;
+            }
         }catch(error){console.error(error);res.writeHead(500);res.end();}
     });
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -32,6 +45,15 @@ app.whenReady().then(async()=>{
         const url=new URL(request.url);
         if(url.pathname==='/fixture-control'){
             const {operation,key,ambiguous}=await request.json();const assetPath=[...files.keys()].find(key=>key.endsWith('/assets/manifest.json'));
+            if(operation==='compatibility')compatibility=true;
+            if(operation==='no-etag')compatibility='no-etag';
+            if(operation==='end-compatibility')compatibility=false;
+            if(operation==='concurrent-weak-etag')changedDuringRead=true;
+            if(operation==='corrupt-canvas-media')for(const [path,file]of files)if(path.includes('/canvas/files/'))files.set(path,{...file,bytes:Buffer.alloc(file.bytes.length)});
+            if(operation==='legacy-manifests')for(const [path,file]of files)if(path.endsWith('/manifest.json')){
+                const manifest=JSON.parse(file.bytes.toString());for(const entry of manifest.files)delete entry.sha256;
+                files.set(path,{...file,bytes:Buffer.from(JSON.stringify(manifest))});
+            }
             if(operation==='invalid-recovery-source'){
                 recoveryManifests=new Map([...files].filter(([path])=>path.endsWith('/manifest.json')));
                 for(const domain of ambiguous?['assets','image-workbench']:['assets']){

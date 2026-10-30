@@ -6,11 +6,13 @@ import { createRequire } from 'node:module';
 const values = new Map<string, string>();
 globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k,v) => {values.set(k,v);}, removeItem: k => {values.delete(k);}, clear: () => values.clear(), key: i => [...values.keys()][i] ?? null, get length() {return values.size;} };
 globalThis.window = { localStorage, setTimeout, clearTimeout } as unknown as Window & typeof globalThis;
-const { buildWebdavUrl, testWebdavConnection, downloadWebdavFile, readWebdavFile, uploadWebdavFile } = await import('./webdav-sync');
+const { buildWebdavUrl, testWebdavConnection, downloadWebdavFile, readWebdavFile, uploadWebdavFile, webdavFileExists } = await import('./webdav-sync');
 const { parseDomainManifest, mergeCanvasData, blobSha256 } = await import('./app-sync-data');
 const { useConfigStore, defaultConfig } = await import('@/stores/use-config-store');
 const { requestWebdav } = createRequire(import.meta.url)('../../../desktop/webdav.cjs');
 const nativeFetch = globalThis.fetch;
+globalThis.DOMParser = createRequire(import.meta.url)('../../../node_modules/@xmldom/xmldom').DOMParser;
+const multistatus = (href: string, collection = true, status = 200) => `<D:multistatus xmlns:D="DAV:"><D:response><D:href>${href.replaceAll('&','&amp;')}</D:href>${status===200?`<D:propstat><D:prop><D:resourcetype>${collection?'<D:collection/>':''}</D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>`:`<D:status>HTTP/1.1 ${status} Error</D:status>`}</D:response></D:multistatus>`;
 const config = { url: 'https://dav.example.test/remote.php/dav/files/user/', directory: '画布 备份/OneYes', username: '用户', password: 'p@ss:/密码', lastSyncedAt: '' };
 
 test('WebDAV paths retain base paths and encode Unicode, spaces and special characters', () => {
@@ -28,7 +30,7 @@ test('desktop native DAV roundtrip deduplicates collections, preserves auth/ETag
         const path=req.url!, method=req.method!; seen.push({method,path});
         assert.equal(req.headers.authorization,expectedAuth);assert.equal(req.headers.cookie,undefined);assert.equal(req.headers['proxy-authorization'],undefined);
         if(method==='MKCOL') {if(collections.has(path))res.writeHead(405);else{collections.add(path);res.writeHead(201);}return res.end();}
-        if(method==='PROPFIND'){assert.equal(req.headers.depth,'0');res.writeHead(collections.has(path)?207:404);return res.end('<multistatus/>');}
+        if(method==='PROPFIND'){assert.equal(req.headers.depth,'0');const chunks=[];for await(const chunk of req)chunks.push(chunk);assert.match(Buffer.concat(chunks).toString(),/resourcetype/);res.writeHead(collections.has(path)?207:404);return res.end(multistatus(path));}
         if(method==='PUT') {const chunks=[];for await(const chunk of req)chunks.push(chunk);files.set(path,Buffer.concat(chunks));assert.equal(req.headers['if-none-match'],'*');res.writeHead(201);return res.end();}
         if(!files.has(path)){res.writeHead(404);return res.end();}
         res.writeHead(200,{'content-type':'application/octet-stream',etag:'"v1"'});res.end(files.get(path));
@@ -59,10 +61,32 @@ test('DAV failures preserve HTTP reasons and a subsequent attempt creates direct
             await assert.rejects(testWebdavConnection(config),pattern);
         }
         let creates=0;
-        globalThis.fetch=async(_input,init)=>{if(init?.method==='MKCOL'){creates++;return new Response(null,{status:201});}return new Response(null,{status:207});};
+        globalThis.fetch=async(input,init)=>{if(init?.method==='MKCOL'){creates++;return new Response(null,{status:201});}return new Response(multistatus(new URL(String(input)).pathname),{status:207});};
         await testWebdavConnection(config);await testWebdavConnection(config);assert.equal(creates,4);
         globalThis.fetch=async()=>new Response('');await assert.rejects(downloadWebdavFile(config,'manifest.json'),/为空/);
     } finally{globalThis.fetch=nativeFetch;}
+});
+
+test('DAV method fallbacks validate the requested XML resource and never accept login pages or nested failures',async()=>{
+    try{
+        for(const status of [405,501]){
+            const calls:string[]=[];
+            globalThis.fetch=async(input,init)=>{calls.push(init!.method!);return init?.method==='HEAD'?new Response(null,{status}):new Response(multistatus(new URL(String(input)).pathname,false),{status:207});};
+            assert.equal(await webdavFileExists(config,'canvas/files/original.png'),true);assert.deepEqual(calls,['HEAD','PROPFIND']);
+        }
+        for(const status of [401,403,507]){
+            let calls=0;globalThis.fetch=async()=>{calls++;return new Response(null,{status});};
+            await assert.rejects(webdavFileExists(config,'canvas/files/original.png'));assert.equal(calls,1,'auth and quota failures must not switch methods');
+        }
+        for(const body of ['<html>login</html>',multistatus('/wrong-resource/'),multistatus(new URL(buildWebdavUrl(config,'')).pathname,false)]){
+            globalThis.fetch=async(_input,init)=>init?.method==='MKCOL'?new Response(null,{status:201}):new Response(body,{status:207});
+            await assert.rejects(testWebdavConnection(config),/资源信息|文件夹/);
+        }
+        globalThis.fetch=async(input,init)=>new Response(init?.method==='MKCOL'?null:multistatus(new URL(String(input)).pathname,true,404),{status:init?.method==='MKCOL'?403:207});
+        await assert.rejects(testWebdavConnection(config),/权限/);
+        globalThis.fetch=async(input,init)=>init?.method==='HEAD'?new Response(null,{status:405}):new Response(multistatus(new URL(String(input)).pathname,false,404),{status:207});
+        assert.equal(await webdavFileExists(config,'missing.png'),false);
+    }finally{globalThis.fetch=nativeFetch;}
 });
 
 test('browser forwarding and desktop DAV routes do not mix proxy credentials into URLs',async()=>{
@@ -81,6 +105,7 @@ test('manifests reject corrupted, future, cross-domain and escaping media entrie
     const sha256=await blobSha256(new Blob(['abc']));assert.equal(sha256,'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
     const manifest={app:'infinite-canvas',version:1,domain:'canvas',exportedAt:'',data:{projects:[],deleted:[]},files:[{storageKey:'image:abc',path:'canvas/files/a.png',mimeType:'image/png',bytes:3,sha256}]};
     assert.equal(parseDomainManifest(JSON.stringify(manifest),'canvas').files.length,1);
+    assert.equal(parseDomainManifest('\uFEFF'+JSON.stringify(manifest),'canvas').files.length,1);
     for(const patch of [{version:2},{data:{}},{data:{projects:[null],deleted:[]}},{files:[{...manifest.files[0],path:'assets/files/a.png'}]},{files:[{...manifest.files[0],path:'canvas/files/../secret'}]},{files:[{...manifest.files[0],bytes:0}]},{files:[manifest.files[0],manifest.files[0]]}])assert.throws(()=>parseDomainManifest(JSON.stringify({...manifest,...patch}),'canvas'));
     assert.throws(()=>parseDomainManifest(JSON.stringify(manifest),'assets'));
 });

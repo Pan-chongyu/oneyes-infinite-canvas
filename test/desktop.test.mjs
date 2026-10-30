@@ -72,4 +72,6 @@ test('WebDAV routes preserve methods and validators but reject credential-leakin
         assert.equal(seen, 1);
     }
     assert.equal((await requestWebdav(new Request('https://app.test/', { method: 'DELETE' }), target, () => { throw Error('must not execute'); })).status, 405);
+    const propfind = new Request('https://app.test/',{method:'PROPFIND',body:'<d:propfind xmlns:d="DAV:"/>',headers:{'Content-Type':'application/xml','If-Unmodified-Since':'Fri, 30 Oct 2026 00:00:00 GMT'}});
+    await requestWebdav(propfind,target,async(_url,init)=>{assert.equal(Buffer.from(init.body).toString(),'<d:propfind xmlns:d="DAV:"/>');assert.equal(init.headers.get('if-unmodified-since'),'Fri, 30 Oct 2026 00:00:00 GMT');return new Response(null,{status:207});});
 });

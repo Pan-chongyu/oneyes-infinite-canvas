@@ -170,11 +170,12 @@ test('native DAV methods and Basic auth survive saved HTTP/SOCKS proxy transport
         const network = await createNetwork(() => { throw Error('must not bypass proxy'); }); t.after(() => network.close());
         network.configure({ proxyEnabled: true, proxyMode: 'upstream', upstreamProxyUrl: `${scheme}://127.0.0.1:${proxyPort}`, upstreamProxyUsername: username, upstreamProxyPassword: password });
         for (const method of ['MKCOL', 'PROPFIND', 'PUT', 'GET']) {
-            const request = new Request('https://app.test', { method, headers: { Authorization: 'Basic dav-account-only', Depth: '0', 'If-Match': '"version-1"' }, ...(method === 'PUT' ? { body: new Uint8Array([0, 1, 255, 128]) } : {}) });
+            const request = new Request('https://app.test', { method, headers: { Authorization: 'Basic dav-account-only', Depth: '0', 'If-Match': '"version-1"' }, ...(method === 'PUT' ? { body: new Uint8Array([0, 1, 255, 128]) } : method === 'PROPFIND' ? {body:'<d:propfind xmlns:d="DAV:"/>'} : {}) });
             const result = await (await requestWebdav(request, `http://127.0.0.1:${originPort}/dav/%E7%94%BB%E5%B8%83/`, network.fetch)).json();
             assert.equal(result.method, method); assert.equal(result.headers.authorization, 'Basic dav-account-only'); assert.equal(result.headers.depth, '0'); assert.equal(result.headers['if-match'], '"version-1"');
             assert.equal(result.headers['proxy-authorization'], undefined);
             if (method === 'PUT') assert.equal(result.body, Buffer.from([0, 1, 255, 128]).toString('base64'));
+            if (method === 'PROPFIND') assert.equal(result.body, Buffer.from('<d:propfind xmlns:d="DAV:"/>').toString('base64'));
         }
     }
 });

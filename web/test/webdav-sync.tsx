@@ -24,6 +24,15 @@ const control = (operation: string, args = {}) => fetch('oneyes-canvas://app/fix
     const first = await syncAppDataToWebdav(config,event=>firstProgress.push(event));
     check(first.projects===1 && first.assets===1 && first.imageLogs===1 && first.uploadedFiles===3,'initial upload failed');
     for(const domain of ['canvas','assets','image-workbench']) check(firstProgress.some(event=>event.domain===domain && event.stage==='上传新增媒体' && event.current===0 && event.total===1),'upload start remained stuck on the completed scan');
+    for(const mode of ['compatibility','no-etag']){
+        await control(mode);
+        check((await syncAppDataToWebdav(config)).uploadedFiles===0,'HEAD-disabled DAV with existing MKCOL 403, XML multistatus and weak/missing ETag did not sync');
+        const assetsBefore=JSON.stringify(useAssetStore.getState().assets);
+        await control('concurrent-weak-etag');
+        await syncAppDataToWebdav(config).then(()=>{throw Error('weak/missing ETag concurrent edit overwritten');},error=>check(/其他设备/.test(error.message),'weak/missing ETag conflict not detected'));
+        check(JSON.stringify(useAssetStore.getState().assets)===assetsBefore,'weak/missing ETag conflict changed local records');
+    }
+    await control('end-compatibility');
     const project = () => useCanvasStore.getState().projects.find(item=>item.id===canvasId)!;
     useCanvasStore.getState().updateProject(canvasId,{nodes:project().nodes.map(node=>({...node,metadata:{...node.metadata,prompt:'image:ordinary-prompt-not-a-file'}}))});
     const unchanged = await syncAppDataToWebdav(config);check(unchanged.uploadedFiles===0,'plain text was treated as media or unchanged media reuploaded');
@@ -38,12 +47,28 @@ const control = (operation: string, args = {}) => fetch('oneyes-canvas://app/fix
     await files.setItem(image.storageKey!,await (await fetch(png)).blob());
     await syncAppDataToWebdav(config);
     useCanvasStore.getState().replaceProjects([],[]);useAssetStore.getState().replaceAssets([]);await deleteStoredImages([image.storageKey!]);await logs.clear();
+    await control('legacy-manifests');
     const restoredProgress:AppSyncProgressEvent[]=[];
     const restored=await syncAppDataToWebdav(config,event=>restoredProgress.push(event));
     check(restoredProgress.some(event=>event.stage==='下载媒体' && event.current===0 && event.total===1),'download start remained stuck on the completed scan');
     check(restored.projects===1 && restored.assets===1 && restored.imageLogs===1,'remote records not restored');
     check((await getImageBlob(image.storageKey!))?.size===image.bytes,'original media not restored');
     check((await logs.getItem('log-a'))!==null,'history not restored');
+    check(restored.uploadedFiles===3,'legacy manifest originals were not upgraded with content hashes');
+    const inlineKey='image:inline-legacy-original';
+    const inlineId=useCanvasStore.getState().createProject('Inline original');
+    useCanvasStore.getState().updateProject(inlineId,{nodes:[{...projectNode(),metadata:{storageKey:inlineKey,content:png}}]});
+    await syncAppDataToWebdav(config);
+    check(await blobSha256((await getImageBlob(inlineKey))!)===await blobSha256(await (await fetch(png)).blob()),'inline original was not recovered without changing bytes');
+    useCanvasStore.getState().deleteProjects([inlineId]);await syncAppDataToWebdav(config);
+    const conflictKey='image:conflicting-inline',conflictId=useCanvasStore.getState().createProject('Conflicting originals');
+    useCanvasStore.getState().updateProject(conflictId,{nodes:[{...projectNode(),metadata:{storageKey:conflictKey,content:png}},{...projectNode(),id:'other',metadata:{storageKey:conflictKey,content:'data:image/png;base64,b3RoZXI='}}]});
+    await syncAppDataToWebdav(config).then(()=>{throw Error('conflicting inline originals accepted');},error=>check(/校验/.test(error.message),'conflicting inline originals not diagnosed'));
+    check(!(await getImageBlob(conflictKey)),'conflicting inline original was persisted');
+    useCanvasStore.getState().deleteProjects([conflictId]);
+    await control('corrupt-canvas-media');await deleteStoredImages([image.storageKey!]);
+    await syncAppDataToWebdav(config);
+    check(await blobSha256((await getImageBlob(image.storageKey!))!)===await blobSha256(await (await fetch(png)).blob()),'corrupt primary blocked a valid identical original in another domain');
     const reference=await uploadImage(png);
     useCanvasStore.getState().updateProject(canvasId,{nodes:project().nodes.map(node=>({...node,metadata:{...node.metadata,references:[reference.storageKey!]}}))});
     await cleanupUnusedImages({projects:useCanvasStore.getState().projects,assets:useAssetStore.getState().assets});
@@ -87,7 +112,7 @@ const control = (operation: string, args = {}) => fetch('oneyes-canvas://app/fix
     useCanvasStore.getState().updateProject(brokenId,{nodes:[{...projectNode(),metadata:{storageKey:'image:truly-missing'}}]});
     await syncAppDataToWebdav({...config,directory:'missing-original'}).then(()=>{throw Error('missing original accepted');},error=>check(/需要补齐原图的画布/.test(error.message),'missing media did not identify its canvas'));
     await flushCanvasStorage();
-    return 'upload, cold restore, cached-original repair, shared-domain recovery, reference cleanup, text-key safety, no-op sync, history, tombstones, corrupt manifest, ETag conflict and terminal missing-media state';
+    return 'HEAD-disabled DAV, existing MKCOL 403, XML multistatus, BOM/weak ETag, concurrent-edit protection, inline/cached originals, corrupted-primary recovery, cross-domain integrity, cold restore and terminal missing-media state';
 };
 
 const projectNode=()=>({id:'missing-node',type:CanvasNodeType.Image,title:'Missing',position:{x:0,y:0},width:100,height:100});
