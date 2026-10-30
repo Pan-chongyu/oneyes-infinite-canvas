@@ -8,7 +8,8 @@ export type CodexPlanStep = { step: string; status: "pending" | "inProgress" | "
 export type CodexPlanUpdate = { threadId: string; turnId: string; explanation?: string | null; plan: CodexPlanStep[]; turnStatus?: string };
 export type CodexMcpStartupStatus = { threadId: string | null; name: string; status: "starting" | "ready" | "failed" | "cancelled"; error: string | null; failureReason: "reauthenticationRequired" | null };
 export type CodexMcpServerStatus = { name: string; authStatus: "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth" } & JsonRecord;
-export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+// app-server advertises non-empty effort strings; do not discard new model capabilities.
+export type CodexReasoningEffort = string;
 export type CodexModel = JsonRecord & {
     id: string;
     model: string;
@@ -101,7 +102,7 @@ type CodexRequestSpec = {
         result: { status: "notLoaded" | "notSubscribed" | "unsubscribed" };
     };
     "model/list": {
-        params: { limit: number; includeHidden: boolean };
+        params: { cursor?: string; limit: number; includeHidden: boolean };
         result: { data: CodexModel[]; nextCursor: string | null };
     };
     "mcpServerStatus/list": {

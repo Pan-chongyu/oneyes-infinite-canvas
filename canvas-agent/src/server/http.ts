@@ -490,7 +490,7 @@ function permissionMode(value: unknown): AgentPermissionMode {
 }
 
 function reasoningEffort(value: unknown): CodexReasoningEffort | undefined {
-    return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max" || value === "ultra" ? value : undefined;
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function startupStatus(value: unknown): "starting" | "ready" | "failed" | "cancelled" {

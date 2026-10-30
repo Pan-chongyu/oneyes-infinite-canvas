@@ -18,3 +18,5 @@ Canvas 是独立 Electron 应用；本通道不修改 OneYes Desktop 的 Tauri/S
 发布前检查：`npm test`、`npm run test:chat`、`npm run test:ota-ui`、`npm run test:images`、`npm run test:videos`、`npm run test:webdav`、`npm run test:plugins`、前端类型检查、构建、`npm run test:codec` 和打包启动验证。视频协议回归在六种平台／芯片通过隔离原生协议验证 Grok JSON、任务响应、素材 Worker 与鉴权下载，并验证参考模式 1080p 的提交前检查、参数保留与中文说明；不得自动降低分辨率或切换模型，只有用户明确操作才变更参数，设置变更不得触发生成请求，不发送真实付费请求。节点插件回归在六种平台／芯片验证拖入、选择文件、更新失败回退、内置节点保护、开发文档及 IndexedDB 缓存跨进程加载，不访问真实账户或发出付费请求。异步生图恢复测试在六种平台／芯片的发布构建中运行，使用隔离 IndexedDB 和模拟传输，不发出付费请求；生产编码器测试使用真实原生协议加载打包 Worker/WASM 并核对无损像素，不依赖 CDN 或开发服务器。用户大图可通过 `CANVAS_IMAGE_REFERENCE_DIR` 在本机私有目录运行 `test:images`，不上传真实照片。Actions 成功后检查公开 Release 的 12 个完整包、签名清单、增量资源和全部 10 种 OTA 目标，再更新应用中心目录并核对公开接口。不能只触发构建就宣称已可更新。
 
 打包启动验证必须创建真实 Codex 线程、完成必需 infinite-canvas MCP 握手并读取 canvas_get_state 工具，不能仅验证 app-server 进程初始化。验证环境提供不可达的 HTTP/HTTPS/ALL_PROXY 且无本机代理例外，确保应用自动保持本机通信直连；隔离测试配置、账户和工作空间，不发送模型 turn。
+
+Codex 对话回归须覆盖模型列表全量分页、同名模型 ID、动态推理档位、无推理模型、已选模型不可用时不静默替换、模型读取失败刷新与初始化失败恢复原线程及草稿；模型未就绪或 MCP 仍在初始化时不得提交 turn。验证过程不发送真实模型请求。

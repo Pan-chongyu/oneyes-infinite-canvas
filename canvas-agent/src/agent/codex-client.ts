@@ -230,8 +230,18 @@ export class CodexAppClient {
     }
 
     /** 查询当前账号可用的 Codex 模型。 */
-    listModels() {
-        return this.request("model/list", { limit: 100, includeHidden: false });
+    async listModels() {
+        const data: CodexRequestResult<"model/list">["data"] = [];
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        do {
+            const page = await this.request("model/list", { limit: 100, includeHidden: false, ...(cursor ? { cursor } : {}) });
+            data.push(...page.data);
+            cursor = page.nextCursor || undefined;
+            if (cursor && cursors.has(cursor)) throw new Error("Codex 模型列表分页异常，请刷新重试");
+            if (cursor) cursors.add(cursor);
+        } while (cursor);
+        return { data, nextCursor: null };
     }
 
     /** 查询指定工作空间可发现的 Codex Skills。 */

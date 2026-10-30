@@ -26,6 +26,8 @@ export function AgentChatComposer({
     permissionMode,
     onPermissionModeChange,
     models,
+    modelsStatus,
+    onReloadModels,
     model,
     reasoningEffort,
     onModelChange,
@@ -48,6 +50,8 @@ export function AgentChatComposer({
     permissionMode?: AgentPermissionMode;
     onPermissionModeChange?: (permissionMode: AgentPermissionMode) => void;
     models?: AgentModel[];
+    modelsStatus?: "idle" | "loading" | "ready" | "error";
+    onReloadModels?: () => void;
     model?: string;
     reasoningEffort?: AgentReasoningEffort | "";
     onModelChange?: (model: string) => void;
@@ -76,6 +80,7 @@ export function AgentChatComposer({
                     </div>
                 ) : null}
                 <AgentChatPromptInput value={prompt} placeholder={placeholder} theme={theme} onChange={onPromptChange} onSubmit={() => { if (canSubmit) void onSubmit(); }} onAddFiles={onAddFiles} />
+                {models && onModelChange && onReasoningEffortChange && onReloadModels ? <AgentModelControls models={models} status={modelsStatus || "idle"} model={model || ""} reasoningEffort={reasoningEffort || ""} onModelChange={onModelChange} onReasoningEffortChange={onReasoningEffortChange} onReload={onReloadModels} /> : null}
                 <div className="@container mt-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1">
                         {onAddFiles ? (
@@ -91,7 +96,6 @@ export function AgentChatComposer({
                         ) : null}
                         {onConfirmToolsChange ? <ToolConfirmationMenu confirmTools={Boolean(confirmTools)} theme={theme} onChange={onConfirmToolsChange} /> : null}
                         {permissionMode && onPermissionModeChange ? <PermissionModeMenu permissionMode={permissionMode} theme={theme} onChange={onPermissionModeChange} /> : null}
-                        {models?.length && model && reasoningEffort && onModelChange && onReasoningEffortChange ? <AgentModelControls models={models} model={model} reasoningEffort={reasoningEffort} onModelChange={onModelChange} onReasoningEffortChange={onReasoningEffortChange} /> : null}
                         {left}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -107,41 +111,45 @@ export function AgentChatComposer({
     );
 }
 
-function AgentModelControls({ models, model, reasoningEffort, onModelChange, onReasoningEffortChange }: { models: AgentModel[]; model: string; reasoningEffort: AgentReasoningEffort; onModelChange: (model: string) => void; onReasoningEffortChange: (effort: AgentReasoningEffort) => void }) {
+function AgentModelControls({ models, status, model, reasoningEffort, onModelChange, onReasoningEffortChange, onReload }: { models: AgentModel[]; status: "idle" | "loading" | "ready" | "error"; model: string; reasoningEffort: AgentReasoningEffort; onModelChange: (model: string) => void; onReasoningEffortChange: (effort: AgentReasoningEffort) => void; onReload: () => void }) {
     const { t } = useTranslation();
-    const current = models.find((item) => item.model === model) || models[0];
-    const effortLabel = (effort: AgentReasoningEffort) => t(`agent.composer.effort.${effort}`);
+    const current = models.find((item) => item.model === model);
+    const effortLabel = (effort: AgentReasoningEffort) => t(`agent.composer.effort.${effort}`, { defaultValue: effort });
+    const modelLabel = status === "loading" ? t("agent.composer.loadingModels") : status === "error" ? t("agent.composer.modelsFailed") : status === "idle" ? t("agent.composer.modelsOffline") : current?.displayName || (model ? t("agent.composer.modelUnavailable", { model }) : t("agent.composer.noModels"));
     const [modelOpen, setModelOpen] = useState(false);
     const [reasoningOpen, setReasoningOpen] = useState(false);
     return (
-        <div className="flex min-w-0 items-center gap-1">
-            <Tooltip title={t("agent.composer.model", { model: current.displayName || current.model })} placement="top" open={modelOpen ? false : undefined}>
-                <span className="inline-flex shrink-0">
-                    <Select value={model} open={modelOpen} onOpenChange={setModelOpen} onValueChange={onModelChange}>
-                        <SelectTrigger hideChevron className="h-9 w-9 min-w-9 justify-center gap-0 rounded-full border-0 bg-transparent px-0 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 @min-[660px]:w-auto @min-[660px]:min-w-36 @min-[660px]:max-w-36 @min-[660px]:justify-start @min-[660px]:gap-1.5 @min-[660px]:px-2.5 dark:bg-transparent dark:hover:bg-white/10" aria-label={t("agent.composer.selectModel", { model: current.displayName || current.model })}>
-                            <Cpu className="size-3.5 shrink-0 opacity-70" />
-                            <span className="hidden min-w-0 flex-1 truncate text-left @min-[660px]:inline">{current.displayName || current.model}</span>
-                            <ChevronUp className="hidden size-3 opacity-50 @min-[660px]:block" />
+        <div className="mt-2 flex min-w-0 items-center gap-1" data-testid="agent-model-controls">
+            <Tooltip title={current?.description || modelLabel} placement="top" open={modelOpen ? false : undefined}>
+                <span className="inline-flex min-w-0 flex-1">
+                    <Select value={model} disabled={status !== "ready" || !models.length} open={modelOpen} onOpenChange={setModelOpen} onValueChange={onModelChange}>
+                        <SelectTrigger hideChevron data-testid="agent-model-select" className="h-8 min-w-0 flex-1 gap-1.5 rounded-lg border-0 bg-transparent px-2 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 dark:bg-transparent dark:hover:bg-white/10" aria-label={t("agent.composer.selectModel", { model: modelLabel })}>
+                            {status === "loading" ? <LoaderCircle className="size-3.5 shrink-0 animate-spin opacity-70" /> : <Cpu className="size-3.5 shrink-0 opacity-70" />}
+                            <span className="min-w-0 flex-1 truncate text-left">{modelLabel}</span>
+                            <ChevronUp className="size-3 shrink-0 opacity-50" />
                         </SelectTrigger>
                         <SelectContent data-canvas-no-zoom position="popper" side="top" align="start" sideOffset={6} className="z-[1200] w-64 rounded-xl border border-border/70 bg-popover p-1 shadow-xl">
-                            {models.map((item) => <SelectItem key={item.model} value={item.model}>{item.displayName || item.model}</SelectItem>)}
+                            {models.map((item) => <SelectItem key={item.model} value={item.model} textValue={item.displayName || item.model}><span className="flex min-w-0 flex-col items-start py-0.5"><span>{item.displayName || item.model}</span>{item.displayName !== item.model ? <span className="text-[10px] text-muted-foreground">{item.model}</span> : null}</span></SelectItem>)}
                         </SelectContent>
                     </Select>
                 </span>
             </Tooltip>
-            <Tooltip title={t("agent.composer.reasoning", { effort: effortLabel(reasoningEffort) })} placement="top" open={reasoningOpen ? false : undefined}>
+            {current?.supportedReasoningEfforts.length ? <Tooltip title={t("agent.composer.reasoning", { effort: effortLabel(reasoningEffort) })} placement="top" open={reasoningOpen ? false : undefined}>
                 <span className="inline-flex shrink-0">
-                    <Select value={reasoningEffort} open={reasoningOpen} onOpenChange={setReasoningOpen} onValueChange={(value) => onReasoningEffortChange(value as AgentReasoningEffort)}>
-                        <SelectTrigger hideChevron className="h-9 w-9 min-w-9 justify-center gap-0 rounded-full border-0 bg-transparent px-0 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 @min-[660px]:w-auto @min-[660px]:min-w-[4.5rem] @min-[660px]:justify-start @min-[660px]:gap-1.5 @min-[660px]:px-2.5 dark:bg-transparent dark:hover:bg-white/10" aria-label={t("agent.composer.selectReasoning", { effort: effortLabel(reasoningEffort) })}>
+                    <Select value={reasoningEffort} disabled={status !== "ready"} open={reasoningOpen} onOpenChange={setReasoningOpen} onValueChange={onReasoningEffortChange}>
+                        <SelectTrigger hideChevron data-testid="agent-effort-select" className="h-8 w-auto gap-1.5 rounded-lg border-0 bg-transparent px-2 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 dark:bg-transparent dark:hover:bg-white/10" aria-label={t("agent.composer.selectReasoning", { effort: effortLabel(reasoningEffort) })}>
                             <Gauge className="size-3.5 opacity-70" />
-                            <span className="hidden @min-[660px]:inline">{effortLabel(reasoningEffort)}</span>
-                            <ChevronUp className="hidden size-3 opacity-50 @min-[660px]:block" />
+                            <span>{effortLabel(reasoningEffort)}</span>
+                            <ChevronUp className="size-3 opacity-50" />
                         </SelectTrigger>
                         <SelectContent data-canvas-no-zoom position="popper" side="top" align="start" sideOffset={6} className="z-[1200] min-w-32 rounded-xl border border-border/70 bg-popover p-1 shadow-xl">
                             {current.supportedReasoningEfforts.map((item) => <SelectItem key={item.reasoningEffort} value={item.reasoningEffort}>{effortLabel(item.reasoningEffort)}</SelectItem>)}
                         </SelectContent>
                     </Select>
                 </span>
+            </Tooltip> : null}
+            <Tooltip title={t("agent.composer.refreshModels")}>
+                <button type="button" data-testid="agent-model-refresh" aria-label={t("agent.composer.refreshModels")} disabled={status === "loading" || status === "idle"} onClick={onReload} className="grid size-8 shrink-0 place-items-center rounded-lg opacity-60 transition hover:bg-black/5 hover:opacity-100 disabled:opacity-30 dark:hover:bg-white/10"><RefreshCw className="size-3.5" /></button>
             </Tooltip>
         </div>
     );

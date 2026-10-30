@@ -14,6 +14,13 @@ let failTurn: (() => void) | undefined;
 let rejectNextTurn = false;
 const pendingHistory: (() => void)[] = [];
 const turns: Record<string, unknown>[] = [];
+let failModels = true;
+let modelRequests = 0;
+let holdModels = false;
+const pendingModels: (() => void)[] = [];
+const initRequests: string[] = [];
+const makeModel = (model: string, efforts = ["none", "high", "future-effort"]) => ({ id: model, model, displayName: "GPT Test", isDefault: model === "first", defaultReasoningEffort: "high", supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort })) });
+let models = [makeModel("first"), makeModel("second"), makeModel("no-reasoning", [])];
 const conversation = (status = "ready", threadId = "thread-1") => ({ revision: ++revision, conversationId: threadId, threadId, status, mcpStatuses: {} });
 const json = (data: unknown) => new Response(JSON.stringify(data), { headers: { "content-type": "application/json" } });
 class FixtureEvents extends EventTarget {
@@ -34,6 +41,12 @@ window.fetch = async (input, init) => {
         if (holdHistory) await new Promise<void>((resolve) => pendingHistory.push(resolve));
         return json(snapshot);
     }
+    if (path.endsWith("/resume") || path === "/agent/codex/threads/reset") {
+        initRequests.push(path);
+        const next = conversation();
+        source.emit("conversation_changed", next);
+        return json({ ok: true, conversation: next });
+    }
     if (path.startsWith("/agent/codex/threads/")) return json({ ok: true, messages: [], settledTurnIds: [], historyReady: true });
     if (path === "/agent/codex/turn") {
         turns.push(JSON.parse(String(init?.body)));
@@ -46,17 +59,29 @@ window.fetch = async (input, init) => {
         source.emit("codex_state", { busy: true, threadId: "thread-1", turnId: `turn-${turns.length}` });
         return json({ ok: true, threadId: "thread-1" });
     }
-    if (path === "/agent/codex/models") return json({ ok: true, data: [] });
+    if (path === "/agent/codex/models") {
+        modelRequests++;
+        if (failModels) { failModels = false; return new Response(JSON.stringify({ error: "fixture model discovery failed" }), { status: 503 }); }
+        const data = models;
+        if (holdModels) await new Promise<void>((resolve) => pendingModels.push(resolve));
+        return json({ ok: true, data });
+    }
     if (path === "/agent/codex/skills") return json({ ok: true, data: [] });
     if (["/canvas/state", "/canvas/activate", "/agent/codex/history/ack"].includes(path)) return json({ ok: true });
     throw new Error(`Unexpected fixture request: ${path}`);
 };
-useAgentStore.setState({ enabled: true, url: "http://fixture.test", token: "fixture-token", activeThreadId: "thread-1", activeTab: "chat" });
+useAgentStore.setState({ enabled: true, url: "http://fixture.test", token: "fixture-token", activeThreadId: "thread-1", activeTab: "chat", model: "saved-unavailable", reasoningEffort: "future-effort" });
 Object.assign(window, { chatTest: {
     state: () => {
-        const { prompt, sending, waiting, loadingThreads, conversation } = useAgentStore.getState();
-        return { prompt, sending, waiting, loadingThreads, status: conversation.status, threadId: conversation.threadId, turns, pendingHistory: pendingHistory.length };
+        const { prompt, sending, waiting, loadingThreads, conversation, modelsStatus, model, reasoningEffort } = useAgentStore.getState();
+        return { prompt, sending, waiting, loadingThreads, modelsStatus, model, reasoningEffort, modelRequests, modelIds: useAgentStore.getState().models.map((item) => item.model), pendingModels: pendingModels.length, initRequests, status: conversation.status, threadId: conversation.threadId, turns, pendingHistory: pendingHistory.length };
     },
+    holdModels: () => { holdModels = true; },
+    allowModels: () => { holdModels = false; },
+    releaseModels: () => { holdModels = false; pendingModels.splice(0).forEach((resolve) => resolve()); },
+    connection: (connected: boolean) => useAgentStore.setState({ connected }),
+    modelCatalog: (empty: boolean) => { models = empty ? [] : [makeModel("first"), makeModel("second"), makeModel("no-reasoning", [])]; },
+    initialization: (status: string) => source.emit("conversation_changed", conversation(status)),
     holdHistory: () => { holdHistory = true; },
     releaseHistory: () => { holdHistory = false; pendingHistory.splice(0).forEach((resolve) => resolve()); },
     complete: () => {

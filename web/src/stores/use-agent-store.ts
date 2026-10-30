@@ -14,11 +14,13 @@ export type AgentChatItem = { id: string; itemId?: string; clientMessageId?: str
 export type AgentEventLog = { id: string; time: string; title: string; text: string; raw?: unknown };
 export type AgentPendingToolCall = { requestId: string; name: string; input?: { ops?: CanvasAgentOp[]; path?: string } & Record<string, unknown> };
 export type AgentPermissionMode = "request" | "automatic" | "full";
-export type AgentReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type AgentReasoningEffort = string;
 export type AgentModel = {
     id: string;
     model: string;
     displayName: string;
+    description?: string;
+    hidden?: boolean;
     defaultReasoningEffort: AgentReasoningEffort;
     supportedReasoningEfforts: Array<{ reasoningEffort: AgentReasoningEffort; description?: string }>;
     isDefault?: boolean;
@@ -73,6 +75,7 @@ type AgentStore = {
     confirmTools: boolean;
     permissionMode: AgentPermissionMode;
     models: AgentModel[];
+    modelsStatus: "idle" | "loading" | "ready" | "error";
     model: string;
     reasoningEffort: AgentReasoningEffort | "";
     activity: string;
@@ -144,6 +147,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     confirmTools: false,
     permissionMode: typeof window === "undefined" ? "request" : (localStorage.getItem("canvas-agent-permission-mode") as AgentPermissionMode) || "request",
     models: [],
+    modelsStatus: "idle",
     model: typeof window === "undefined" ? "" : localStorage.getItem("canvas-agent-model") || "",
     reasoningEffort: typeof window === "undefined" ? "" : (localStorage.getItem("canvas-agent-reasoning-effort") as AgentReasoningEffort) || "",
     activity: i18n.t("agent.state.ready"),

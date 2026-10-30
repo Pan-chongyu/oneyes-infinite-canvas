@@ -19,6 +19,25 @@ type TestClient = {
 
 const emptyEventHistory = { record: () => Promise.resolve(), recordTurn: () => Promise.resolve() };
 
+test("model discovery follows every cursor and rejects incomplete repeated-cursor results", async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    const child = { stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } };
+    const client = Reflect.construct(CodexAppClient, [child, () => undefined, emptyEventHistory]) as CodexAppClient;
+    const native = client as unknown as TestClient;
+    const listing = client.listModels();
+    native.handle({ id: writes.at(-1)!.id, result: { data: [{ model: "first" }], nextCursor: "page-2" } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(writes.at(-1)!.params, { cursor: "page-2", limit: 100, includeHidden: false });
+    native.handle({ id: writes.at(-1)!.id, result: { data: [{ model: "second" }], nextCursor: null } });
+    assert.deepEqual((await listing).data.map((item) => item.model), ["first", "second"]);
+    const repeated = client.listModels();
+    native.handle({ id: writes.at(-1)!.id, result: { data: [], nextCursor: "same" } });
+    await new Promise(resolve => setImmediate(resolve));
+    native.handle({ id: writes.at(-1)!.id, result: { data: [], nextCursor: "same" } });
+    await assert.rejects(repeated, /分页异常/);
+    assert.equal(writes.some((item) => item.method === "turn/start"), false);
+});
+
 test("only transient Windows-MCP errors qualify for automatic reconnect", () => {
     const failure = { name: "windows-mcp", status: "failed" as const, threadId: "t", error: "handshaking failed: connection closed: initialize response", failureReason: null };
     assert.equal(canRecoverWindowsMcp(failure, "win32"), true);
@@ -643,9 +662,11 @@ test("turn/started 早于 turn/start 响应时保持完整事件归属", async (
     const testClient = client as unknown as TestClient;
 
     const turnIds: string[] = [];
-    const running = client.startTurn("thread-1", "测试", [], "request", undefined, undefined, (turnId) => turnIds.push(turnId));
+    const running = client.startTurn("thread-1", "测试", [], "request", "selected-model", "future-effort", (turnId) => turnIds.push(turnId));
     const request = writes.find((item) => item.method === "turn/start");
     assert.ok(request);
+    assert.equal((request.params as Record<string, unknown>).model, "selected-model");
+    assert.equal((request.params as Record<string, unknown>).effort, "future-effort");
 
     testClient.handleNotification("turn/started", { turn: { id: "turn-1", status: "inProgress" } });
     assert.deepEqual(turnIds, ["turn-1"]);

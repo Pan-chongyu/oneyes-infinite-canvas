@@ -26,11 +26,64 @@ app.whenReady().then(async () => {
         await js('document.querySelector("[role=textbox]").dispatchEvent(new KeyboardEvent("keydown", {key:"Enter", code:"Enter", keyCode:13, bubbles:true, cancelable:true}))');
         await js('new Promise(resolve => setTimeout(resolve, 50))');
     };
+    const refreshModels = async () => {
+        await js('document.querySelector("[data-testid=agent-model-refresh]").click()');
+        await wait('chatTest.state().modelsStatus === "ready"');
+    };
+    const select = async (testId, text) => {
+        await js(`document.querySelector('[data-testid="${testId}"]').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}))`);
+        await wait('document.querySelectorAll("[role=option]").length > 0');
+        await js(`Array.from(document.querySelectorAll('[role=option]')).find(item => item.textContent.includes(${JSON.stringify(text)})).click()`);
+        await wait('!document.querySelector("[role=listbox]")');
+    };
     try {
         await win.loadURL(process.argv[2]);
         await wait('window.chatTest && chatTest.state().status === "ready" && !chatTest.state().loadingThreads && document.querySelector("[role=textbox]")');
+        await wait('chatTest.state().modelsStatus === "error"');
+        await type('初始化期间的草稿'); await enter();
+        assert.equal((await state()).turns.length, 0, 'failed model discovery must not submit with a silent default');
+        await refreshModels();
+        assert.equal((await state()).model, 'saved-unavailable', 'refresh must preserve explicit unavailable selection');
+        assert.match(await js('document.querySelector("[data-testid=agent-model-select]").textContent'), /saved-unavailable/);
+        await enter(); assert.equal((await state()).turns.length, 0);
+        await select('agent-model-select', 'second');
+        assert.equal((await state()).model, 'second', 'same-name models must remain independently selectable');
+        assert.equal((await state()).reasoningEffort, 'future-effort', 'switching must preserve a supported effort');
+        await select('agent-effort-select', '关闭');
+        assert.equal((await state()).reasoningEffort, 'none');
+        await select('agent-model-select', 'no-reasoning');
+        assert.equal((await state()).reasoningEffort, '');
+        assert.equal(await js('Boolean(document.querySelector("[data-testid=agent-effort-select]"))'), false);
+        await select('agent-model-select', 'first');
+        assert.equal((await state()).reasoningEffort, 'high');
+        await js('chatTest.holdModels(); document.querySelector("[data-testid=agent-model-refresh]").click()');
+        await wait('chatTest.state().pendingModels === 1');
+        await js('chatTest.connection(false)');
+        await wait('chatTest.state().modelsStatus === "idle"');
+        // Ignore AbortSignal in the mock to prove obsolete response guards work on reconnect.
+        await js('chatTest.modelCatalog(true); chatTest.allowModels(); chatTest.connection(true)');
+        await wait('chatTest.state().modelsStatus === "ready" && chatTest.state().modelIds.length === 0');
+        await js('chatTest.releaseModels()');
+        await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        assert.deepEqual((await state()).modelIds, [], 'obsolete catalog response cannot overwrite the current connection');
+        await enter(); assert.equal((await state()).turns.length, 0, 'empty models cannot submit');
+        await js('chatTest.modelCatalog(false)'); await refreshModels();
+        await js('chatTest.initialization("preparing")');
+        await wait('chatTest.state().status === "preparing"'); await enter();
+        assert.equal((await state()).turns.length, 0, 'initialization must finish before sending');
+        await js('chatTest.initialization("failed")');
+        await wait('chatTest.state().status === "failed"');
+        await js('Array.from(document.querySelectorAll("button")).find(item => item.textContent.includes("重试初始化")).click()');
+        await wait('chatTest.state().status === "ready" && !chatTest.state().loadingThreads');
+        assert.equal((await state()).prompt, '初始化期间的草稿');
+        assert.deepEqual((await state()).initRequests, ['/agent/codex/threads/thread-1/resume'], 'retry must resume the same thread');
+        await select('agent-model-select', 'second');
+        await select('agent-effort-select', '关闭');
+        await js('const range = document.createRange(); range.selectNodeContents(document.querySelector("[role=textbox]")); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range)');
         await type('first message'); await enter();
         await wait('chatTest.state().waiting && chatTest.state().turns.length === 1');
+        assert.equal((await state()).turns[0].model, 'second');
+        assert.equal((await state()).turns[0].effort, 'none');
         await type('下一条消息'); await enter();
         assert.equal((await state()).turns.length, 1, 'running turn must reject duplicate submission');
         await js('chatTest.holdHistory(); chatTest.complete()');
@@ -65,7 +118,7 @@ app.whenReady().then(async () => {
         await js('chatTest.releaseHistory()');
         await wait('!chatTest.state().loadingThreads');
         assert.equal((await state()).threadId, 'thread-2', 'invalidated snapshot cannot switch back');
-        console.log('CHAT_INPUT_REGRESSION_OK: consecutive turns, slow/stale history, draft during reply, IME, send failure, snapshot invalidation');
+        console.log('CHAT_INPUT_REGRESSION_OK: model recovery/selection/effort, initialization retry, consecutive turns, slow/stale history, draft during reply, IME, send failure, snapshot invalidation');
         app.exit(0);
     } catch (error) { console.error(error); app.exit(1); }
 }).catch(error => { console.error(error); app.exit(1); });

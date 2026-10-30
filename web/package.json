@@ -11,7 +11,7 @@
         "start": "vite preview --host 0.0.0.0 --port 3000",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "test:oneyes": "tsx --test src/services/api/image-stream.test.ts src/services/api/image-tasks.test.ts src/stores/oneyes-config.test.ts src/services/api/oneyes-account.test.ts src/components/agent/mcp-startup-help.test.ts src/services/webdav-sync.test.ts src/services/api/video.test.ts"
+        "test:oneyes": "tsx --test src/services/api/image-stream.test.ts src/services/api/image-tasks.test.ts src/stores/oneyes-config.test.ts src/services/api/oneyes-account.test.ts src/components/agent/mcp-startup-help.test.ts src/services/webdav-sync.test.ts src/services/api/video.test.ts src/components/agent/agent-models.test.ts"
     },
     "dependencies": {
         "@ant-design/icons": "^6.1.1",
