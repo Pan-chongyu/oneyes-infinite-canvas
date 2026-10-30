@@ -47,6 +47,8 @@ app.whenReady().then(async () => {
         await js('Array.from(document.querySelectorAll("[data-node-id=generate] button")).find(b => b.textContent.trim() === "开始生成").click()');
         await wait('generationTest.started() === 2 && document.querySelector("[data-node-id] [role=status]")');
         assert.equal(await js('generationTest.posts()'), 0, 'preparing a node must not submit before its receipt is ready');
+        win.webContents.debugger.attach('1.3');
+        await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
         for (const dark of [false, true]) {
             await js(`generationTest.theme(${dark})`);
             await new Promise(resolve => setTimeout(resolve, 300));
@@ -62,7 +64,6 @@ app.whenReady().then(async () => {
                 require('node:fs').writeFileSync(join(process.env.CANVAS_GENERATION_SCREENSHOT_DIR, `generation-${dark ? 'dark' : 'light'}.png`), image.toPNG());
             }
         }
-        await win.webContents.debugger.attach('1.3');
         await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
         assert.equal(await js('getComputedStyle(document.querySelector("[role=status] [aria-hidden=true]")).animationName'), 'none');
         win.webContents.debugger.detach();
