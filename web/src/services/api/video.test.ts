@@ -1,12 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
+import type { AiConfig } from '@/stores/use-config-store';
+import type { VideoReferenceSummary } from '@/lib/video-capabilities';
 
 const values = new Map<string, string>();
 globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k, v) => { values.set(k, v); }, removeItem: k => { values.delete(k); }, clear: () => values.clear(), key: i => [...values.keys()][i] ?? null, get length() { return values.size; } };
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } = await import('./video');
 const { defaultConfig } = await import('@/stores/use-config-store');
+const { normalizeGrokVideoConfig, usesGrokVideoReferences } = await import('@/lib/video-capabilities');
 const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: 'fixture-key' }], model: 'default::grok-imagine-video', videoSeconds: '5', size: '1:1', vquality: '480' };
 const original = axios.defaults.adapter;
 function adapter(handle: (request: AxiosRequestConfig) => { data: unknown; status?: number }) {
@@ -25,10 +28,40 @@ test('Grok video uses canonical JSON and request_id, while other models retain m
         assert.equal(calls[0].headers?.Authorization, 'Bearer fixture-key');
         assert.deepEqual(JSON.parse(calls[0].data), { model: 'grok-imagine-video', prompt: '服装模特', duration: 5, aspect_ratio: '1:1', resolution: '480p' });
         adapter(request => { calls.push(request); return { data: { id: 'other-task' } }; });
-        await createVideoGenerationTask({ ...config, model: 'default::sora-2' }, 'other');
+        await createVideoGenerationTask({ ...config, model: 'default::sora-2', vquality: '1080' }, 'other');
         assert.ok(calls[1].data instanceof FormData);
+        assert.equal(calls[1].data.get('resolution_name'), '1080p');
         assert.match(calls[1].url!, /\/v1\/videos$/);
     } finally { axios.defaults.adapter = original; }
+});
+
+test('Grok resolution correction follows the actual reference branch and preserves other modes', () => {
+    const fullHd = { ...config, vquality: '1080p', size: '1920x1080', videoMode: 'reference' };
+    const references = { imageCount: 1, audioCount: 0, videoCount: 0 };
+    const corrected = normalizeGrokVideoConfig(fullHd, references);
+    assert.equal(corrected.vquality, '720');
+    assert.equal(corrected.size, '1280x720');
+    assert.equal(fullHd.vquality, '1080p', 'normalization must not mutate stored snapshots');
+    for (const [override, inputs, limited] of [
+        [{}, references, true],
+        [{ videoMode: 'frames' }, references, false],
+        [{ videoMode: 'frames' }, { ...references, imageCount: 3 }, true],
+        [{ videoMode: 'frames' }, { ...references, audioCount: 1 }, true],
+        [{}, { ...references, imageCount: 0 }, false],
+        [{}, { ...references, imageCount: 0, audioCount: 1 }, true],
+        [{}, { ...references, videoCount: 1 }, false],
+        [{ model: 'default::sora-2' }, references, false],
+        [{ model: 'default::grok-imagine-video-1.5' }, references, true],
+        [{ channels: [{ ...config.channels[0], models: [{ name: 'grok-imagine-video', capability: 'video' as const, script: 'return 1' }] }] }, references, false],
+        [{ channels: [{ ...config.channels[0], apiFormat: 'gemini' as const }] }, references, false],
+    ] as [Partial<AiConfig>, VideoReferenceSummary, boolean][]) {
+        const current = { ...fullHd, ...override };
+        assert.equal(usesGrokVideoReferences(current, inputs), limited);
+        assert.equal(normalizeGrokVideoConfig(current, inputs).vquality, limited ? '720' : '1080p');
+    }
+    for (const vquality of ['480', '720', '720p']) assert.equal(normalizeGrokVideoConfig({ ...fullHd, vquality }, references).vquality, vquality);
+    assert.equal(normalizeGrokVideoConfig({ ...fullHd, size: '1080x1920' }, references).size, '720x1280');
+    assert.equal(normalizeGrokVideoConfig({ ...fullHd, size: 'auto' }, references).size, 'auto');
 });
 
 test('Grok done downloads the authenticated relay from the account endpoint; external media receives no API key', async () => {
@@ -72,5 +105,8 @@ test('expired, moderated and done-without-content tasks stop without resubmittin
         assert.equal(posts, 1, 'never retry or fall back after a paid POST');
         await assert.rejects(createVideoGenerationTask({ ...config, model: 'default::grok-imagine-video-1.5' }, 'test'), /需要参考图片/);
         assert.equal(posts, 1, 'image-only models must fail before a paid request when the image is missing');
+        axios.defaults.adapter = async request => { posts++; throw new AxiosError('error', 'ERR_BAD_RESPONSE', request, undefined, { data: { error: { message: '1080p video resolution is not supported for reference-to-video requests.' } }, status: 400, statusText: '', headers: {}, config: request }); };
+        await assert.rejects(createVideoGenerationTask(config, 'test'), /参考图.*1080p.*720p/);
+        assert.equal(posts, 2, 'an upstream rejection must not trigger automatic paid resubmission');
     } finally { axios.defaults.adapter = original; }
 });

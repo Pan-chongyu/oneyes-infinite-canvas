@@ -7,6 +7,7 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
 import { type AiConfig } from "@/stores/use-config-store";
+import { emptyVideoReferences, normalizeGrokVideoConfig, usesGrokVideoReferences, type VideoReferenceSummary } from "@/lib/video-capabilities";
 
 const resolutionOptions = [
     { value: "480", label: "480p" },
@@ -24,24 +25,29 @@ export const videoSecondsRange = { min: VIDEO_SECONDS_MIN, max: VIDEO_SECONDS_MA
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
+    inputs?: VideoReferenceSummary;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
+    config = normalizeGrokVideoConfig(config, inputs);
+    const referenceLimited = usesGrokVideoReferences(config, inputs);
     const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
     const videoMode = normalizeVideoModeValue(config.videoMode);
     const resolution = parseVideoResolution(config.vquality);
     const selectedRatio = inferVideoRatio(config.size || "auto");
     const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
     const applySize = (nextResolution: string, ratio: string) => {
+        if (referenceLimited && parseVideoResolution(nextResolution) === "1080") return;
         onConfigChange("vquality", nextResolution);
         onConfigChange("size", computeVideoSize(nextResolution, ratio));
     };
     const selectResolution = (nextResolution: string) => {
+        if (referenceLimited && parseVideoResolution(nextResolution) === "1080") return;
         if (selectedRatio === "auto") onConfigChange("vquality", nextResolution);
         else applySize(nextResolution, selectedRatio);
     };
@@ -53,12 +59,13 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
                         {resolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => selectResolution(item.value)}>
+                            <OptionPill key={item.value} selected={resolution === item.value} disabled={referenceLimited && item.value === "1080"} theme={theme} onClick={() => selectResolution(item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
                         <ResolutionInput value={resolution} theme={theme} onChange={selectResolution} />
                     </div>
+                    {referenceLimited ? <p role="status" className="text-xs leading-5" style={{ color: theme.node.muted }}>{t("apiErrors.grokVideoReferenceResolutionHint")}</p> : null}
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">

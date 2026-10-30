@@ -4,6 +4,12 @@ import { createVideoGenerationTask, pollVideoGenerationTask } from '@/services/a
 import { uploadImage } from '@/services/image-storage';
 import type { ReferenceImage } from '@/types/image';
 import '@/i18n';
+import { useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
+import { CanvasVideoSettingsPopover } from '@/components/canvas/canvas-video-settings-popover';
+import type { AiConfig } from '@/stores/use-config-store';
+import type { VideoReferenceSummary } from '@/lib/video-capabilities';
 
 Object.assign(window, { oneYesDesktop: {} });
 initializeDesktopTransport();
@@ -22,6 +28,11 @@ Object.assign(window, { videoTest: async () => {
     tasks.push(await createVideoGenerationTask({ ...config, videoMode: 'reference' }, 'references', [image, image, image]));
     tasks.push(await createVideoGenerationTask(config, 'audio', [image], { audios: [{ id: 'audio', name: 'ref.mp3', type: 'audio/mpeg', url: 'data:audio/mpeg;base64,YXVkaW8=' }] }));
     tasks.push(await createVideoGenerationTask(config, 'edit', [], { videos: [{ id: 'video', name: 'ref.mp4', type: 'video/mp4', url: 'data:video/mp4;base64,dmlkZW8=' }] }));
+    tasks.push(await createVideoGenerationTask({ ...config, vquality: '1080' }, 'full-hd-text'));
+    tasks.push(await createVideoGenerationTask({ ...config, model: 'default::grok-imagine-video-1.5', videoMode: 'reference', vquality: '1080' }, 'full-hd-reference', [image]));
+    tasks.push(await createVideoGenerationTask({ ...config, vquality: '1080' }, 'automatic-reference', [image, image, image]));
+    tasks.push(await createVideoGenerationTask({ ...config, vquality: '1080' }, 'full-hd-frames', [image, image]));
+    tasks.push(await createVideoGenerationTask({ ...config, vquality: '1080' }, 'full-hd-audio', [image], { audios: [{ id: 'audio', name: 'ref.mp3', type: 'audio/mpeg', url: 'data:audio/mpeg;base64,YXVkaW8=' }] }));
     const pending = await pollVideoGenerationTask(config, tasks[0]);
     check(pending.status === 'pending', 'empty HTTP 202 must remain pending');
     const completed = await pollVideoGenerationTask(config, tasks[0]);
@@ -33,4 +44,42 @@ Object.assign(window, { videoTest: async () => {
     try { await createVideoGenerationTask(config, 'invalid-edit', [image], { videos: [{ id: 'v', name: 'ref.mp4', type: 'video/mp4', url: 'data:video/mp4;base64,dmlkZW8=' }] }); } catch { invalid = true; }
     check(invalid, 'unsupported edit combinations must not silently discard references');
     return tasks.map(task => task.id);
+} });
+
+Object.assign(window, { videoSettingsTest: async () => {
+    let current: AiConfig;
+    let change: (patch: Partial<AiConfig>, inputs?: VideoReferenceSummary) => void;
+    function Settings() {
+        const [value, setValue] = useState({ ...config, vquality: '1080', size: '1920x1080', videoMode: 'frames' });
+        const [inputs, setInputs] = useState({ imageCount: 1, audioCount: 0, videoCount: 0 });
+        current = value;
+        change = (patch, references) => { setValue(previous => ({ ...previous, ...patch })); if (references) setInputs(references); };
+        return <CanvasVideoSettingsPopover config={value} inputs={inputs} onConfigChange={(key, field) => setValue(previous => ({ ...previous, [key]: field }))} />;
+    }
+    const root = createRoot(document.getElementById('root')!);
+    const settled = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    try {
+        flushSync(() => root.render(<Settings />));
+        check(document.getElementById('root')!.textContent?.includes('1080p'), 'frame mode retains 1080p');
+        flushSync(() => document.querySelector<HTMLButtonElement>('#root button')!.click());
+        await settled();
+        const fullHd = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '1080p')!;
+        check(fullHd() && !fullHd().disabled, '1080p enabled for frames');
+        flushSync(() => change({ videoMode: 'reference' }));
+        await settled();
+        check(current!.vquality === '720' && current!.size === '1280x720', 'reference mode persists 720p and matching dimensions');
+        check(fullHd().disabled && document.querySelector('[role="status"]')?.textContent?.includes('720p'), 'reference mode disables 1080p and explains why');
+        flushSync(() => fullHd().click());
+        check(current!.vquality === '720', 'disabled resolution cannot be selected');
+        flushSync(() => change({ videoMode: 'frames', vquality: '1080' }));
+        await settled();
+        check(current!.vquality === '1080' && !fullHd().disabled, 'returning to frames allows choosing 1080p');
+        flushSync(() => change({}, { imageCount: 3, audioCount: 0, videoCount: 0 }));
+        await settled();
+        check(current!.vquality === '720' && fullHd().disabled, 'adding a third image enters reference mode before submitting');
+        flushSync(() => change({ vquality: '1080', videoMode: 'reference' }, { imageCount: 0, audioCount: 0, videoCount: 0 }));
+        await settled();
+        check(current!.vquality === '1080' && !fullHd().disabled, 'text-only generation keeps full HD even with reference mode selected');
+        return 'GROK_VIDEO_SETTINGS_OK';
+    } finally { flushSync(() => root.unmount()); }
 } });

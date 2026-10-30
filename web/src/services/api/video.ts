@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
+import { isGrokVideoModel, normalizeGrokVideoConfig } from "@/lib/video-capabilities";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -73,6 +74,7 @@ function videoTaskFailed(message: string) {
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
+    config = normalizeGrokVideoConfig({ ...config, model: selectedModel }, { imageCount: references.length, audioCount: options?.audios?.length || 0, videoCount: options?.videos?.length || 0 });
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
@@ -149,7 +151,7 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    if (/^grok-imagine-video(?:$|-)/i.test(modelOptionName(model))) return createGrokVideoTask(config, model, prompt, references, options);
+    if (isGrokVideoModel(model)) return createGrokVideoTask(config, model, prompt, references, options);
     const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
@@ -445,6 +447,7 @@ function readAxiosError(error: unknown, fallback: string) {
         if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
         const message = readApiErrorMessage(responseData);
+        if (/1080p.*not supported.*reference-to-video/is.test(message)) return apiText("grokVideoReferenceResolution");
         if (error.response?.status === 415 || /(?:status|HTTP)\s*415\b/i.test(message)) return apiText("videoUnsupportedMedia");
         return message || statusMessage(error.response?.status, fallback);
     }
