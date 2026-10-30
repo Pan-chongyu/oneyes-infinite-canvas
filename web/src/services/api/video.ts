@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
-import { isGrokVideoModel, normalizeGrokVideoConfig } from "@/lib/video-capabilities";
+import { isGrokVideoModel, isUnsupportedGrokVideoResolution } from "@/lib/video-capabilities";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -74,7 +74,7 @@ function videoTaskFailed(message: string) {
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
-    config = normalizeGrokVideoConfig({ ...config, model: selectedModel }, { imageCount: references.length, audioCount: options?.audios?.length || 0, videoCount: options?.videos?.length || 0 });
+    if (isUnsupportedGrokVideoResolution({ ...config, model: selectedModel }, { imageCount: references.length, audioCount: options?.audios?.length || 0, videoCount: options?.videos?.length || 0 })) throw new Error(apiText("grokVideoReferenceResolution"));
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);

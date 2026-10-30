@@ -9,7 +9,7 @@ globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k, v)
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } = await import('./video');
 const { defaultConfig } = await import('@/stores/use-config-store');
-const { normalizeGrokVideoConfig, usesGrokVideoReferences } = await import('@/lib/video-capabilities');
+const { isUnsupportedGrokVideoResolution, usesGrokVideoReferences } = await import('@/lib/video-capabilities');
 const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: 'fixture-key' }], model: 'default::grok-imagine-video', videoSeconds: '5', size: '1:1', vquality: '480' };
 const original = axios.defaults.adapter;
 function adapter(handle: (request: AxiosRequestConfig) => { data: unknown; status?: number }) {
@@ -35,13 +35,9 @@ test('Grok video uses canonical JSON and request_id, while other models retain m
     } finally { axios.defaults.adapter = original; }
 });
 
-test('Grok resolution correction follows the actual reference branch and preserves other modes', () => {
+test('Grok reference resolution validation never changes the chosen quality or dimensions', async () => {
     const fullHd = { ...config, vquality: '1080p', size: '1920x1080', videoMode: 'reference' };
     const references = { imageCount: 1, audioCount: 0, videoCount: 0 };
-    const corrected = normalizeGrokVideoConfig(fullHd, references);
-    assert.equal(corrected.vquality, '720');
-    assert.equal(corrected.size, '1280x720');
-    assert.equal(fullHd.vquality, '1080p', 'normalization must not mutate stored snapshots');
     for (const [override, inputs, limited] of [
         [{}, references, true],
         [{ videoMode: 'frames' }, references, false],
@@ -57,11 +53,19 @@ test('Grok resolution correction follows the actual reference branch and preserv
     ] as [Partial<AiConfig>, VideoReferenceSummary, boolean][]) {
         const current = { ...fullHd, ...override };
         assert.equal(usesGrokVideoReferences(current, inputs), limited);
-        assert.equal(normalizeGrokVideoConfig(current, inputs).vquality, limited ? '720' : '1080p');
+        assert.equal(isUnsupportedGrokVideoResolution(current, inputs), limited);
+        assert.equal(current.vquality, '1080p');
+        assert.equal(current.size, '1920x1080');
     }
-    for (const vquality of ['480', '720', '720p']) assert.equal(normalizeGrokVideoConfig({ ...fullHd, vquality }, references).vquality, vquality);
-    assert.equal(normalizeGrokVideoConfig({ ...fullHd, size: '1080x1920' }, references).size, '720x1280');
-    assert.equal(normalizeGrokVideoConfig({ ...fullHd, size: 'auto' }, references).size, 'auto');
+    for (const vquality of ['480', '720', '720p']) assert.equal(isUnsupportedGrokVideoResolution({ ...fullHd, vquality }, references), false);
+    let calls = 0;
+    adapter(() => { calls++; return { data: { request_id: 'unexpected' } }; });
+    try {
+        await assert.rejects(createVideoGenerationTask(fullHd, 'test', [{ id: 'reference', name: 'ref.png', dataUrl: 'data:image/png;base64,invalid', type: 'image/png' }]), /1080p.*保留.*分辨率/);
+        assert.equal(calls, 0, 'unsupported combinations must fail before any paid POST or image processing');
+        assert.equal(fullHd.vquality, '1080p');
+        assert.equal(fullHd.size, '1920x1080');
+    } finally { axios.defaults.adapter = original; }
 });
 
 test('Grok done downloads the authenticated relay from the account endpoint; external media receives no API key', async () => {
@@ -106,7 +110,7 @@ test('expired, moderated and done-without-content tasks stop without resubmittin
         await assert.rejects(createVideoGenerationTask({ ...config, model: 'default::grok-imagine-video-1.5' }, 'test'), /需要参考图片/);
         assert.equal(posts, 1, 'image-only models must fail before a paid request when the image is missing');
         axios.defaults.adapter = async request => { posts++; throw new AxiosError('error', 'ERR_BAD_RESPONSE', request, undefined, { data: { error: { message: '1080p video resolution is not supported for reference-to-video requests.' } }, status: 400, statusText: '', headers: {}, config: request }); };
-        await assert.rejects(createVideoGenerationTask(config, 'test'), /参考图.*1080p.*720p/);
+        await assert.rejects(createVideoGenerationTask(config, 'test'), /参考模式.*1080p.*保留.*分辨率/);
         assert.equal(posts, 2, 'an upstream rejection must not trigger automatic paid resubmission');
     } finally { axios.defaults.adapter = original; }
 });

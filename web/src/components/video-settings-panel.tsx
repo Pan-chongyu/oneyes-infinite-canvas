@@ -7,7 +7,7 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
 import { type AiConfig } from "@/stores/use-config-store";
-import { emptyVideoReferences, normalizeGrokVideoConfig, usesGrokVideoReferences, type VideoReferenceSummary } from "@/lib/video-capabilities";
+import { emptyVideoReferences, usesGrokVideoReferences, type VideoReferenceSummary } from "@/lib/video-capabilities";
 
 const resolutionOptions = [
     { value: "480", label: "480p" },
@@ -34,7 +34,6 @@ type VideoSettingsPanelProps = {
 
 export function VideoSettingsPanel({ config, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
-    config = normalizeGrokVideoConfig(config, inputs);
     const referenceLimited = usesGrokVideoReferences(config, inputs);
     const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
     const videoMode = normalizeVideoModeValue(config.videoMode);

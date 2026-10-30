@@ -30,8 +30,8 @@ app.whenReady().then(async () => {
         await win.loadURL('oneyes-canvas://app/');
         const end = Date.now() + 20000;
         while (!await win.webContents.executeJavaScript('!!window.videoTest')) { if (Date.now() > end) throw Error('Video fixture did not load'); await new Promise(resolve => setTimeout(resolve, 25)); }
-        assert.equal((await win.webContents.executeJavaScript('videoTest()')).length, 11);
-        assert.equal(posts.length, 11, 'invalid references never submit a paid request');
+        assert.equal((await win.webContents.executeJavaScript('videoTest()')).length, 9);
+        assert.equal(posts.length, 9, 'invalid references and unsupported resolutions never submit a paid request');
         assert.deepEqual(posts[0], { path: '/v1/videos/generations', body: { model: 'grok-imagine-video', prompt: '服装模特', duration: 5, aspect_ratio: '1:1', resolution: '480p' } });
         assert.ok(posts[1].body.image); assert.equal(posts[1].body.reference_images, undefined);
         assert.ok(posts[2].body.image && posts[2].body.last_frame);
@@ -40,10 +40,8 @@ app.whenReady().then(async () => {
         assert.equal(posts[5].path, '/v1/videos/edits');
         assert.deepEqual(posts[5].body, { model: 'grok-imagine-video', prompt: 'edit', video: { url: 'data:video/mp4;base64,dmlkZW8=' } });
         assert.equal(posts[6].body.resolution, '1080p', 'text-to-video keeps 1080p');
-        assert.equal(posts[7].body.resolution, '720p', '1.5 reference mode corrects stale 1080p settings');
-        assert.equal(posts[8].body.resolution, '720p', 'three images use reference mode automatically');
-        assert.equal(posts[9].body.resolution, '1080p', 'first/last frames keep 1080p');
-        assert.equal(posts[10].body.resolution, '720p', 'audio references also use reference mode');
+        assert.equal(posts[7].body.resolution, '1080p', 'first/last frames keep 1080p');
+        assert.equal(posts[8].body.resolution, '720p', 'reference resolution changes only when explicitly selected');
         const { fileTypeFromBuffer } = await import('../../web/node_modules/file-type/core.js');
         for (const image of [posts[1].body.image, posts[2].body.last_frame, ...posts[3].body.reference_images]) {
             const bytes = Buffer.from(image.url.split(',')[1], 'base64');
@@ -52,7 +50,7 @@ app.whenReady().then(async () => {
         }
         assert.deepEqual(gets, ['/v1/videos/task-1', '/v1/videos/task-1', '/v1/videos/task-1/content']);
         assert.equal(await win.webContents.executeJavaScript('videoSettingsTest()'), 'GROK_VIDEO_SETTINGS_OK');
-        assert.equal(posts.length, 11, 'settings corrections never submit requests');
+        assert.equal(posts.length, 9, 'settings changes never submit requests');
         console.log('GROK_VIDEO_NATIVE_OK: JSON, request_id, frames, references, audio, edit, Worker MIME, 202/done, authenticated content, no duplicate POST');
         app.exit(0);
     } catch (error) { console.error(error); app.exit(1); }

@@ -8,7 +8,6 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 import { emptyVideoReferences, type VideoReferenceSummary } from "@/lib/video-capabilities";
-import { useVideoReferenceResolution } from "@/hooks/use-video-reference-resolution";
 
 type CanvasVideoSettingsPopoverProps = {
     config: AiConfig;
@@ -19,7 +18,6 @@ type CanvasVideoSettingsPopoverProps = {
 };
 
 export function CanvasVideoSettingsPopover({ config, inputs = emptyVideoReferences, onConfigChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
-    config = useVideoReferenceResolution(config, inputs, onConfigChange);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);

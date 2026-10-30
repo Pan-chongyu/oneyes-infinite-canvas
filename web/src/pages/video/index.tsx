@@ -13,7 +13,6 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { type VideoReferenceSummary } from "@/lib/video-capabilities";
-import { useVideoReferenceResolution } from "@/hooks/use-video-reference-resolution";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
@@ -106,7 +105,6 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const inputs = { imageCount: references.length, audioCount: 0, videoCount: 0 };
-    useVideoReferenceResolution({ ...effectiveConfig, model }, inputs, updateConfig);
     const canGenerate = Boolean(prompt.trim());
 
     useEffect(() => {

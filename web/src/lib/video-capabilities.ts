@@ -1,4 +1,4 @@
-import { computeVideoSize, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
+import { parseVideoResolution } from "@/lib/media-size";
 import { modelOptionName, resolveModelChannel, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 
 export type VideoReferenceSummary = { imageCount: number; audioCount: number; videoCount: number };
@@ -17,7 +17,6 @@ export function usesGrokVideoReferences(config: AiConfig, inputs: VideoReference
         && (config.videoMode === "reference" || inputs.imageCount > 2 || inputs.audioCount > 0);
 }
 
-export function normalizeGrokVideoConfig(config: AiConfig, inputs: VideoReferenceSummary): AiConfig {
-    if (!usesGrokVideoReferences(config, inputs) || parseVideoResolution(config.vquality) !== "1080") return config;
-    return { ...config, vquality: "720", size: computeVideoSize("720", inferVideoRatio(config.size)) };
+export function isUnsupportedGrokVideoResolution(config: AiConfig, inputs: VideoReferenceSummary) {
+    return usesGrokVideoReferences(config, inputs) && parseVideoResolution(config.vquality) === "1080";
 }
