@@ -1,0 +1,14 @@
+---
+title: Node plugin development
+description: Build and install custom OneYes Canvas nodes from a standalone JavaScript bundle
+---
+
+# Node plugin development
+
+Open **Node plugins → Third-party → Node development guide** in OneYes Canvas to read the bundled guide offline and download a working `quick-note.mjs` example.
+
+Drop a bundled `.js` or `.mjs` file onto the canvas or plugin manager, or use the file picker. Imported source is stored locally for offline restart. Reimport a newer bundle with the same plugin ID to update. Source folders, TSX files, ZIP archives and unresolved relative imports cannot be installed directly.
+
+The full [Chinese development guide](https://github.com/Pan-chongyu/oneyes-infinite-canvas/blob/codex/oneyes-independent/docs/content/docs/development/canvas-node-plugins.zh-CN.mdx) covers the plugin contract, node rendering, persistent metadata, graph access, shared React, theme tokens, host AI APIs, TypeScript SDK, debugging, updates and distribution. The SDK and template live in [plugins/canvas](https://github.com/Pan-chongyu/oneyes-infinite-canvas/tree/codex/oneyes-independent/plugins/canvas).
+
+Plugins execute in the page and can access local data, including AI credentials; only install code you trust. Canvas exports do not include plugin code; install the same plugin on another device separately.

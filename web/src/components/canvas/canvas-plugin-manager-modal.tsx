@@ -1,12 +1,14 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Button, Input, Modal, Popconfirm, Switch, Tabs } from "antd";
-import { AlertTriangle, Check, Puzzle, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, LoaderCircle, Puzzle, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { builtinPlugins, isBuiltinPlugin, installPluginFromUrl, setPluginEnabled, uninstallPlugin, updatePlugin } from "@/lib/canvas/plugin-loader";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
+import { usePluginInstaller } from "@/hooks/use-plugin-installer";
+import { CanvasPluginGuideModal } from "./canvas-plugin-guide-modal";
 
 export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     const { t } = useTranslation();
@@ -16,6 +18,11 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     const [url, setUrl] = useState("");
     const [installing, setInstalling] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState("official");
+    const [dragging, setDragging] = useState(false);
+    const [guideOpen, setGuideOpen] = useState(false);
+    const input = useRef<HTMLInputElement>(null);
+    const { importing, installFiles } = usePluginInstaller();
 
     const localPlugins = useMemo(() => plugins.filter((item) => item.local && !isBuiltinPlugin(item.id)), [plugins]);
     const thirdPartyPlugins = useMemo(() => plugins.filter((item) => !item.local && !isBuiltinPlugin(item.id)), [plugins]);
@@ -54,14 +61,14 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             <Switch size="small" checked={record.enabled} loading={busyId === record.id} onChange={(checked) => runOnPlugin(record, () => setPluginEnabled(record, checked), t(checked ? "canvas.plugins.enabled" : "canvas.plugins.disabled"))} />
             {!record.local && (
                 <>
-                    <Button
+                    {record.url ? <Button
                         type={upgradable ? "primary" : "text"}
                         size="small"
                         icon={<RefreshCw className="size-4" />}
                         loading={busyId === record.id}
                         title={t(upgradable ? "canvas.plugins.upgradeAvailable" : "canvas.plugins.updateFromSource")}
                         onClick={() => runOnPlugin(record, async () => void (await updatePlugin(record)), t("canvas.plugins.updated"))}
-                    />
+                    /> : null}
                     <Popconfirm title={t("canvas.plugins.uninstallTitle")} okText={t("canvas.plugins.uninstall")} cancelText={t("canvas.editors.cancel")} onConfirm={() => uninstallPlugin(record.id)}>
                         <Button type="text" size="small" danger icon={<Trash2 className="size-4" />} title={t("canvas.plugins.uninstall")} />
                     </Popconfirm>
@@ -77,7 +84,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     );
 
     const emptyHint = (text: string) => (
-        <div className="py-10 text-center text-sm" style={{ color: theme.node.muted }}>
+        <div className="py-4 text-center text-xs" style={{ color: theme.node.muted }}>
             {text}
         </div>
     );
@@ -124,13 +131,24 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                 <span>{t("canvas.plugins.warning")}</span>
             </div>
-            <div className="flex gap-2">
-                <Input placeholder={t("canvas.plugins.urlPlaceholder")} value={url} onChange={(event) => setUrl(event.target.value)} onPressEnter={handleInstallUrl} allowClear />
-                <Button type="primary" loading={installing} onClick={handleInstallUrl} icon={<Puzzle className="size-4" />}>
-                    {t("canvas.plugins.install")}
-                </Button>
+            <button type="button" disabled={importing || installing} onClick={() => input.current?.click()} className="flex w-full cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed px-4 py-5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-wait" style={{ borderColor: dragging ? theme.node.text : theme.node.stroke, background: dragging ? theme.toolbar.activeBg : "transparent", color: theme.node.text }}>
+                {importing ? <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" /> : <Upload className="size-5" strokeWidth={1.6} />}
+                <span>{t(importing ? "canvas.plugins.importing" : dragging ? "canvas.plugins.dropToInstall" : "canvas.plugins.dropFile")}</span>
+                <span className="text-xs" style={{ color: theme.node.muted }}>{t("canvas.plugins.fileHint")}</span>
+            </button>
+            <input ref={input} type="file" accept=".js,.mjs" multiple hidden aria-label={t("canvas.plugins.selectFile")} onChange={(event) => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ""; void installFiles(files); }} />
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: theme.node.muted }}>
+                <span>{t("canvas.plugins.fileUpdateHint")}</span>
+                <Button type="text" size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setGuideOpen(true)}>{t("canvas.plugins.developGuide")}</Button>
             </div>
-            <div className="thin-scrollbar max-h-[42vh] space-y-2 overflow-auto">{thirdPartyPlugins.length === 0 ? emptyHint(t("canvas.plugins.noThirdParty")) : thirdPartyPlugins.map((record) => row(record.id, <Puzzle className="size-4" />, record.name, record.version, record.description || record.url, installedControls(record)))}</div>
+            <details>
+                <summary className="cursor-pointer py-1 text-xs" style={{ color: theme.node.muted }}>{t("canvas.plugins.installFromUrl")}</summary>
+                <div className="mt-2 flex gap-2">
+                    <Input aria-label={t("canvas.plugins.urlPlaceholder")} placeholder={t("canvas.plugins.urlPlaceholder")} value={url} onChange={(event) => setUrl(event.target.value)} onPressEnter={() => { if (!installing && !importing) void handleInstallUrl(); }} allowClear />
+                    <Button loading={installing} disabled={importing || !url.trim()} onClick={handleInstallUrl}>{t("canvas.plugins.install")}</Button>
+                </div>
+            </details>
+            <div className="thin-scrollbar max-h-[32vh] space-y-2 overflow-auto">{thirdPartyPlugins.length === 0 ? emptyHint(t("canvas.plugins.noThirdParty")) : thirdPartyPlugins.map((record) => row(record.id, <Puzzle className="size-4" />, record.name, record.version, record.fileName ? `${record.fileName} · ${record.description || t("canvas.plugins.replaceFile")}` : record.description || record.url, installedControls(record)))}</div>
         </div>
     );
 
@@ -141,8 +159,13 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     ];
 
     return (
-        <Modal title={t("canvas.plugins.title")} open={open} onCancel={onClose} footer={null} centered width={640}>
-            <Tabs defaultActiveKey="official" items={tabs} />
-        </Modal>
+        <>
+            <Modal title={t("canvas.plugins.title")} open={open} onCancel={onClose} footer={null} centered width={640}>
+                <div onDragOver={(event) => { if (Array.from(event.dataTransfer.types).includes("Files")) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "copy"; setActiveTab("third"); setDragging(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragging(false); setActiveTab("third"); if (!installing) void installFiles(Array.from(event.dataTransfer.files)); }}>
+                    <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabs} />
+                </div>
+            </Modal>
+            <CanvasPluginGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+        </>
     );
 }

@@ -1,0 +1,144 @@
+---
+title: 节点插件开发
+description: 从可直接拖入的 JavaScript 文件开始，开发、调试和分发自己的 OneYes Canvas 节点
+---
+
+# 开发自己的节点
+
+插件可以给画布添加自己的编辑器、工具或可连接的内容节点。客户端内置开发文档和示例文件，不需要另外安装插件管理工具。
+
+## 先运行一个示例
+
+1. 打开「节点插件 → 第三方插件 → 节点开发文档」，点击「下载示例插件」。
+2. 将下载的 `quick-note.mjs` 拖入画布或插件窗口，也可以点击拖入区域选择文件。
+3. 安装成功后，在画布「添加节点」菜单中选择「我的笔记」。写入文字、保存并重新打开画布，文字仍会保留。
+
+示例只编辑本地文字，不调用 AI、不产生模型费用。可直接用文本编辑器修改文件，再拖入即可更新。多个文件逐个安装，某个文件失败会指出文件名，不影响其他文件。
+
+## 不用构建工具的最小插件
+
+新建 UTF-8 编码的 `my-node.mjs`，粘贴以下代码，然后拖入客户端。必须使用 ES Module 的 `export default`，不能使用 CommonJS 的 `require` 或 `module.exports`。
+
+```js
+export default function ({ React }) {
+    const h = React.createElement;
+    function Content({ ctx }) {
+        return h('div', {
+            'data-canvas-no-zoom': true,
+            onPointerDown: e => e.stopPropagation(),
+            onMouseDown: e => e.stopPropagation(),
+            onWheel: e => e.stopPropagation(),
+            style: { height: '100%', padding: 12, color: ctx.theme.node.text },
+        }, h('textarea', {
+            'aria-label': '我的内容',
+            value: ctx.node.metadata?.content || '',
+            onChange: e => ctx.updateMetadata({ content: e.target.value }),
+            style: { width: '100%', height: '100%', background: 'transparent', color: 'inherit' },
+        }));
+    }
+    return {
+        id: 'my-node',
+        name: '我的节点插件',
+        version: '1.0.0',
+        nodes: [{
+            type: 'my-node:note',
+            title: '我的内容',
+            icon: 'Aa',
+            defaultSize: { width: 280, height: 200 },
+            defaultMetadata: { content: '' },
+            hidePanel: true,
+            resource: node => ({ kind: 'text', text: node.metadata?.content || '' }),
+            Content,
+        }],
+    };
+}
+```
+
+直接从宿主参数取得 `React`，可以使用 `React.useState` 等 Hook。不要在模块顶层调用 Hook。插件也可以默认导出普通对象；使用 SDK 时会自动桥接宿主 React。
+
+## 插件与节点字段
+
+| 字段 | 用法 |
+| --- | --- |
+| `id` | 插件唯一标识，例如 `my-node`。更新时保持不变，不使用 `markdown`、`svg`、`html`、`panorama`、`sticky-note` 等内置插件 ID。 |
+| `name`、`version`、`description` | 插件窗口显示的名称、版本和说明。每次发布建议递增语义化版本。 |
+| `nodes` | 一个插件可以注册多个节点。每个节点必须有独立 `type`、非空 `title` 和正数 `defaultSize.width/height`。 |
+| `type` | 建议 `<插件id>:<节点名>`，例如 `my-node:note`；不能与其他节点重复。保持不变才能恢复已有画布。 |
+| `Content({ ctx })` | 节点主体 React 组件。 |
+| `defaultMetadata` | 新建节点的初始数据。可持久内容用 `metadata.content` 保存，不要只放在组件的 `useState`。 |
+| `Panel({ ctx, onClose })` | 可选的节点下方面板；使用 `autoOpenPanel: true` 点击自动打开，或 `ctx.openPanel()` 手动打开。 |
+| `toolbar(ctx)` | 返回工具栏按钮数组；每项包括 `id`、`title`、`label`、`icon`、`onClick`。 |
+| `resource(node)` | 把节点内容输出给下游。返回 `{ kind: 'text', text }`，或 image/video/audio 对应的 `url`。 |
+| `css`、`setup(app)` | 插件级样式和初始化；`setup` 可以返回清理函数。停用、卸载或替换时会移除样式并调用清理。 |
+
+不要覆盖文本、图片、视频、音频、生成配置和分组等内置节点。冲突或无效定义会阻止安装；初始化失败时保留已安装的原版本。
+
+## ctx 能做什么
+
+| 接口 | 说明 |
+| --- | --- |
+| `ctx.node` | 当前节点 ID、标题、位置、尺寸和 metadata。 |
+| `ctx.theme`、`ctx.scale` | 画布浅深主题和缩放。颜色使用 `ctx.theme.node.text/panel/stroke` 等，不要写死黑白。 |
+| `ctx.updateMetadata({ content })` | 保存节点内容，与画布一起本地持久化。 |
+| `ctx.updateNode({ title, width, height })` | 修改当前节点标题或尺寸。 |
+| `ctx.getNodes()`、`ctx.getConnections()` | 读取当前画布节点和连线。 |
+| `ctx.getNode(id)`、`ctx.getUpstream()`、`ctx.getDownstream()` | 读取指定节点、直接上游或下游节点。 |
+| `ctx.storage.get/set/remove` | 以插件 ID 为命名空间的异步本地存储。同一插件的节点共享这个命名空间。 |
+| `ctx.emit(name, payload)`、`ctx.on(name, handler)` | 事件总线；`on` 返回取消订阅函数，在组件卸载时调用。事件名建议加插件 ID 前缀。 |
+| `ctx.openPanel()`、`ctx.closePanel()` | 控制当前节点的自定义面板。 |
+| `ctx.applyOps(ops)` | 画布指令，例如新增节点、建立连线；完整指令类型见 SDK 的 `CanvasAgentOp`。 |
+
+表单控件在 `onPointerDown`、`onMouseDown` 中停止冒泡，滚动区域在 `onWheel` 中停止冒泡，容器加 `data-canvas-no-zoom`，避免输入操作同时拖动画布。订阅、定时器、DOM 监听需要在 Effect 或 setup 的清理函数中释放。
+
+## 使用已配置的 AI
+
+通过宿主能力使用用户已经选择的 OneYes 模型与密钥，不在插件内保存或硬编码 API Key。生成可能计费，应由用户点击明确的按钮触发，不在初始化和渲染时自动生成。
+
+```js
+const choices = ctx.ai.listModels('text');
+const model = ctx.ai.defaultModel('text');
+const controller = new AbortController();
+try {
+    const { text } = await ctx.ai.generateText('整理下面的笔记：' +
+        (ctx.node.metadata?.content || ''), { model, signal: controller.signal });
+    ctx.updateMetadata({ content: text });
+} catch (error) {
+    // 在节点里显示错误，保留用户原文；需要取消时调用 controller.abort()。
+    console.error(error);
+}
+```
+
+还可使用 `ctx.ai.generateImage(prompt, options)` 返回 `{ images }`，以及 `ctx.ai.generateVideo(prompt, options)` 返回视频 URL 等信息。这里的 `model` 应使用 `listModels` 返回的原始 `value`，不要自己拼接渠道名。`audio` 可用于模型分类，宿主目前没有提供插件 `generateAudio` 方法。插件自己的异步作业、任务恢复和取消状态需要由插件实现，不能假定任意插件调用都会自动跨重启恢复。
+
+## 使用 TypeScript / TSX SDK
+
+完整类型位于公开仓库的 `plugins/canvas/sdk/src/types.ts`，起步项目位于 `plugins/canvas/template`。
+
+```bash
+git clone --branch codex/oneyes-independent https://github.com/Pan-chongyu/oneyes-infinite-canvas.git
+cd oneyes-infinite-canvas/plugins/canvas
+```
+
+将 `template` 目录复制为 `my-plugin`，保留旁边的 `sdk` 目录。修改 `package.json` 的名称、`src/index.tsx` 的插件 id 和节点 type，再运行：
+
+```bash
+cd my-plugin
+npm install
+npm run typecheck
+npm run build
+```
+
+构建结果为 `dist/my-plugin.js`，把这个文件拖入客户端。只分发构建后的单文件 `.js`／`.mjs`，不要直接拖入 `.tsx` 源码、目录或 ZIP。依赖和资源需打包进该文件；相对 import、`import 'react'` 或同目录 CSS 文件不能从 Blob 模块直接解析。用 SDK 导出的 JSX/Hook 复用宿主 React，不打包第二份 React。图片可使用 data URL，CSS 可作为字符串放在插件 `css` 字段。外部 HTTPS 依赖需要联网和正确的 CORS；若要求离线可用，应将依赖一起打包。
+
+SDK 构建默认还会把文件复制到源码仓库的 `web/public/plugins/`，供开发服务器自动发现。`npm run dev` 持续构建；启动 `web` 后，在「本地插件」中启用，刷新检查修改。此方式用于源码调试，桌面用户直接拖文件即可。
+
+## 更新、停用与分发
+
+- 更新：保持插件 `id` 和已有节点 `type`，修改代码并递增 `version`，重新拖入文件。已存在画布节点的数据保留；删除旧节点 type 后对应画布无法正常渲染。
+- 停用／卸载：在第三方插件列表操作。不会删除画布节点；需要再次使用时重新安装相同插件。插件自己的存储没有自动清空。
+- 分发：发送构建后的文件给用户，或托管在可信 HTTPS 地址。通过链接安装的插件可从原链接更新；文件插件通过再次导入更新。
+- 离线：安装的源码会保存在本机 IndexedDB，重启时无需原文件或下载地址。画布导出不包含插件代码，另一台设备需安装同一个插件；不要假定插件会随 WebDAV 自动同步。
+
+插件在画布页面内执行，能访问页面及本地数据，包括 AI API Key；目前没有独立权限沙箱。只安装可信来源，发布前检查代码与依赖。安装来源和本地存储位置不会被上传到应用中心。
+
+源码与 SDK：[OneYes Canvas 公开仓库](https://github.com/Pan-chongyu/oneyes-infinite-canvas/tree/codex/oneyes-independent/plugins/canvas)。

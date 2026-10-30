@@ -36,6 +36,12 @@ npm run typecheck  # tsc --noEmit,类型自检
 
 产物名取**目录名**,复制后记得把目录改成插件名。
 
+## 拖入安装与开发文档
+
+桌面端和浏览器端支持直接拖入构建后的单文件 `.js` / `.mjs`，也可点击文件选择安装；同一插件 ID 再次导入即更新，安装后源码缓存在本机，重启可离线加载。源码目录、TSX、ZIP 及未打包的相对依赖不能直接安装。
+
+查看 [完整开发文档](../../docs/content/docs/development/canvas-node-plugins.zh-CN.mdx) 和 [免构建示例](../../web/public/plugin-examples/quick-note.mjs)。客户端「节点插件 → 第三方插件 → 节点开发文档」可离线阅读并下载示例。
+
 ## 构建 / 发布 / 升级
 
 ```bash

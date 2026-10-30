@@ -5,6 +5,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
+import { isPluginFile } from "@/lib/canvas/plugin-loader";
+import { usePluginInstaller } from "@/hooks/use-plugin-installer";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { imageTasks as durableImageTasks, storedTaskImage, storeGeneratedImage, useImageTaskStore } from "@/stores/use-image-task-store";
@@ -2331,9 +2333,12 @@ function InfiniteCanvasPage() {
         [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas, size.height, size.width],
     );
 
+    const { installFiles: installPluginFiles } = usePluginInstaller();
     const handleDrop = useCallback(
         (event: ReactDragEvent<HTMLDivElement>) => {
             event.preventDefault();
+            const pluginFiles = Array.from(event.dataTransfer.files).filter(isPluginFile);
+            if (pluginFiles.length) void installPluginFiles(pluginFiles);
             const files = Array.from(event.dataTransfer.files).filter(
                 (item) => item.type.startsWith("image/") || item.type.startsWith("video/") || isAudioFile(item),
             );
@@ -2353,7 +2358,7 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas, installPluginFiles],
     );
 
     const startTitleEditing = useCallback(() => {

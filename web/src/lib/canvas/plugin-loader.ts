@@ -1,4 +1,4 @@
-import { registerNodeDefinitions, unregisterPluginNodes } from "@/lib/canvas/node-registry";
+import { getNodeDefinition, getNodePluginId, registerNodeDefinitions, unregisterPluginNodes } from "@/lib/canvas/node-registry";
 import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import type { CanvasPlugin } from "@/types/canvas-plugin";
@@ -13,6 +13,7 @@ const cleanups = new Map<string, () => void>();
 // A remote plugin may export CanvasPlugin directly or a factory that receives runtime and returns CanvasPlugin.
 // The factory uses runtime.React so the bundle does not need its own React copy.
 async function evaluatePluginSource(source: string): Promise<CanvasPlugin> {
+    getPluginRuntime(); // SDK module-level JSX also needs the host React singleton.
     const blob = new Blob([source], { type: "text/javascript" });
     const url = URL.createObjectURL(blob);
     try {
@@ -29,17 +30,34 @@ async function evaluatePluginSource(source: string): Promise<CanvasPlugin> {
 function assertPlugin(plugin: unknown): asserts plugin is CanvasPlugin {
     const value = plugin as Partial<CanvasPlugin> | null;
     if (!value || typeof value !== "object") throw new Error(i18n.t("canvas.pluginErrors.invalidExport"));
-    if (!value.id || !Array.isArray(value.nodes) || !value.nodes.length) throw new Error(i18n.t("canvas.pluginErrors.missingFields"));
+    if (typeof value.id !== "string" || !value.id.trim() || !Array.isArray(value.nodes) || !value.nodes.length) throw new Error(i18n.t("canvas.pluginErrors.missingFields"));
+    const types = new Set<string>();
+    for (const node of value.nodes) {
+        if (!node || typeof node.type !== "string" || !node.type.trim() || typeof node.title !== "string" || !node.title.trim() || !Number.isFinite(node.defaultSize?.width) || !Number.isFinite(node.defaultSize?.height) || node.defaultSize.width <= 0 || node.defaultSize.height <= 0 || types.has(node.type)) throw new Error(i18n.t("canvas.pluginErrors.invalidNodes"));
+        types.add(node.type);
+    }
+}
+
+function assertNodeOwnership(plugin: CanvasPlugin) {
+    for (const node of plugin.nodes) {
+        if (getNodeDefinition(node.type) && getNodePluginId(node.type) !== plugin.id) throw new Error(i18n.t("canvas.pluginErrors.nodeConflict", { type: node.type }));
+    }
 }
 
 export function activatePlugin(plugin: CanvasPlugin) {
-    registerNodeDefinitions(plugin.nodes, plugin.id);
+    assertNodeOwnership(plugin);
     const runtime = getPluginRuntime();
     const disposers: Array<() => void> = [];
     // Inject declared styles when enabled and remove them when disabled or uninstalled.
-    if (plugin.css) disposers.push(runtime.injectCSS(plugin.css, plugin.id));
-    const cleanup = plugin.setup?.(runtime);
-    if (typeof cleanup === "function") disposers.push(cleanup);
+    try {
+        if (plugin.css) disposers.push(runtime.injectCSS(plugin.css, plugin.id));
+        const cleanup = plugin.setup?.(runtime);
+        if (typeof cleanup === "function") disposers.push(cleanup);
+        registerNodeDefinitions(plugin.nodes, plugin.id);
+    } catch (error) {
+        disposers.forEach((dispose) => dispose());
+        throw error;
+    }
     if (disposers.length) cleanups.set(plugin.id, () => disposers.forEach((dispose) => dispose()));
 }
 
@@ -64,30 +82,50 @@ function withCacheBust(url: string) {
 // bustCache bypasses HTTP/CDN caches during upgrades while persisting a clean URL without the timestamp query.
 export async function installPluginFromUrl(url: string, opts?: { official?: boolean; bustCache?: boolean }) {
     const source = await fetchPluginSource(opts?.bustCache ? withCacheBust(url) : url);
+    return installPluginSource(source, { url, official: opts?.official });
+}
+
+export const isPluginFile = (file: Pick<File, "name">) => /\.(m?js)$/i.test(file.name);
+
+export async function installPluginFromFile(file: File) {
+    if (!isPluginFile(file)) throw new Error(i18n.t("canvas.pluginErrors.fileType"));
+    return installPluginSource(await file.text(), { url: "", fileName: file.name });
+}
+
+async function installPluginSource(source: string, origin: { url: string; fileName?: string; official?: boolean }) {
     const plugin = await evaluatePluginSource(source);
     if (isBuiltinPlugin(plugin.id)) throw new Error(i18n.t("canvas.plugins.builtinProtected"));
+    assertNodeOwnership(plugin);
+    const previous = usePluginStore.getState().plugins.find((record) => record.id === plugin.id);
     deactivatePlugin(plugin.id); // Replace the previous version.
-    usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: opts?.official });
-    activatePlugin(plugin);
+    try {
+        activatePlugin(plugin);
+    } catch (error) {
+        if (previous?.enabled) activatePlugin(await evaluatePluginSource(previous.source));
+        throw error;
+    }
+    usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, ...origin, source, enabled: true });
     return plugin;
 }
 
 export async function updatePlugin(record: InstalledPlugin) {
+    if (!record.url) throw new Error(i18n.t("canvas.plugins.replaceFile"));
     // Upgrades must fetch the latest output and therefore always bypass caches.
     return installPluginFromUrl(record.url, { official: record.official, bustCache: true });
 }
 
 export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
     if (isBuiltinPlugin(record.id)) return;
-    usePluginStore.getState().setEnabled(record.id, enabled);
     if (!enabled) {
         deactivatePlugin(record.id);
+        usePluginStore.getState().setEnabled(record.id, false);
         return;
     }
     // Reload local plugins from their URL when enabled because the cached source may be stale.
     const source = record.local ? await fetchPluginSource(withCacheBust(record.url)) : record.source;
     const plugin = await evaluatePluginSource(source);
     activatePlugin(plugin);
+    usePluginStore.getState().setEnabled(record.id, true);
 }
 
 export function uninstallPlugin(id: string) {

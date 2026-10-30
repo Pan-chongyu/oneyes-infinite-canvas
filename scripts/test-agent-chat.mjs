@@ -12,7 +12,8 @@ const { default: react } = await import(pathToFileURL(webRequire.resolve('@vitej
 const updates = process.argv.includes('--updates');
 const images = process.argv.includes('--images');
 const webdav = process.argv.includes('--webdav');
-const fixture = images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const plugins = process.argv.includes('--plugins');
+const fixture = plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
 const server = images ? await imageFixtureServer({ build, preview, react, builtinPlugins }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
@@ -28,8 +29,19 @@ try {
     const require = createRequire(import.meta.url), electron = require('electron');
     const args = [resolve(`test/fixtures/${fixture}.cjs`), `http://127.0.0.1:${server.httpServer.address().port}/__agent-chat`];
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+    const pluginProfile = plugins ? await mkdtemp(join(tmpdir(), 'canvas-plugin-restart-')) : null;
+    if (pluginProfile) env.CANVAS_PLUGIN_TEST_PROFILE = pluginProfile;
     const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env, stdio: 'inherit' }) : spawn(electron, args, { env, stdio: 'inherit', windowsHide: true });
     process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
+    if (plugins) {
+        try {
+            if (!process.exitCode) {
+                const restartEnv = { ...env, CANVAS_PLUGIN_TEST_PHASE: 'restore' };
+                const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env: restartEnv, stdio: 'inherit' }) : spawn(electron, args, { env: restartEnv, stdio: 'inherit', windowsHide: true });
+                process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
+            }
+        } finally { await rm(pluginProfile, { recursive: true, force: true }); }
+    }
     if (images && !process.exitCode) {
         const profile = await mkdtemp(join(tmpdir(), 'canvas-image-restart-'));
         try {

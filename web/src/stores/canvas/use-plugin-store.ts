@@ -9,6 +9,7 @@ export type InstalledPlugin = {
     version: string;
     description?: string;
     url: string; // Installation source used for updates.
+    fileName?: string; // Imported bundle; update by importing another file with the same plugin id.
     source: string; // Cached plugin source for offline use and pinned versions.
     enabled: boolean;
     local?: boolean; // Local plugin discovered in web/public/plugins; disabled by default and refetched from its URL when enabled.
