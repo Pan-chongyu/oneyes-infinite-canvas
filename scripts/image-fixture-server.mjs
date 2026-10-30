@@ -11,7 +11,7 @@ export async function imageFixtureServer({ build, preview, react, builtinPlugins
         resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
         worker: { format: 'es' },
         build: { target: 'esnext', outDir, rollupOptions: {
-            input: videos ? { 'video-protocol': resolve('web/test/video-protocol.tsx') } : { 'image-tasks': resolve('web/test/image-tasks.tsx'), 'image-restart': resolve('web/test/image-restart.tsx') },
+            input: videos ? { 'video-protocol': resolve('web/test/video-protocol.tsx') } : { 'image-tasks': resolve('web/test/image-tasks.tsx'), 'image-restart': resolve('web/test/image-restart.tsx'), 'image-generation': resolve('web/test/image-generation.tsx') },
             output: { entryFileNames: '[name].js' },
         } },
     };
@@ -25,7 +25,7 @@ export async function imageFixtureServer({ build, preview, react, builtinPlugins
         const errors = '<script>window.fixtureErrors=[];window.addEventListener("error",e=>window.fixtureErrors.push(e.message));window.addEventListener("unhandledrejection",e=>window.fixtureErrors.push(String(e.reason)));</script>';
         const server = await preview({ ...config, preview: { host: '127.0.0.1', port: 0 }, plugins: [{
             name: 'compiled-image-fixtures', configurePreviewServer(server) {
-                for (const [path, file] of (videos ? [['/__agent-chat', 'video-protocol']] : [['/__agent-chat', 'image-tasks'], ['/__image-restart', 'image-restart']])) server.middlewares.use(path, (_req, res) => {
+                for (const [path, file] of (videos ? [['/__agent-chat', 'video-protocol']] : [['/__agent-chat', 'image-tasks'], ['/__image-restart', 'image-restart'], ['/__image-generation', 'image-generation']])) server.middlewares.use(path, (_req, res) => {
                     res.setHeader('Content-Type', 'text/html'); res.end(`${styles}<div id="root"></div>${errors}<script type="module" src="/${file}.js"></script>`);
                 });
             },

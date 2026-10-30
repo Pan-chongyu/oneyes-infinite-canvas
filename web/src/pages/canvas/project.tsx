@@ -516,7 +516,8 @@ function InfiniteCanvasPage() {
             setNodes(previous => {
                 let changed = false;
                 const next = previous.map(node => {
-                    let updated = failMissingCanvasImageTasks(node, durableImageTasks.tasks, projectId);
+                    const request = generationRequestsRef.current.get(node.id);
+                    let updated = failMissingCanvasImageTasks(node, durableImageTasks.tasks, projectId, Boolean(request && !request.controller.signal.aborted));
                     for (const { task, image } of tasks) updated = applyCanvasImageTask(updated, task, image);
                     if (updated !== node) changed = true;
                     return updated;
@@ -2476,7 +2477,9 @@ function InfiniteCanvasPage() {
                         metadata: {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
-                            images: imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" })),
+                            imageTaskId: undefined,
+                            loadingMessage: t("canvas.node.preparing"),
+                            images: imageIds.map((id) => ({ id, status: NODE_STATUS_LOADING, loadingMessage: t("canvas.node.preparing"), content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" })),
                             primaryImageId: undefined,
                             ...generationMetadata,
                         },

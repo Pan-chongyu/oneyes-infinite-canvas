@@ -187,6 +187,21 @@ test("missing durable task receipts clear orphaned canvas spinners without resub
     assert.equal(node.metadata?.status, "loading", "recovery does not mutate the stored snapshot");
 });
 
+test("live canvas generation stays loading before receipt binding, but a restart still settles orphaned slots", () => {
+    const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading", loadingMessage: "正在准备生成…", images: [{ id: "slot", status: "loading", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }] } };
+    assert.equal(failMissingCanvasImageTasks(node, new Map(), "project", true), node);
+    const target = { projectId: "project", nodeId: "node", imageId: "slot" };
+    const task = { ...processing(), status: "submitting" as const, target };
+    const marked = markCanvasImageTask([node], target, task.id)[0];
+    const submitting = applyCanvasImageTask(marked, task);
+    assert.equal(submitting.metadata?.images?.[0].status, "loading");
+    assert.equal(submitting.metadata?.images?.[0].loadingMessage, "正在提交生成…");
+    assert.equal(failMissingCanvasImageTasks(submitting, new Map([[task.id, task]]), "project"), submitting);
+    const restored = failMissingCanvasImageTasks(node, new Map(), "project");
+    assert.equal(restored.metadata?.status, "error", "a missing receipt after restart must not spin forever");
+    assert.match(restored.metadata?.errorDetails || "", /检查官网用量/);
+});
+
 test("multi-image recovery settles slots without receipts while preserving active sibling tasks", () => {
     const target = { projectId: "project", nodeId: "node", imageId: "slot-1" };
     const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading", images: [ { id: "slot-1", status: "loading", imageTaskId: "active", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }, { id: "slot-2", status: "loading", content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" } ] } };

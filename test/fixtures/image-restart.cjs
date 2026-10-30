@@ -29,7 +29,16 @@ app.whenReady().then(async () => {
         assert.equal(req.headers.authorization, undefined); assert.equal(req.headers.cookie, undefined);
         res.setHeader('Content-Type', 'image/png'); res.end(png); // Deliberately no Access-Control-Allow-Origin.
     });
-    await new Promise(resolve => imageServer.listen(0, '127.0.0.1', resolve));
+    // Some hosts assign ephemeral ports forbidden by Fetch/Chromium (e.g. 6666).
+    // Probe with the standard Fetch port rules instead of weakening browser security.
+    for (;;) {
+        await new Promise(resolve => imageServer.listen(0, '127.0.0.1', resolve));
+        try { await (await fetch(`http://127.0.0.1:${imageServer.address().port}/image.png`)).arrayBuffer(); break; }
+        catch (error) {
+            await new Promise(resolve => imageServer.close(resolve));
+            if (error.cause?.message !== 'bad port') throw error;
+        }
+    }
     const imageOrigin = `http://127.0.0.1:${imageServer.address().port}/image.png`;
     protocol.handle('oneyes-canvas', async request => {
         const url = new URL(request.url);

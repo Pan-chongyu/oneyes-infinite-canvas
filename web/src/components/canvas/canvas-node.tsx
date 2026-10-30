@@ -502,9 +502,12 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
 function LoadingContent({ theme, message }: Pick<NodeContentRendererProps, "theme"> & { message?: string }) {
     const { t } = useTranslation();
     return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
-            <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">{message || t("canvas.node.generating")}</span>
+        <div role="status" aria-live="polite" className="flex h-full w-full flex-col items-center justify-center gap-2.5 px-4 text-center" style={{ color: theme.node.text }}>
+            <div aria-hidden="true" className="size-6 rounded-full border-2 motion-safe:animate-spin" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
+            <div className="space-y-1">
+                <div className="text-xs leading-5">{message || t("canvas.node.generating")}</div>
+                <div className="text-[10px] leading-4" style={{ color: theme.node.muted }}>{t("canvas.node.generationHint")}</div>
+            </div>
         </div>
     );
 }
@@ -921,12 +924,11 @@ function ImageSlotStatus({ image }: { image?: CanvasNodeImage }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const failed = image?.status === "error";
-    return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: theme.node.fill, color: failed ? theme.node.text : theme.node.activeStroke }}>
-            {failed ? <span className="text-xs leading-5">{image.errorDetails || t("canvas.node.failed")}</span> : <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />}
-            {!failed ? <span className="text-[10px] tracking-[0.2em]">{image?.loadingMessage || t("canvas.node.generating")}</span> : null}
+    return failed ? (
+        <div className="flex h-full w-full items-center justify-center px-6 text-center" style={{ background: theme.node.fill, color: theme.node.text }}>
+            <span className="text-xs leading-5">{image.errorDetails || t("canvas.node.failed")}</span>
         </div>
-    );
+    ) : <LoadingContent theme={theme} message={image?.loadingMessage} />;
 }
 
 function ImageInfoBar({ node }: { node: CanvasNodeData }) {

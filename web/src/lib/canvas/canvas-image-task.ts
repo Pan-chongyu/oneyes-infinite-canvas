@@ -9,8 +9,9 @@ export function markCanvasImageTask(nodes: CanvasNodeData[], target: ImageTaskTa
     });
 }
 
-export function failMissingCanvasImageTasks(node: CanvasNodeData, tasks: ReadonlyMap<string, ImageTask>, projectId: string): CanvasNodeData {
-    if (node.type !== CanvasNodeType.Image || !node.metadata) return node;
+export function failMissingCanvasImageTasks(node: CanvasNodeData, tasks: ReadonlyMap<string, ImageTask>, projectId: string, activelyGenerating = false): CanvasNodeData {
+    // A live request may still be preparing references or persisting its first receipt.
+    if (activelyGenerating || node.type !== CanvasNodeType.Image || !node.metadata) return node;
     const images = node.metadata.images;
     const matches = (id?: string, imageId?: string) => {
         const task = id ? tasks.get(id) : undefined;
@@ -20,7 +21,7 @@ export function failMissingCanvasImageTasks(node: CanvasNodeData, tasks: Readonl
     const missingImages = images?.some(image => image.imageTaskId ? !matches(image.imageTaskId, image.id) : image.status === "loading" && !matches(node.metadata?.imageTaskId, image.id));
     const orphanedNode = node.metadata.status === "loading" && !matches(node.metadata.imageTaskId) && !images?.some(image => matches(image.imageTaskId, image.id));
     if (!missingNodeTask && !missingImages && !orphanedNode) return node;
-    const errorDetails = "本机缺少此生图任务记录，无法确认原任务结果。请先检查官网用量，勿直接重复生成。";
+    const errorDetails = "暂未找到这次生成的记录。请先检查官网用量，确认结果后再决定是否重新生成。";
     const updatedImages = images?.map(image => {
         const linked = image.imageTaskId ? matches(image.imageTaskId, image.id) : matches(node.metadata?.imageTaskId, image.id);
         const missing = image.status === "loading" && !linked || Boolean(image.imageTaskId && !matches(image.imageTaskId, image.id));
@@ -34,10 +35,9 @@ export function applyCanvasImageTask(node: CanvasNodeData, task: ImageTask, imag
     if (node.id !== task.target?.nodeId) return node;
     const slot = task.target.imageId && node.metadata?.images?.find(item => item.id === task.target?.imageId);
     if ((task.target.imageId ? slot && slot.imageTaskId : node.metadata?.imageTaskId) !== task.id) return node;
-    if (task.status === "submitting") return node;
     const terminal = ["failed", "uncertain", "paused", "credentials"].includes(task.status);
     const status = task.status === "completed" && image ? "success" : terminal ? "error" : "loading";
-    const loadingMessage = status === "loading" ? task.expectedImages ? "图片已生成，正在取回…" : task.status === "waiting" ? "连接中断，正在重连…" : undefined : undefined;
+    const loadingMessage = status === "loading" ? task.expectedImages ? "图片已生成，正在取回…" : task.status === "waiting" ? "正在重新连接，稍后继续取图…" : task.status === "submitting" ? "正在提交生成…" : "正在生成图片…" : undefined;
     const fields = image && status === "success" ? { content: image.url, storageKey: image.storageKey, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType } : {};
     const images = node.metadata?.images?.map(item => item.id === task.target?.imageId ? { ...item, ...fields, status, loadingMessage, errorDetails: task.error, ...(status === "success" ? { imageTaskId: undefined } : {}) } as CanvasNodeImage : item);
     const primary = !task.target.imageId || !node.metadata?.content || node.metadata?.primaryImageId === task.target.imageId;
