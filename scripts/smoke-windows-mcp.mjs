@@ -24,7 +24,7 @@ try {
   const cached=await prepareWindowsMcp(options);
   assert.equal(cached.command,prepared.command);
   assert.equal(await readFile(path.join(directory,'config.toml'),'utf8'),original);
-  await writeFile(path.join(directory,'canvas-agent.json'),JSON.stringify({url:'http://127.0.0.1:1',token:'isolated-smoke-only'}));
+  await writeFile(path.join(directory,'canvas-agent.json'),JSON.stringify({url:'http://127.0.0.1:1',token:'isolated-smoke-token-0123456789'}));
   const {CodexAppClient}=await import('../canvas-agent/dist/agent/codex-client.js');
   const events=[];
   codex=await CodexAppClient.start((type,payload)=>events.push({type,payload}),()=>{});
