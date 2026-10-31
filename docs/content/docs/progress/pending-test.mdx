@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.61：检查准备附件或等待 turn/start 时停止任务、历史会话超过 40 条继续加载、切换或断线后加载状态释放、旧连接事件忽略和非 JSON 响应明确报错。Claude 接口保留，Windows 不经 shell 启动，提示词经标准输入传递，任务末行无换行仍接收；取消应结束进程，临时 MCP 配置随任务清理。网页 Origin 首次有效连接绑定，其他网页不能自动扩张白名单，内置桌面来源与已绑定网页共存且仍需有效 token。已终态 Codex 错误不重复提交，附件准备部分失败清理全部临时文件。隔离回归不调用付费模型或修改真实 Codex 配置；真实 Claude 登录态、MCP 工具执行与三平台交互需升级后实机确认。v0.20.58—v0.20.60 未进入公开 OTA，相关修改由本版一并交付；TODO 已核对，Claude SDK 适配仍是独立待办。
+
 - OneYes Canvas v0.20.57：WebDAV 冷恢复应模拟旧进程的 Blob 地址已失效，实际从远端下载原图，进度显示下载 0/N，并核对恢复后的 SHA-256 与原图一致；生产逻辑仍优先复用当前进程中可读取的原图，不强制重复下载。真实网盘／NAS 环境仍待用户升级确认。
 
 - OneYes Canvas v0.20.56：Windows x64／ARM64 发布冒烟测试写入符合新配置校验规则的隔离 Canvas Agent token，自动补齐 Windows-MCP 依赖后应能启动 Codex app-server、完成 MCP 握手并读取工具清单；不能修改原 Codex 配置或发送模型任务。发布前需确认两种 Windows 架构均完成依赖准备、安装包启动检查和签名 OTA 清单生成。
@@ -174,9 +176,3 @@ The Chinese version contains the complete item-by-item acceptance checklist.
 - 测试 Windows、macOS、Linux 安装后使用自有 OneYes Key 获取可用模型、文生图与单图／多图参考编辑。
 - 核对真实付费渠道的 SSE 心跳频率、预览和最终图片；本地协议回归使用模拟响应，不代替真实账号联调。
 - 系统安装首次来源确认与各发行版桌面集成由真实设备复核。
-
-- OneYes Canvas v0.20.58：Agent 支持准备阶段排队停止、历史会话继续加载、Claude Code 保留并改用无 shell 标准输入启动，补充 Windows／macOS／Linux 的 Claude 取消、末行输出、MCP 配置清理、Origin 首次绑定与附件失败清理回归；请在三平台实际验证 Claude 登录态、MCP 工具调用、停止和历史超过 40 条的加载。
-
-- OneYes Canvas v0.20.59：修正 Claude Agent 的跨平台启动测试，三种桌面系统均使用当前系统可执行模拟 CLI；发布包需重新验证 Claude 登录、MCP 调用、停止和历史分页。
-
-- OneYes Canvas v0.20.60：修正 Unix 隔离 Claude 测试的 Node 启动路径，发布包需重新验证三平台 Claude 登录、MCP 调用、停止和历史分页。

@@ -194,6 +194,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const [clientReady, setClientReady] = useState(false);
     const loadThreadsSequenceRef = useRef(0);
     const loadThreadsRequestRef = useRef(0);
+    const loadMoreThreadsRequestRef = useRef(0);
     const threadMessagesRef = useRef(new Map<string, AgentChatItem[]>());
     const authoritativeHistoryTurnsRef = useRef(new Set<string>());
     const liveTurnKeysRef = useRef(new Set<string>());
@@ -332,6 +333,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         const cursor = state.nextThreadCursor;
         if (!state.connected || !cursor || state.loadingThreads || state.loadingMoreThreads) return;
         const sequence = loadThreadsSequenceRef.current;
+        const request = ++loadMoreThreadsRequestRef.current;
         setAgentState({ loadingMoreThreads: true });
         try {
             const data = await fetchAgentJson<AgentThreadsResponse>(endpoint, token, `/agent/codex/threads?cursor=${encodeURIComponent(cursor)}`);
@@ -346,7 +348,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 message.error(rt("historyReadFailed"));
             }
         } finally {
-            if (sequence === loadThreadsSequenceRef.current) setAgentState({ loadingMoreThreads: false });
+            if (request === loadMoreThreadsRequestRef.current) setAgentState({ loadingMoreThreads: false });
         }
     };
     // Imperatively subscribe to canvasContext to keep the ref current and debounce snapshot reports without rerendering the panel.

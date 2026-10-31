@@ -118,7 +118,22 @@ app.whenReady().then(async () => {
         await js('chatTest.releaseHistory()');
         await wait('!chatTest.state().loadingThreads');
         assert.equal((await state()).threadId, 'thread-2', 'invalidated snapshot cannot switch back');
-        console.log('CHAT_INPUT_REGRESSION_OK: model recovery/selection/effort, initialization retry, consecutive turns, slow/stale history, draft during reply, IME, send failure, snapshot invalidation');
+        await js('chatTest.historyTab()');
+        await wait('Array.from(document.querySelectorAll("button")).some(item => item.textContent.includes("加载更多"))');
+        const more = 'Array.from(document.querySelectorAll("button")).find(item => item.textContent.includes("加载更多")).click()';
+        await js('chatTest.holdPage(); ' + more);
+        await wait('chatTest.state().loadingMoreThreads && chatTest.state().pageRequests.length === 1');
+        await js('chatTest.connection(false); chatTest.releasePage()');
+        await wait('!chatTest.state().loadingMoreThreads');
+        assert.deepEqual((await state()).threadIds, ['thread-1'], 'disconnected pagination cannot append stale threads');
+        await js('chatTest.connection(true)');
+        await wait('chatTest.state().modelsStatus === "ready" && !chatTest.state().loadingThreads');
+        await js(more);
+        await wait('!chatTest.state().loadingMoreThreads && chatTest.state().threadIds.length === 2');
+        assert.deepEqual((await state()).threadIds, ['thread-1', 'older-thread'], 'later pages merge duplicate thread IDs');
+        assert.deepEqual((await state()).pageRequests, ['page/2+', 'page/2+'], 'cursor must survive query encoding');
+        assert.equal((await state()).nextThreadCursor, '');
+        console.log('CHAT_INPUT_REGRESSION_OK: model recovery/selection/effort, initialization retry, consecutive turns, slow/stale history, draft during reply, IME, send failure, snapshot invalidation, pagination/reconnect');
         app.exit(0);
     } catch (error) { console.error(error); app.exit(1); }
 }).catch(error => { console.error(error); app.exit(1); });

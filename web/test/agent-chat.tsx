@@ -13,6 +13,9 @@ let holdHistory = false;
 let failTurn: (() => void) | undefined;
 let rejectNextTurn = false;
 const pendingHistory: (() => void)[] = [];
+let holdPage = false;
+let releasePage: (() => void) | undefined;
+const pageRequests: string[] = [];
 const turns: Record<string, unknown>[] = [];
 let failModels = true;
 let modelRequests = 0;
@@ -35,9 +38,16 @@ class FixtureEvents extends EventTarget {
 }
 Object.assign(window, { EventSource: FixtureEvents, __infiniteCanvasAgentClientIdPromise: Promise.resolve("chat-test-client") });
 window.fetch = async (input, init) => {
-    const path = new URL(String(input), location.href).pathname;
+    const url = new URL(String(input), location.href);
+    const path = url.pathname;
     if (path === "/agent/codex/threads") {
-        const snapshot = { ok: true, conversation: useAgentStore.getState().conversation, workspace: { activeThreadId: "thread-1" }, data: [] };
+        const cursor = url.searchParams.get("cursor");
+        if (cursor) {
+            pageRequests.push(cursor);
+            if (holdPage) await new Promise<void>((resolve) => { releasePage = resolve; });
+            return json({ ok: true, data: [{ id: "thread-1", preview: "updated" }, { id: "older-thread", preview: "older" }], nextCursor: null });
+        }
+        const snapshot = { ok: true, conversation: useAgentStore.getState().conversation, workspace: { activeThreadId: "thread-1" }, data: [{ id: "thread-1", preview: "current" }], nextCursor: "page/2+" };
         if (holdHistory) await new Promise<void>((resolve) => pendingHistory.push(resolve));
         return json(snapshot);
     }
@@ -74,8 +84,12 @@ useAgentStore.setState({ enabled: true, url: "http://fixture.test", token: "fixt
 Object.assign(window, { chatTest: {
     state: () => {
         const { prompt, sending, waiting, loadingThreads, conversation, modelsStatus, model, reasoningEffort } = useAgentStore.getState();
-        return { prompt, sending, waiting, loadingThreads, modelsStatus, model, reasoningEffort, modelRequests, modelIds: useAgentStore.getState().models.map((item) => item.model), pendingModels: pendingModels.length, initRequests, status: conversation.status, threadId: conversation.threadId, turns, pendingHistory: pendingHistory.length };
+        const { threads, loadingMoreThreads, nextThreadCursor } = useAgentStore.getState();
+        return { prompt, sending, waiting, loadingThreads, loadingMoreThreads, nextThreadCursor, threadIds: threads.map((item) => item.id), pageRequests, modelsStatus, model, reasoningEffort, modelRequests, modelIds: useAgentStore.getState().models.map((item) => item.model), pendingModels: pendingModels.length, initRequests, status: conversation.status, threadId: conversation.threadId, turns, pendingHistory: pendingHistory.length };
     },
+    historyTab: () => useAgentStore.setState({ activeTab: "history" }),
+    holdPage: () => { holdPage = true; },
+    releasePage: () => { holdPage = false; releasePage?.(); },
     holdModels: () => { holdModels = true; },
     allowModels: () => { holdModels = false; },
     releaseModels: () => { holdModels = false; pendingModels.splice(0).forEach((resolve) => resolve()); },

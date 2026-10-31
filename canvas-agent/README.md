@@ -40,6 +40,8 @@ Codex app 插件会读取启动输出里的 Local URL 和 Connect token，并直
 
 Canvas Agent 默认只监听 `127.0.0.1`。网页第一次带正确 token 连接后，Canvas Agent 会记录该网页 Origin；之后其他 Origin 不能复用这个本地 Agent，除非用户清理 `~/.infinite-canvas/canvas-agent.json` 里的 `origins`。
 
+内置桌面来源 `oneyes-canvas://app` 可与已绑定网页共用同一 Agent，但同样必须提供有效 token。Claude Code 接口保留 `/agent/claude/turn`，使用 `prompt` 与发起页面的 `clientId`；返回 `turnId` 可用于 `/agent/claude/interrupt` 停止任务。Claude 使用系统已安装的官方 CLI 和其登录态，通过临时 MCP 配置连接当前画布，不改写用户配置；提示词使用标准输入，任务完成后删除临时凭据文件。
+
 ## 发布
 
 `canvas-agent` 使用自己的 `package.json` 版本号，不跟仓库根目录 `VERSION` 绑定。推送到 `main` 后，GitHub Actions 会检查 npm 上是否已经存在当前包版本；不存在时才发布 `@basketikun/canvas-agent`。

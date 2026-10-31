@@ -577,7 +577,7 @@ function requestUrl(req: Request, config: CanvasAgentConfig) {
 export function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfig, persist = saveConfig) {
     const origin = req.headers.origin;
     res.setHeader("Vary", "Origin");
-    if (origin && !["/health", "/config"].includes(url.pathname)) {
+    if (origin && origin !== "oneyes-canvas://app" && !["/health", "/config"].includes(url.pathname)) {
         const origins = config.origins || [];
         if (!origins.includes(origin)) {
             if (origins.length || !/^https?:\/\//.test(origin)) return false;
