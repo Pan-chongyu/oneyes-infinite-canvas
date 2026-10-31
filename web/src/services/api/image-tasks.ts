@@ -1,3 +1,4 @@
+import { reportError } from "../diagnostics";
 import { MEDIA_POLL_INTERVAL_MS, IMAGE_REQUEST_TIMEOUT_MS } from "./media-request-policy";
 import type { ReferenceImage } from "../../types/image";
 
@@ -121,6 +122,7 @@ export class ImageTaskManager {
             task = { ...task, remoteId, status: "processing", pollMs: pollMs || task.pollMs, ...(value.expires_at ? { expiresAt: value.expires_at * 1000 } : {}) };
             await this.put(task); // Receipt must be durable before the first poll.
         } catch (error) {
+            reportError("image", "submit", error);
             const rejected = error instanceof ImageTaskHttpError && error.status >= 400 && error.status < 500 && error.status !== 408;
             await this.put({ ...task, status: rejected ? "failed" : "uncertain", error: rejected ? error.message : "提交响应中断，暂时无法确认是否受理。请先检查官网用量，避免重复扣费；不会自动重发。" });
             throw new Error(this.tasks.get(task.id)!.error);
@@ -170,6 +172,7 @@ export class ImageTaskManager {
                 if ((value.task_id || value.id) && (value.task_id || value.id) !== task.remoteId) throw new Error("任务编号不一致");
                 task = { ...task, pollMs: pollMs || task.pollMs, ...(value.expires_at ? { expiresAt: value.expires_at * 1000 } : {}) };
                 if (value.status === "failed") {
+                    reportError("image", "poll", new Error(typeof value.error === "string" ? value.error : value.error?.message || ""));
                     await this.put({ ...task, status: "failed", error: typeof value.error === "string" ? value.error : value.error?.message || "服务端生图失败，请查看用量后再决定是否重新生成。" });
                     return;
                 }
@@ -188,6 +191,7 @@ export class ImageTaskManager {
             await this.deps.completed(task);
             await this.put({ ...task, status: "completed", error: undefined });
         } catch (error) {
+            reportError("image", task.status === "saving" ? "save" : "poll", error);
             const terminal = error instanceof ImageTaskHttpError && [404, 410].includes(error.status);
             const auth = error instanceof ImageTaskHttpError && [401, 403].includes(error.status);
             await this.put({ ...task, status: terminal ? "failed" : auth ? "credentials" : "waiting", error: terminal ? "任务不存在或已过期，请检查是否仍使用原 API Key。不会自动重新生成。" : auth ? "原 API Key 无效或无权限，请在配置中修复后继续取图。" : "连接或图片保存暂未完成，将自动重试取图，不会重复生成。" });

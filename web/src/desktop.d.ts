@@ -2,6 +2,7 @@ export {};
 declare global {
     interface Window {
         oneYesDesktop?: {
+            diagnostics?: { report(input: { component: string; stage: string; error: { name: string; message: string; stack: string; code: string; status: number } }): Promise<void> };
             windowChrome?: {
                 platform: string;
                 theme(theme: 'light' | 'dark'): Promise<void>;

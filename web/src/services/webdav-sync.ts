@@ -1,3 +1,4 @@
+import { reportError } from "./diagnostics";
 import i18n from "@/i18n";
 import { withLocalProxy, type WebdavSyncConfig } from "@/stores/use-config-store";
 
@@ -134,6 +135,7 @@ async function webdavFetch<T>(config: WebdavSyncConfig, path: string, init: Requ
         const response = await fetch(url, { ...init, headers, signal: controller.signal, credentials: "omit", cache: "no-store", redirect: "error" });
         return await consume(response);
     } catch (error) {
+        reportError("webdav", "sync", error);
         if (controller.signal.aborted) throw new Error(webdavText("requestTimeout"));
         if (error instanceof TypeError) throw new Error(webdavText("connectionFailed"));
         throw error;
@@ -161,6 +163,7 @@ function pathParts(path: string) {
 }
 
 async function throwWebdavError(response: Response, fallback: string): Promise<never> {
+    reportError("webdav", "sync", { status: response.status });
     if ([401, 403, 404, 409, 412, 423, 507].includes(response.status)) {
         await response.body?.cancel();
         const key = ({ 401: "authenticationFailed", 403: "permissionDenied", 404: "pathMissing", 409: "pathMissing", 412: "conflict", 423: "locked", 507: "quota" } as Record<number, string>)[response.status];

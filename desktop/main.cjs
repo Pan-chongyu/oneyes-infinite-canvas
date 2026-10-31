@@ -1,5 +1,6 @@
 const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, nativeTheme } = require('electron');
 const { join, resolve } = require('node:path');
+const { createDiagnostics } = require('./diagnostics.cjs');
 const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
 const { downloadImage } = require('./image-download.cjs');
@@ -14,6 +15,8 @@ const { prepareInstall } = require('./update-install.cjs');
 const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
+let diagnostics = { report: async () => {}, close: async () => {} };
+const report = (component, stage, error) => { void diagnostics.report({ component, stage, error }); };
 const smoke = process.argv.includes('--smoke-test');
 if (smoke) app.setPath('userData', join(app.getPath('temp'), 'oneyes-canvas-smoke-' + process.pid));
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -21,6 +24,20 @@ else {
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
 app.whenReady().then(async () => {
     const root = resolve(__dirname, '../web/dist'), vault = createVault(app.getPath('userData'));
+    // Native installation identity and encrypted queue are independent of account/API keys.
+    try {
+        const os = require('node:os');
+        let machine = os.machine();
+        if (process.platform === 'darwin') {
+            const result = await require('node:util').promisify(require('node:child_process').execFile)('/usr/sbin/sysctl', ['-n', 'hw.optional.arm64']);
+            if (result.stdout.trim() === '1') machine = 'arm64';
+        }
+        diagnostics = await createDiagnostics({ vault: createVault(app.getPath('userData'), 'diagnostics'), fetcher: (...args) => net.fetch(...args),
+            enabled: app.isPackaged && !smoke,
+            metadata: { version: app.getVersion(), platform: {win32:'windows',darwin:'macos',linux:'linux'}[process.platform],
+                arch: /^(arm64|aarch64)$/i.test(machine) ? 'arm64' : 'x64', os_release: os.release().split(/[^\d.]/)[0], electron: process.versions.electron } });
+    } catch { /* Preserve unreadable diagnostics without blocking startup. */ }
+    process.on('uncaughtExceptionMonitor', error => report('app', 'crash', error));
     const saved = await vault.read(); // Refuse to overwrite an unreadable vault.
     const network = await createNetwork((...args) => net.fetch(...args));
     network.configure(saved ? JSON.parse(saved).state?.config : {});
@@ -32,13 +49,20 @@ app.whenReady().then(async () => {
         await fs.mkdir(join(app.getPath('userData'), 'agent'), { recursive: true });
         await fs.writeFile(join(app.getPath('userData'), 'agent/canvas-agent.json'), JSON.stringify({ url: `http://127.0.0.1:${smokePort}`, token: require('node:crypto').randomBytes(18).toString('hex') }));
     }
-    const agent = createAgent({ directory: app.getPath('userData'), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
+    const agent = createAgent({ directory: app.getPath('userData'), onError: error => report('agent', 'request', error), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
         ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
     const updater = createUpdater({ currentVersion: app.getVersion(), directory: app.getPath('userData'), target: () => updateTarget(), fetcher: network.fetch,
         enabled: app.isPackaged && !smoke,
-        changed: state => { if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
+        changed: state => { if (state.status === 'error') report('update', 'install', new Error(state.error)); if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
         install: async plan => { const apply = await prepareInstall(plan); await apply(); app.quit(); } });
-    app.on('before-quit', () => { updater.close(); agent.stop(); network.close(); });
+    let diagnosticsClosed = false;
+    app.on('before-quit', event => {
+        updater.close(); agent.stop(); network.close();
+        if (diagnosticsClosed) return;
+        event.preventDefault();
+        // Persist only; never hold app exit waiting for a network upload.
+        void diagnostics.close().finally(() => { diagnosticsClosed = true; app.quit(); });
+    });
     protocol.handle('oneyes-canvas', async request => {
         try {
             const target = route(request.url, root);
@@ -73,11 +97,12 @@ app.whenReady().then(async () => {
             const responseHeaders = new Headers(upstream.headers);
             for (const name of ['content-encoding', 'content-length', 'transfer-encoding', 'connection']) responseHeaders.delete(name);
             return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
-        } catch (error) { return Response.json({ error: { message: /^(代理|请填写代理|WebDAV)/.test(error.message) ? error.message : '连接服务失败，请检查网络后重试' } }, { status: 502 }); }
+        } catch (error) { report(request.url.includes('/webdav?') ? 'webdav' : 'network', 'request', error); return Response.json({ error: { message: /^(代理|请填写代理|WebDAV)/.test(error.message) ? error.message : '连接服务失败，请检查网络后重试' } }, { status: 502 }); }
     });
     const trusted = event => {
         if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('oneyes-canvas://app/')) throw new Error('拒绝访问配置');
     };
+    ipcMain.handle('diagnostics:report', (event, input) => { trusted(event); return diagnostics.report(input); });
     ipcMain.handle('window:theme', (event, theme) => { trusted(event); syncWindowTheme(window, nativeTheme, theme); });
     ipcMain.handle('window:fullscreen', event => { trusted(event); return window.isFullScreen(); });
     ipcMain.handle('config:read', event => { trusted(event); return vault.read(); });
@@ -86,23 +111,23 @@ app.whenReady().then(async () => {
     ipcMain.handle('proxy:test', async (event, config) => {
         trusted(event);
         try { return { data: await network.test(config) }; }
-        catch (error) { return { error: error.message }; }
+        catch (error) { report('network', 'request', error); return { error: error.message }; }
     });
     ipcMain.handle('account:call', async (event, operation, args) => {
         trusted(event);
         try { return { data: await account.call(operation, args) }; }
-        catch (error) { return { error: error.message }; }
+        catch (error) { report('account', 'request', error); return { error: error.message }; }
     });
     ipcMain.handle('models:list', async (event, apiKey) => {
         trusted(event);
         try { return { data: await listModels(apiKey) }; }
-        catch (error) { return { error: error.message }; }
+        catch (error) { report('models', 'request', error); return { error: error.message }; }
     });
     ipcMain.handle('agent:call', async (event, operation) => {
         trusted(event);
         if (!['status', 'setup', 'restore'].includes(operation)) throw new Error('不支持的接入操作');
         try { return { data: await agent[operation]() }; }
-        catch (error) { return { error: error.message }; }
+        catch (error) { report('agent', 'request', error); return { error: error.message }; }
     });
     ipcMain.handle('update:call', async (event, operation) => {
         trusted(event);
@@ -115,6 +140,8 @@ app.whenReady().then(async () => {
     function createWindow() {
         window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#0a0a0a', ...windowChromeOptions(), icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         for (const name of ['enter-full-screen', 'leave-full-screen']) window.on(name, () => window.webContents.send('window:fullscreen', window.isFullScreen()));
+        window.webContents.on('render-process-gone', (_event, details) => { if (details.reason !== 'clean-exit') void diagnostics.report({ component:'app', stage:'crash', reason:'runtime' }); });
+        window.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => { if (mainFrame && code !== -3) report('app', 'load', new Error('network')); });
         window.setMenuBarVisibility(false);
         const external = url => { try { const u = new URL(url); if (u.protocol === 'https:' && !u.username && !u.password) void shell.openExternal(u.href); } catch {} };
         window.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
@@ -153,6 +180,8 @@ app.whenReady().then(async () => {
                 await window.webContents.executeJavaScript(`window.oneYesDesktop.windowChrome.theme('${chrome.theme}')`);
                 const update = await window.webContents.executeJavaScript("window.oneYesDesktop.updates.call('state')");
                 if (update.currentVersion !== app.getVersion() || update.supported) throw new Error('Packaged updater bridge failed');
+                await window.webContents.executeJavaScript("window.oneYesDesktop.diagnostics.report({component:'app',stage:'renderer',error:{name:'Error',message:'isolated smoke',stack:'',code:'',status:0}})");
+                await require('./diagnostics-smoke.cjs').smokeDiagnostics((...args) => net.fetch(...args), app.getPath('userData'));
                 await require('./update-delta-smoke.cjs').smokeDelta(app.getPath('userData'));
                 await require('./proxy-smoke.cjs').runProxySmoke(window);
                 const connection = await agent.setup();
@@ -175,6 +204,6 @@ app.whenReady().then(async () => {
     }
     createWindow();
     app.on('activate', () => { if (!window) createWindow(); });
-}).catch(() => { dialog.showErrorBox('OneYes Canvas', '无法读取本地配置。请备份应用数据后检查文件权限或配置完整性，原文件已保留。'); app.exit(1); });
+}).catch(async error => { await diagnostics.report({ component:'app', stage:'startup', error }); await diagnostics.close(); dialog.showErrorBox('OneYes Canvas', '无法读取本地配置。请备份应用数据后检查文件权限或配置完整性，原文件已保留。'); app.exit(1); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 }

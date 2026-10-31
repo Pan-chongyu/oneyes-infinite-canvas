@@ -1,3 +1,4 @@
+import { reportError } from "../diagnostics";
 import axios from "axios";
 import { MEDIA_POLL_INTERVAL_MS } from "./media-request-policy";
 import { nanoid } from "nanoid";
@@ -192,6 +193,8 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
         if (!created.id) throw new Error(apiText("noVideoTaskId"));
         return { id: created.id, provider: "openai", model };
     } catch (error) {
+
+        reportError("video", "request", error);
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
 }
@@ -224,6 +227,8 @@ async function createGrokVideoTask(config: AiConfig, model: string, prompt: stri
         if (!id) throw new Error(apiText("noVideoTaskId"));
         return { id, provider: "openai", model };
     } catch (error) {
+
+        reportError("video", "request", error);
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
 }
@@ -249,6 +254,8 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         if (video.status === "done") return { status: "failed", error: apiText("noPlayableVideo") };
         return { status: "pending" };
     } catch (error) {
+
+        reportError("video", "request", error);
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
     }
 }
@@ -259,6 +266,8 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
         await assertVideoBlob(response.data);
         return { blob: response.data };
     } catch (error) {
+
+        reportError("video", "request", error);
         if (axios.isCancel(error) || options?.signal?.aborted) throw error;
         return { url, mimeType: "video/mp4" };
     }
@@ -292,6 +301,8 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
         if (!created.name) throw new Error(apiText("noVideoTaskId"));
         return { id: created.name, provider: "gemini", model };
     } catch (error) {
+
+        reportError("video", "request", error);
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
 }
@@ -306,6 +317,8 @@ async function pollGeminiVideoTask(config: AiConfig, task: VideoGenerationTask, 
         const url = uri.includes("key=") ? uri : `${uri}${uri.includes("?") ? "&" : "?"}key=${config.apiKey}`;
         return { status: "completed", result: await videoResultFromUrl(url, options) };
     } catch (error) {
+
+        reportError("video", "request", error);
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
     }
 }
@@ -356,6 +369,8 @@ async function referenceMediaToFile(item: { name: string; type?: string; url?: s
         try {
             blob = await (await fetch(url, { signal: options?.signal })).blob();
         } catch (error) {
+
+            reportError("video", "request", error);
             if (error instanceof DOMException && error.name === "AbortError") throw error;
             throw new Error(apiText(errorKey));
         }

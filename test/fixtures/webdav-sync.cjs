@@ -85,6 +85,7 @@ app.whenReady().then(async()=>{
         if(url.pathname==='/webdav'){const target=route(request.url,resolve('web/dist'));return requestWebdav(request,target.webdav,(...args)=>net.fetch(...args));}
         return net.fetch((url.pathname==='/'?base:new URL(base).origin+url.pathname)+url.search);
     });
+    ipcMain.handle('diagnostics:report', () => {}); // Isolated fixture; never upload test errors.
     ipcMain.handle('config:read',()=>stored);ipcMain.handle('config:write',(_event,value)=>{stored=value;});ipcMain.handle('config:remove',()=>{stored=null;});
     const win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{preload:resolve('desktop/preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     win.webContents.on('console-message',event=>{ if(event.level==='error')console.error(event.message); });

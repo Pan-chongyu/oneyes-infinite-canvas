@@ -1,3 +1,4 @@
+import { reportError } from "../diagnostics";
 import { isOneYes } from "./image-stream";
 import { IMAGE_REQUEST_TIMEOUT_MS } from "./media-request-policy";
 import { requestDurableImage, type AsyncImageOptions, type GeneratedImageResult } from "@/stores/use-image-task-store";
@@ -716,6 +717,8 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
+
+            reportError("image", "request", error);
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
@@ -723,6 +726,8 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
         } catch (error) {
+
+            reportError("image", "request", error);
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
@@ -748,6 +753,8 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         const images = await parseImagePayload(payload);
         return images;
     } catch (error) {
+
+        reportError("image", "request", error);
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -776,6 +783,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
+
+            reportError("image", "request", error);
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
@@ -784,6 +793,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             const refs = await Promise.all(files.map(async (file, index) => ({ ...references[index], dataUrl: await readFileAsDataUrl(file), type: file.type })));
             return await requestGeminiImages(requestConfig, requestPrompt, refs, n, options);
         } catch (error) {
+
+            reportError("image", "request", error);
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
@@ -819,6 +830,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const images = await parseImagePayload(payload);
         return images;
     } catch (error) {
+
+        reportError("image", "request", error);
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -841,6 +854,8 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (text === apiText("noContent")) onDelta(text);
             return text;
         } catch (error) {
+
+            reportError("image", "request", error);
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
@@ -858,6 +873,8 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
         if (answer === apiText("noContent")) onDelta(answer);
         return answer;
     } catch (error) {
+
+        reportError("image", "request", error);
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
 }
@@ -888,6 +905,8 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
             .filter((id): id is string => Boolean(id))
             .sort((a, b) => a.localeCompare(b));
     } catch (error) {
+
+        reportError("image", "request", error);
         throw new Error(readAxiosError(error, apiText("modelReadFailed")));
     }
 }

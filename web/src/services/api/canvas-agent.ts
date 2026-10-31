@@ -1,3 +1,4 @@
+import { reportError } from "../diagnostics";
 import i18n from "@/i18n";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { AgentReasoningEffort } from "@/stores/use-agent-store";
@@ -124,14 +125,16 @@ export function setCodexSkillEnabled(endpoint: string, token: string, skill: Pic
 }
 
 export async function fetchAgentJson<T>(endpoint: string, token: string, path: string, init?: RequestInit) {
-    const res = await fetch(`${endpoint}${path}`, { ...init, headers: agentHeaders(token, init?.headers) });
-    const data = (await res.json().catch(() => {
-        if (res.ok) throw new Error(i18n.t("agent.state.requestFailed"));
-        return {};
-    })) as T & { error?: string; msg?: string };
-    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error(i18n.t("agent.state.requestFailed"));
-    if (!res.ok) throw new AgentApiError(res.status, data);
-    return data;
+    try {
+        const res = await fetch(`${endpoint}${path}`, { ...init, headers: agentHeaders(token, init?.headers) });
+        const data = (await res.json().catch(() => {
+            if (res.ok) throw new Error(i18n.t("agent.state.requestFailed"));
+            return {};
+        })) as T & { error?: string; msg?: string };
+        if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error(i18n.t("agent.state.requestFailed"));
+        if (!res.ok) throw new AgentApiError(res.status, data);
+        return data;
+    } catch (error) { reportError("agent", "request", error); throw error; }
 }
 
 export async function discoverAgentConfig(endpoint: string) {

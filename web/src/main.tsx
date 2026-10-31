@@ -1,3 +1,4 @@
+import { initializeDiagnostics, reportError } from '@/services/diagnostics';
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
@@ -13,6 +14,7 @@ import { router } from "@/router";
 import { initializeDesktopTransport } from "@/services/api/desktop-transport";
 import { initializeImageTasks } from "@/stores/use-image-task-store";
 
+initializeDiagnostics();
 initAnalytics();
 initializeDesktopTransport();
 
@@ -21,7 +23,7 @@ document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","
 await useConfigStore.persist.rehydrate();
 initializeImageTasks();
 
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById("root")!, { onCaughtError: error => reportError("app", "renderer", error), onUncaughtError: error => reportError("app", "renderer", error) }).render(
     <React.StrictMode>
         <AppProviders>
             <RouterProvider router={router} />

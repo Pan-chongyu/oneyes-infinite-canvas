@@ -12,6 +12,7 @@ app.setPath('userData', profile);
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 app.whenReady().then(async () => {
     const vault = createVault(profile);
+    ipcMain.handle('diagnostics:report', () => {}); // Isolated fixture; never upload test errors.
     ipcMain.handle('config:read', () => vault.read());
     ipcMain.handle('config:write', (_event, value) => vault.write(value));
     ipcMain.handle('config:remove', () => vault.remove());

@@ -34,7 +34,7 @@ async function configureCodex(file, config) {
     if (await optionalRead(file) !== original) throw new Error('Codex 配置正在被其他程序修改，请稍后重试。');
     await privateWrite(file, next);
 }
-function createAgent({ directory, runtime, executable = process.execPath, agentHome = process.env.ONEYES_CANVAS_AGENT_HOME || join(homedir(), '.infinite-canvas'), codexHome = process.env.CODEX_HOME || join(homedir(), '.codex') }) {
+function createAgent({ directory, runtime, onError = () => {}, executable = process.execPath, agentHome = process.env.ONEYES_CANVAS_AGENT_HOME || join(homedir(), '.infinite-canvas'), codexHome = process.env.CODEX_HOME || join(homedir(), '.codex') }) {
     if (!isAbsolute(codexHome) || !isAbsolute(agentHome)) throw new Error('Codex 配置目录必须是绝对路径');
     const stateFile = join(directory, 'codex-connection.json'), configFile = join(agentHome, 'canvas-agent.json'), codexFile = join(codexHome, 'config.toml');
     let child, pending, closed = false;
@@ -73,7 +73,11 @@ function createAgent({ directory, runtime, executable = process.execPath, agentH
             function finish(error) { clearTimeout(timer); owned.removeListener('error', fail); owned.removeListener('exit', fail); error ? reject(error) : resolve(); }
             function fail() { finish(new Error('本地 Agent 无法启动，请关闭占用连接端口的旧 Agent 后重试。')); }
             owned.once('error', fail); owned.once('exit', fail);
-            owned.on('message', message => { if (message?.type === 'ready' && message.url === value.url && message.token === value.token) finish(); });
+            owned.on('message', message => {
+                if (message?.type === 'diagnostic') { try { onError(message.error); } catch {} }
+                if (message?.type === 'ready' && message.url === value.url && message.token === value.token) finish();
+            });
+            owned.on('exit', code => { if (!closed && code !== 0) { try { onError(new Error('Agent runtime exited')); } catch {} } });
         });
         if (!await running(value)) throw new Error('本地 Agent 校验失败，请重试。');
     }

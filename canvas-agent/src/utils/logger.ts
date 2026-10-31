@@ -47,6 +47,13 @@ export class Logger {
 
     /** 输出 Error 级别日志。 */
     error(message: string, details?: unknown) {
+        // Only the desktop-owned parent can forward diagnostics. Never transmit
+        // arbitrary logger details (tool inputs, prompts, credentials or replies).
+        if (process.env.ONEYES_DESKTOP_AGENT === '1' && process.connected && process.send) {
+            const nested = details && typeof details === 'object' && 'error' in details ? details.error : null;
+            const error = details instanceof Error ? details : nested instanceof Error ? nested : new Error(message);
+            try { process.send({ type: 'diagnostic', error: { name: error.name, message: error.message, stack: error.stack } }, () => {}); } catch {}
+        }
         if (details === undefined) this.logger.error(message);
         else this.logger.error(message, {details: sanitize(details)});
     }
