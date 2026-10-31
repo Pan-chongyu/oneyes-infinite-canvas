@@ -1,0 +1,57 @@
+.creator-workbench {
+    container-type: inline-size;
+    --creator-hover: color-mix(in srgb, currentColor 6%, transparent);
+}
+.creator-workbench button:focus-visible, .creator-workbench a:focus-visible, .creator-workbench input:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+}
+.creator-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    height: 52px; flex-shrink: 0; padding: 0 16px; z-index: 80;
+}
+.creator-icon {
+    display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
+    width: 30px; height: 30px; border-radius: 6px;
+}
+.creator-icon:hover, .creator-assistant:hover, .creator-tool:hover, .creator-starter:hover { background: var(--creator-hover); }
+.creator-icon:disabled { opacity: .25; cursor: default; }
+.creator-assistant { display: inline-flex; align-items: center; gap: 7px; border-radius: 6px; padding: 7px 9px; font-size: 12px; white-space: nowrap; }
+.creator-assistant[aria-expanded="true"] { background: var(--creator-hover); }
+.creator-tools { position: relative; z-index: 70; width: 64px; flex-shrink: 0; border-right: 1px solid; }
+.creator-tools-scroll { display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; overflow-y: auto; padding: 10px 6px; }
+.creator-tool { display: flex; flex-shrink: 0; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 44px; min-height: 36px; padding: 9px 2px; border-radius: 8px; }
+.creator-tool svg { width: 18px; height: 18px; stroke-width: 1.65; }
+.creator-tool span { font-size: 10px; line-height: 14px; white-space: nowrap; }
+.creator-tool[data-active="true"] { background: var(--creator-active); color: var(--creator-text); }
+.creator-tools-rule { width: 20px; height: 1px; flex-shrink: 0; margin: 7px 0; background: currentColor; opacity: .13; }
+.creator-tools-spacer { flex: 1; min-height: 12px; }
+.creator-status { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; height: 44px; padding: 0 16px 0 152px; font-size: 11px; }
+.creator-empty { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; padding: 28px; }
+.creator-empty-content { max-width: 440px; text-align: center; padding-bottom: 48px; }
+.creator-empty-art { position: relative; height: 100px; width: 170px; margin: 0 auto 24px; }
+.creator-empty-art > span { position: absolute; display: grid; place-items: center; width: 66px; height: 78px; border: 1px solid currentColor; border-radius: 9px; }
+.creator-empty-art > span:first-child { left: 7px; top: 14px; transform: rotate(-14deg); opacity: .24; }
+.creator-empty-art > span:nth-child(2) { right: 7px; top: 14px; transform: rotate(14deg); opacity: .24; }
+.creator-empty-art > span:last-child { left: 52px; top: 0; background: var(--creator-canvas); opacity: .75; }
+.creator-empty h1 { font-size: 23px; line-height: 1.4; font-weight: 500; letter-spacing: -.5px; margin: 0; }
+.creator-empty p { font-size: 12px; line-height: 1.8; margin: 10px 0 24px; }
+.creator-starters { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; pointer-events: auto; }
+.creator-starter { display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border-radius: 7px; font-size: 12px; }
+.creator-starter svg { width: 16px; height: 16px; stroke-width: 1.65; }
+.creator-empty-hint { display: block; margin-top: 28px; font-size: 11px; opacity: .45; }
+@container (max-width: 760px) {
+    .creator-header { gap: 6px; padding: 0 8px; }
+    .creator-header-context, .creator-status-context { display: none; }
+    .creator-status { padding-left: 12px; justify-content: flex-end; }
+    .creator-status-count { display: none; }
+    .creator-empty { padding: 16px; }
+    .creator-empty h1 { font-size: 20px; }
+    .creator-empty-content { padding-bottom: 12px; }
+    .creator-empty-art { transform: scale(.85); margin-bottom: 12px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+    .creator-empty-content { animation: creator-enter .4s ease-out both; }
+    .creator-tool, .creator-starter, .creator-icon, .creator-assistant { transition: background .15s, color .15s; }
+    @keyframes creator-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+}

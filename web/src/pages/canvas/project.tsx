@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
@@ -44,6 +44,8 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
+import { CanvasEmptyWorkbench } from "@/components/canvas/canvas-empty-workbench";
+import "@/components/canvas/canvas-workbench.css";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
@@ -909,7 +911,10 @@ function InfiniteCanvasPage() {
                   : definition?.useBuiltinPanel
                     ? true
                     : isBuiltinType(type) && type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio && type !== CanvasNodeType.Group;
-            if (wantsPanel) setDialogNodeId(newNode.id);
+            if (wantsPanel) {
+                setDialogNodeId(newNode.id);
+                if (!position) requestAnimationFrame(() => focusNodeRef.current(newNode.id));
+            }
         },
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter],
     );
@@ -3225,217 +3230,35 @@ function InfiniteCanvasPage() {
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
-        <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onHoverNode={setHoverPreviewNodeId} onInsertAsset={handleAssetInsert} />
-            <section className="relative min-w-0 flex-1 overflow-hidden">
-                <CanvasTopBar
-                    title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
-                    titleDraft={titleDraft}
-                    isTitleEditing={titleEditing}
-                    onTitleDraftChange={setTitleDraft}
-                    onStartTitleEditing={startTitleEditing}
-                    onFinishTitleEditing={finishTitleEditing}
-                    onCancelTitleEditing={() => setTitleEditing(false)}
-                    canUndo={historyState.canUndo}
-                    canRedo={historyState.canRedo}
-                    onHome={() => navigate("/")}
-                    onProjects={() => navigate("/canvas")}
-                    onCreateProject={createAndOpenProject}
-                    onDeleteProject={deleteCurrentProject}
-                    onExportProject={exportCurrentProject}
-                    onImportImage={() => handleUploadRequest()}
-                    onOpenPlugins={() => setPluginManagerOpen(true)}
-                    onUndo={undoCanvas}
-                    onRedo={redoCanvas}
-                    agentOpen={agentPanelOpen}
-                    compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
-                    onToggleAgent={toggleAgentPanel}
-                />
-
-                <InfiniteCanvas
-                    containerRef={containerRef}
-                    viewport={viewport}
-                    tool={canvasTool}
-                    backgroundMode={backgroundMode}
-                    onViewportChange={(next) => {
-                        setViewport(next);
-                        setContextMenu(null);
-                    }}
-                    onCanvasMouseDown={(event) => {
-                        if (!referencePickerNodeId) handleCanvasMouseDown(event);
-                    }}
-                    onCanvasDeselect={referencePickerNodeId ? undefined : deselectCanvas}
-                    onCanvasDoubleClick={(event) => {
-                        if (referencePickerNodeId) return;
-                        setContextMenu(null);
-                        setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
-                    }}
-                    onContextMenu={preventCanvasContextMenu}
-                    onDrop={handleDrop}
-                >
-                    <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
-                        {visibleConnections.map(({ connection, from, to }) => (
-                            <ConnectionPath
-                                key={connection.id}
-                                connection={connection}
-                                from={from}
-                                to={to}
-                                active={selectedConnectionId === connection.id || relatedHighlight.connectionIds.has(connection.id)}
-                                onSelect={() => {
-                                    setSelectedConnectionId(connection.id);
-                                    setSelectedNodeIds(new Set());
-                                    setContextMenu(null);
-                                }}
-                                onContextMenu={(event) => {
-                                    setSelectedConnectionId(connection.id);
-                                    setSelectedNodeIds(new Set());
-                                    setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: connection.id });
-                                }}
-                            />
-                        ))}
-                        {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
-                    </svg>
-
-                    {visibleNodes.map((node) => (
-                        <CanvasNode
-                            key={node.id}
-                            data={node}
-                            scale={viewport.k}
-                            isSelected={selectedNodeIds.has(node.id)}
-                            isRelated={relatedHighlight.nodeIds.has(node.id)}
-                            isFocusRelated={activeNodeId === node.id}
-                            isConnectionTarget={connectionTargetNodeId === node.id}
-                            isConnecting={Boolean(connectingParams)}
-                            referenceSelectionState={!referencePickerNodeId ? undefined : node.id === referencePickerNodeId ? "target" : referenceConnectedNodeIds.has(node.id) || !isCanvasReferenceNode(node, nodes) ? "disabled" : "available"}
-                            showPanel={!isNodeResizing && dialogNodeId === node.id && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
-                            groupChildCount={groupChildCountById.get(node.id) || 0}
-                            isGroupDropTarget={dropTargetGroupId === node.id}
-                            batchExpanded={expandedBatchNodeIds.has(node.id)}
-                            showImageInfo={showImageInfo}
-                            mentionReferences={mentionReferencesByNodeId.get(node.id) || EMPTY_REFERENCES}
-                            pluginHost={pluginHost}
-                            registryVersion={nodeRegistryVersion}
-                            renderPanel={renderNodePanel}
-                            renderNodeContent={renderNodeContentPanel}
-                            onMouseDown={handleNodeMouseDown}
-                            onSelectCapture={handleNodeSelectCapture}
-                            onHoverStart={handleNodeHoverStart}
-                            onHoverEnd={handleNodeHoverEnd}
-                            onConnectStart={handleConnectStart}
-                            onResizeStart={handleNodeResizeStart}
-                            onResize={handleNodeResize}
-                            onResizeEnd={handleNodeResizeEnd}
-                            onContentChange={handleNodeContentChange}
-                            onTitleChange={handleNodeTitleChange}
-                            onToggleBatch={toggleBatchExpanded}
-                            onSetBatchPrimary={setBatchPrimary}
-                            onDuplicateBatchImage={duplicateBatchImage}
-                            onDownloadBatchImage={downloadBatchImage}
-                            onRetryBatchImage={retryBatchImage}
-                            onDeleteBatchImage={deleteBatchImage}
-                            onRetry={handleNodeRetry}
-                            onViewImage={handleNodeViewImage}
-                            onSelectReference={selectNodeReference}
-                            onContextMenu={handleNodeContextMenu}
-                        />
-                    ))}
-
-                    {selectionBox ? (
-                        <svg
-                            className="pointer-events-none absolute z-[100] overflow-visible"
-                            style={{
-                                left: Math.min(selectionBox.startWorldX, selectionBox.currentWorldX),
-                                top: Math.min(selectionBox.startWorldY, selectionBox.currentWorldY),
-                                width: Math.abs(selectionBox.currentWorldX - selectionBox.startWorldX),
-                                height: Math.abs(selectionBox.currentWorldY - selectionBox.startWorldY),
-                            }}
-                        >
-                            <rect width="100%" height="100%" fill={theme.canvas.selectionFill} stroke={theme.canvas.selectionStroke} strokeOpacity={0.55} strokeWidth={1 / viewport.k} strokeDasharray={`${6 / viewport.k} ${4 / viewport.k}`} />
-                        </svg>
-                    ) : null}
-                    {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} scale={viewport.k} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
-                    {nodeCreatePosition ? (
-                        <NodeCreateMenu
-                            position={nodeCreatePosition}
-                            scale={viewport.k}
-                            onCreate={(type) => {
-                                createNode(type, nodeCreatePosition);
-                                setNodeCreatePosition(null);
-                            }}
-                            onClose={() => setNodeCreatePosition(null)}
-                        />
-                    ) : null}
-                </InfiniteCanvas>
-
-                {referencePickerNodeId ? <button type="button" className="absolute left-1/2 top-4 z-[90] -translate-x-1/2 rounded-full border px-4 py-2 text-sm font-medium shadow-lg backdrop-blur" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} onClick={exitNodeReferenceSelection}>{t("canvas.references.selectingHint")}</button> : null}
-
-                <div
-                    className="pointer-events-none absolute inset-0 z-[80] flex items-center justify-center transition-opacity duration-200 ease-out"
-                    style={{ background: `color-mix(in srgb, ${theme.canvas.background} 76%, transparent)`, opacity: showHoverPreview ? 1 : 0 }}
-                >
-                    <div
-                        className="flex flex-col overflow-hidden rounded-2xl border transition-transform duration-200 ease-out"
-                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, boxShadow: "0 24px 60px rgba(0,0,0,.32)", transform: showHoverPreview ? "scale(1)" : "scale(0.95)" }}
-                    >
-                        {retainedPreview ? (
-                            <>
-                                <div className="max-w-full truncate px-3.5 py-2 text-sm font-medium" style={{ color: theme.node.text }}>
-                                    {retainedPreview.title || t(retainedPreview.video ? "assets.kinds.video" : "assets.kinds.image")}
-                                </div>
-                                <div className="overflow-hidden" style={{ width: retainedPreview.width, height: retainedPreview.height }}>
-                                    {retainedPreview.video ? <video src={retainedPreview.src} muted playsInline preload="metadata" className="size-full object-contain" /> : <img src={retainedPreview.src} alt={retainedPreview.title} className="size-full object-contain" />}
-                                </div>
-                            </>
-                        ) : null}
-                    </div>
-                </div>
-
-                <CanvasNodeHoverToolbar
-                    node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen || Boolean(referencePickerNodeId) || expandedBatchNodeIds.has(toolbarNode?.id || "") ? null : toolbarNode}
-                    viewport={viewport}
-                    extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
-                    onKeep={keepNodeToolbar}
-                    onLeave={hideNodeToolbar}
-                    onInfo={(node) => setInfoNodeId(node.id)}
-                    onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}
-                    onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
-                    onToggleDialog={(node) => setDialogNodeId((current) => (current === node.id ? null : node.id))}
-                    onGenerateImage={generateImageFromTextNode}
-                    onUpload={(node) => handleUploadRequest(node.id)}
-                    onDownload={downloadNodeImage}
-                    onSaveAsset={(node) => void saveNodeAsset(node)}
-                    onMaskEdit={(node) => setMaskEditNodeId(node.id)}
-                    onCrop={(node) => setCropNodeId(node.id)}
-                    onSplit={(node) => setSplitNodeId(node.id)}
-                    onUpscale={(node) => setUpscaleNodeId(node.id)}
-                    onSuperResolve={(node) => setSuperResolveNodeId(node.id)}
-                    onAngle={(node) => setAngleNodeId(node.id)}
-                    onViewImage={handleNodeViewImage}
-                    onReversePrompt={createImageReversePromptNodes}
-                    onRetry={(node) => void handleRetryNode(node)}
-                    onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
-                    onDelete={(node) => deleteNodes(new Set([node.id]))}
-                    onUngroup={(node) => ungroupSelection(new Set([node.id]))}
-                />
-
-                {hasMultipleSelectedNodes && !selectionBox ? (
-                    <CanvasSelectionToolbar
-                        nodes={selectedNodes}
-                        viewport={viewport}
-                        showToolbar={!isNodeDragging && !isNodeResizing}
-                        canGroup={canGroupSelection}
-                        canUngroup={canUngroupSelection}
-                        onGroup={groupSelection}
-                        onUngroup={ungroupSelection}
-                    />
-                ) : null}
-
+        <main className="creator-workbench flex h-full min-h-0 flex-col overflow-hidden" data-creator-workbench style={{ background: theme.canvas.background, color: theme.node.text, "--creator-active": theme.toolbar.activeBg, "--creator-text": theme.node.text, "--creator-canvas": theme.canvas.background } as CSSProperties}>
+            <CanvasTopBar
+                title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
+                titleDraft={titleDraft}
+                isTitleEditing={titleEditing}
+                onTitleDraftChange={setTitleDraft}
+                onStartTitleEditing={startTitleEditing}
+                onFinishTitleEditing={finishTitleEditing}
+                onCancelTitleEditing={() => setTitleEditing(false)}
+                canUndo={historyState.canUndo}
+                canRedo={historyState.canRedo}
+                onHome={() => navigate("/")}
+                onProjects={() => navigate("/canvas")}
+                onCreateProject={createAndOpenProject}
+                onDeleteProject={deleteCurrentProject}
+                onExportProject={exportCurrentProject}
+                onImportImage={() => handleUploadRequest()}
+                onOpenPlugins={() => setPluginManagerOpen(true)}
+                onUndo={undoCanvas}
+                onRedo={redoCanvas}
+                agentOpen={agentPanelOpen}
+                compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
+                onToggleAgent={toggleAgentPanel}
+            />
+            <div className="flex min-h-0 flex-1">
                 <CanvasToolbar
                     selectedCount={selectedNodeIds.size}
                     canvasTool={canvasTool}
                     onFocusSelected={focusSelectedNode}
-                    canUndo={historyState.canUndo}
-                    canRedo={historyState.canRedo}
                     backgroundMode={backgroundMode}
                     showImageInfo={showImageInfo}
                     onAddImage={() => createNode(CanvasNodeType.Image)}
@@ -3445,8 +3268,6 @@ function InfiniteCanvasPage() {
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
                     onAddExtensionNode={(type) => createNode(type)}
-                    onUndo={undoCanvas}
-                    onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
                     onDelete={() => deleteNodes(new Set(selectedNodeIds))}
                     onClear={() => setClearConfirmOpen(true)}
@@ -3454,94 +3275,277 @@ function InfiniteCanvasPage() {
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                 />
-
-                {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
-
-                <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
-
-                {contextMenu ? (
-                    <CanvasNodeContextMenu
-                        menu={contextMenu}
-                        canCaptureVideoFrame={contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)}
-                        canGroup={contextMenu.type === "node" && canGroupSelection}
-                        canUngroup={contextMenu.type === "node" && canUngroupSelection}
-                        onClose={() => setContextMenu(null)}
-                        onCaptureVideoFrame={(position) => {
-                            if (contextMenu.type !== "node") return;
-                            void captureVideoNodeFrame(contextMenu.nodeId, position);
-                        }}
-                        onDuplicate={() => {
-                            if (contextMenu.type !== "node") return;
-                            duplicateNode(contextMenu.nodeId);
+                <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onHoverNode={setHoverPreviewNodeId} onInsertAsset={handleAssetInsert} />
+                <section className="relative min-w-0 flex-1 overflow-hidden">
+                    <InfiniteCanvas
+                        containerRef={containerRef}
+                        viewport={viewport}
+                        tool={canvasTool}
+                        backgroundMode={backgroundMode}
+                        onViewportChange={(next) => {
+                            setViewport(next);
                             setContextMenu(null);
                         }}
-                        onGroup={groupSelection}
-                        onUngroup={ungroupSelection}
-                        onDelete={() => {
-                            if (contextMenu.type === "node") {
-                                deleteNodes(new Set([contextMenu.nodeId]));
-                            } else {
-                                deleteConnection(contextMenu.connectionId);
-                            }
-                            setContextMenu(null);
+                        onCanvasMouseDown={(event) => {
+                            if (!referencePickerNodeId) handleCanvasMouseDown(event);
                         }}
+                        onCanvasDeselect={referencePickerNodeId ? undefined : deselectCanvas}
+                        onCanvasDoubleClick={(event) => {
+                            if (referencePickerNodeId) return;
+                            setContextMenu(null);
+                            setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
+                        }}
+                        onContextMenu={preventCanvasContextMenu}
+                        onDrop={handleDrop}
+                    >
+                        <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
+                            {visibleConnections.map(({ connection, from, to }) => (
+                                <ConnectionPath
+                                    key={connection.id}
+                                    connection={connection}
+                                    from={from}
+                                    to={to}
+                                    active={selectedConnectionId === connection.id || relatedHighlight.connectionIds.has(connection.id)}
+                                    onSelect={() => {
+                                        setSelectedConnectionId(connection.id);
+                                        setSelectedNodeIds(new Set());
+                                        setContextMenu(null);
+                                    }}
+                                    onContextMenu={(event) => {
+                                        setSelectedConnectionId(connection.id);
+                                        setSelectedNodeIds(new Set());
+                                        setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: connection.id });
+                                    }}
+                                />
+                            ))}
+                            {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
+                        </svg>
+
+                        {visibleNodes.map((node) => (
+                            <CanvasNode
+                                key={node.id}
+                                data={node}
+                                scale={viewport.k}
+                                isSelected={selectedNodeIds.has(node.id)}
+                                isRelated={relatedHighlight.nodeIds.has(node.id)}
+                                isFocusRelated={activeNodeId === node.id}
+                                isConnectionTarget={connectionTargetNodeId === node.id}
+                                isConnecting={Boolean(connectingParams)}
+                                referenceSelectionState={!referencePickerNodeId ? undefined : node.id === referencePickerNodeId ? "target" : referenceConnectedNodeIds.has(node.id) || !isCanvasReferenceNode(node, nodes) ? "disabled" : "available"}
+                                showPanel={!isNodeResizing && dialogNodeId === node.id && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
+                                groupChildCount={groupChildCountById.get(node.id) || 0}
+                                isGroupDropTarget={dropTargetGroupId === node.id}
+                                batchExpanded={expandedBatchNodeIds.has(node.id)}
+                                showImageInfo={showImageInfo}
+                                mentionReferences={mentionReferencesByNodeId.get(node.id) || EMPTY_REFERENCES}
+                                pluginHost={pluginHost}
+                                registryVersion={nodeRegistryVersion}
+                                renderPanel={renderNodePanel}
+                                renderNodeContent={renderNodeContentPanel}
+                                onMouseDown={handleNodeMouseDown}
+                                onSelectCapture={handleNodeSelectCapture}
+                                onHoverStart={handleNodeHoverStart}
+                                onHoverEnd={handleNodeHoverEnd}
+                                onConnectStart={handleConnectStart}
+                                onResizeStart={handleNodeResizeStart}
+                                onResize={handleNodeResize}
+                                onResizeEnd={handleNodeResizeEnd}
+                                onContentChange={handleNodeContentChange}
+                                onTitleChange={handleNodeTitleChange}
+                                onToggleBatch={toggleBatchExpanded}
+                                onSetBatchPrimary={setBatchPrimary}
+                                onDuplicateBatchImage={duplicateBatchImage}
+                                onDownloadBatchImage={downloadBatchImage}
+                                onRetryBatchImage={retryBatchImage}
+                                onDeleteBatchImage={deleteBatchImage}
+                                onRetry={handleNodeRetry}
+                                onViewImage={handleNodeViewImage}
+                                onSelectReference={selectNodeReference}
+                                onContextMenu={handleNodeContextMenu}
+                            />
+                        ))}
+
+                        {selectionBox ? (
+                            <svg
+                                className="pointer-events-none absolute z-[100] overflow-visible"
+                                style={{
+                                    left: Math.min(selectionBox.startWorldX, selectionBox.currentWorldX),
+                                    top: Math.min(selectionBox.startWorldY, selectionBox.currentWorldY),
+                                    width: Math.abs(selectionBox.currentWorldX - selectionBox.startWorldX),
+                                    height: Math.abs(selectionBox.currentWorldY - selectionBox.startWorldY),
+                                }}
+                            >
+                                <rect width="100%" height="100%" fill={theme.canvas.selectionFill} stroke={theme.canvas.selectionStroke} strokeOpacity={0.55} strokeWidth={1 / viewport.k} strokeDasharray={`${6 / viewport.k} ${4 / viewport.k}`} />
+                            </svg>
+                        ) : null}
+                        {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} scale={viewport.k} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
+                        {nodeCreatePosition ? (
+                            <NodeCreateMenu
+                                position={nodeCreatePosition}
+                                scale={viewport.k}
+                                onCreate={(type) => {
+                                    createNode(type, nodeCreatePosition);
+                                    setNodeCreatePosition(null);
+                                }}
+                                onClose={() => setNodeCreatePosition(null)}
+                            />
+                        ) : null}
+                    </InfiniteCanvas>
+
+                    {!nodes.length && !nodeCreatePosition ? <CanvasEmptyWorkbench onImage={() => createNode(CanvasNodeType.Image)} onVideo={() => createNode(CanvasNodeType.Video)} onText={() => createNode(CanvasNodeType.Text)} onImport={() => handleUploadRequest()} /> : null}
+
+                    {referencePickerNodeId ? <button type="button" className="absolute left-1/2 top-4 z-[90] -translate-x-1/2 rounded-full border px-4 py-2 text-sm font-medium shadow-lg backdrop-blur" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} onClick={exitNodeReferenceSelection}>{t("canvas.references.selectingHint")}</button> : null}
+
+                    <div
+                        className="pointer-events-none absolute inset-0 z-[80] flex items-center justify-center transition-opacity duration-200 ease-out"
+                        style={{ background: `color-mix(in srgb, ${theme.canvas.background} 76%, transparent)`, opacity: showHoverPreview ? 1 : 0 }}
+                    >
+                        <div
+                            className="flex flex-col overflow-hidden rounded-2xl border transition-transform duration-200 ease-out"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, boxShadow: "0 24px 60px rgba(0,0,0,.32)", transform: showHoverPreview ? "scale(1)" : "scale(0.95)" }}
+                        >
+                            {retainedPreview ? (
+                                <>
+                                    <div className="max-w-full truncate px-3.5 py-2 text-sm font-medium" style={{ color: theme.node.text }}>
+                                        {retainedPreview.title || t(retainedPreview.video ? "assets.kinds.video" : "assets.kinds.image")}
+                                    </div>
+                                    <div className="overflow-hidden" style={{ width: retainedPreview.width, height: retainedPreview.height }}>
+                                        {retainedPreview.video ? <video src={retainedPreview.src} muted playsInline preload="metadata" className="size-full object-contain" /> : <img src={retainedPreview.src} alt={retainedPreview.title} className="size-full object-contain" />}
+                                    </div>
+                                </>
+                            ) : null}
+                        </div>
+                    </div>
+
+                    <CanvasNodeHoverToolbar
+                        node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen || Boolean(referencePickerNodeId) || expandedBatchNodeIds.has(toolbarNode?.id || "") ? null : toolbarNode}
+                        viewport={viewport}
+                        extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
+                        onKeep={keepNodeToolbar}
+                        onLeave={hideNodeToolbar}
+                        onInfo={(node) => setInfoNodeId(node.id)}
+                        onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}
+                        onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
+                        onToggleDialog={(node) => setDialogNodeId((current) => (current === node.id ? null : node.id))}
+                        onGenerateImage={generateImageFromTextNode}
+                        onUpload={(node) => handleUploadRequest(node.id)}
+                        onDownload={downloadNodeImage}
+                        onSaveAsset={(node) => void saveNodeAsset(node)}
+                        onMaskEdit={(node) => setMaskEditNodeId(node.id)}
+                        onCrop={(node) => setCropNodeId(node.id)}
+                        onSplit={(node) => setSplitNodeId(node.id)}
+                        onUpscale={(node) => setUpscaleNodeId(node.id)}
+                        onSuperResolve={(node) => setSuperResolveNodeId(node.id)}
+                        onAngle={(node) => setAngleNodeId(node.id)}
+                        onViewImage={handleNodeViewImage}
+                        onReversePrompt={createImageReversePromptNodes}
+                        onRetry={(node) => void handleRetryNode(node)}
+                        onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
+                        onDelete={(node) => deleteNodes(new Set([node.id]))}
+                        onUngroup={(node) => ungroupSelection(new Set([node.id]))}
                     />
-                ) : null}
 
-                <input ref={imageInputRef} type="file" multiple accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
+                    {hasMultipleSelectedNodes && !selectionBox ? (
+                        <CanvasSelectionToolbar
+                            nodes={selectedNodes}
+                            viewport={viewport}
+                            showToolbar={!isNodeDragging && !isNodeResizing}
+                            canGroup={canGroupSelection}
+                            canUngroup={canUngroupSelection}
+                            onGroup={groupSelection}
+                            onUngroup={ungroupSelection}
+                        />
+                    ) : null}
 
-                <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
-                <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
+                    {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
-                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 
-                {maskEditNode?.metadata?.content ? (
-                    <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
-                ) : null}
 
-                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
+                    {contextMenu ? (
+                        <CanvasNodeContextMenu
+                            menu={contextMenu}
+                            canCaptureVideoFrame={contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)}
+                            canGroup={contextMenu.type === "node" && canGroupSelection}
+                            canUngroup={contextMenu.type === "node" && canUngroupSelection}
+                            onClose={() => setContextMenu(null)}
+                            onCaptureVideoFrame={(position) => {
+                                if (contextMenu.type !== "node") return;
+                                void captureVideoNodeFrame(contextMenu.nodeId, position);
+                            }}
+                            onDuplicate={() => {
+                                if (contextMenu.type !== "node") return;
+                                duplicateNode(contextMenu.nodeId);
+                                setContextMenu(null);
+                            }}
+                            onGroup={groupSelection}
+                            onUngroup={ungroupSelection}
+                            onDelete={() => {
+                                if (contextMenu.type === "node") {
+                                    deleteNodes(new Set([contextMenu.nodeId]));
+                                } else {
+                                    deleteConnection(contextMenu.connectionId);
+                                }
+                                setContextMenu(null);
+                            }}
+                        />
+                    ) : null}
 
-                {upscaleNode?.metadata?.content ? (
-                    <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
-                ) : null}
+                    <input ref={imageInputRef} type="file" multiple accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
 
-                <Modal title={t("canvas.projectPage.superResolve")} open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setSuperResolveNodeId(null)}>
-                    <div className="py-8 text-center text-base font-medium">{t("canvas.projectPage.notImplemented")}</div>
-                </Modal>
+                    <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
+                    <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
 
-                {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
+                    {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 
-                <Modal
-                    title={t("canvas.projectPage.imageDetails")}
-                    open={Boolean(previewContent)}
-                    centered
-                    onCancel={() => setPreviewNodeId(null)}
-                    footer={null}
-                    width="auto"
-                    styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
-                >
-                    {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
-                </Modal>
+                    {maskEditNode?.metadata?.content ? (
+                        <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
+                    ) : null}
 
-                <Modal
-                    title={t("canvas.projectPage.clearTitle")}
-                    open={clearConfirmOpen}
-                    centered
-                    onCancel={() => setClearConfirmOpen(false)}
-                    footer={
-                        <>
-                            <Button onClick={() => setClearConfirmOpen(false)}>{t("common.cancel")}</Button>
-                            <Button danger type="primary" onClick={clearCanvas}>
-                                {t("canvas.projectPage.clear")}
-                            </Button>
-                        </>
-                    }
-                >
-                    <p className="text-sm opacity-60">{t("canvas.projectPage.clearDescription")}</p>
-                </Modal>
+                    {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
 
-                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
-            </section>
+                    {upscaleNode?.metadata?.content ? (
+                        <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
+                    ) : null}
+
+                    <Modal title={t("canvas.projectPage.superResolve")} open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setSuperResolveNodeId(null)}>
+                        <div className="py-8 text-center text-base font-medium">{t("canvas.projectPage.notImplemented")}</div>
+                    </Modal>
+
+                    {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
+
+                    <Modal
+                        title={t("canvas.projectPage.imageDetails")}
+                        open={Boolean(previewContent)}
+                        centered
+                        onCancel={() => setPreviewNodeId(null)}
+                        footer={null}
+                        width="auto"
+                        styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
+                    >
+                        {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
+                    </Modal>
+
+                    <Modal
+                        title={t("canvas.projectPage.clearTitle")}
+                        open={clearConfirmOpen}
+                        centered
+                        onCancel={() => setClearConfirmOpen(false)}
+                        footer={
+                            <>
+                                <Button onClick={() => setClearConfirmOpen(false)}>{t("common.cancel")}</Button>
+                                <Button danger type="primary" onClick={clearCanvas}>
+                                    {t("canvas.projectPage.clear")}
+                                </Button>
+                            </>
+                        }
+                    >
+                        <p className="text-sm opacity-60">{t("canvas.projectPage.clearDescription")}</p>
+                    </Modal>
+
+                    <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
+                </section>
+            </div>
+            <CanvasZoomControls scale={viewport.k} nodeCount={nodes.length} selectedCount={selectedNodeIds.size} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
         </main>
     );
 }
