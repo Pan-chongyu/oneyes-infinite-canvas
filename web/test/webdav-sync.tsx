@@ -51,8 +51,10 @@ const control = (operation: string, args = {}) => fetch('oneyes-canvas://app/fix
     const restoredProgress:AppSyncProgressEvent[]=[];
     const restored=await syncAppDataToWebdav(config,event=>restoredProgress.push(event));
     check(restoredProgress.some(event=>event.stage==='下载媒体' && event.current===0 && event.total===1),'download start remained stuck on the completed scan');
+    check((await control('inspect')).mediaDownloads>0,'cold restore reused a live Blob URL instead of downloading the original');
     check(restored.projects===1 && restored.assets===1 && restored.imageLogs===1,'remote records not restored');
     check((await getImageBlob(image.storageKey!))?.size===image.bytes,'original media not restored');
+    check(await blobSha256((await getImageBlob(image.storageKey!))!)===await blobSha256(await (await fetch(png)).blob()),'cold restore changed original bytes');
     check((await logs.getItem('log-a'))!==null,'history not restored');
     check(restored.uploadedFiles===3,'legacy manifest originals were not upgraded with content hashes');
     const inlineKey='image:inline-legacy-original';

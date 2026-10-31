@@ -10,7 +10,7 @@ const base=process.argv[2], profile=mkdtempSync(join(tmpdir(),'canvas-webdav-reg
 app.setPath('userData',profile);
 protocol.registerSchemesAsPrivileged([{scheme:'oneyes-canvas',privileges:{standard:true,secure:true,supportFetchAPI:true,stream:true}}]);
 app.whenReady().then(async()=>{
-    let stored=null, revision=0, conflict=false, savedManifest, recoveryManifests, compatibility=false, changedDuringRead=false;
+    let stored=null, revision=0, conflict=false, savedManifest, recoveryManifests, compatibility=false, changedDuringRead=false, mediaDownloads=0;
     const collections=new Set(['/dav/']),files=new Map();
     const server=createServer(async(req,res)=>{
         try{
@@ -32,6 +32,7 @@ app.whenReady().then(async()=>{
                 const chunks=[];for await(const chunk of req)chunks.push(chunk);files.set(req.url,{bytes:Buffer.concat(chunks),etag:'"'+(++revision)+'"'});res.writeHead(201);return res.end();
             }
             if(!current){res.writeHead(404);return res.end();}
+            if(req.method==='GET'&&req.url.includes('/files/'))mediaDownloads++;
             res.writeHead(200,{'content-type':'application/octet-stream',...(compatibility==='no-etag'?{}:{etag:compatibility?'W/'+current.etag:current.etag}),'last-modified':'Fri, 30 Oct 2026 00:00:00 GMT'});
             const bytes=compatibility&&req.url.endsWith('/manifest.json')?Buffer.concat([Buffer.from([239,187,191]),current.bytes]):current.bytes;
             res.end(bytes);
@@ -52,8 +53,10 @@ app.whenReady().then(async()=>{
             if(operation==='corrupt-canvas-media')for(const [path,file]of files)if(path.includes('/canvas/files/'))files.set(path,{...file,bytes:Buffer.alloc(file.bytes.length)});
             if(operation==='legacy-manifests')for(const [path,file]of files)if(path.endsWith('/manifest.json')){
                 const manifest=JSON.parse(file.bytes.toString());for(const entry of manifest.files)delete entry.sha256;
-                files.set(path,{...file,bytes:Buffer.from(JSON.stringify(manifest))});
+                // Blob URLs belong to their renderer; a cold restore cannot reuse the old process's URLs.
+                files.set(path,{...file,bytes:Buffer.from(JSON.stringify(manifest,(_key,value)=>typeof value==='string'&&value.startsWith('blob:')?'blob:oneyes-canvas://app/previous-process':value))});
             }
+            if(operation==='legacy-manifests')mediaDownloads=0;
             if(operation==='invalid-recovery-source'){
                 recoveryManifests=new Map([...files].filter(([path])=>path.endsWith('/manifest.json')));
                 for(const domain of ambiguous?['assets','image-workbench']:['assets']){
@@ -77,7 +80,7 @@ app.whenReady().then(async()=>{
             if(operation==='conflict')conflict=true;
             if(operation==='clear-conflict')conflict=false;
             if(operation==='missing-media')for(const key of files.keys())if(key.includes('/files/'))files.delete(key);
-            return Response.json({ok:true});
+            return Response.json({ok:true,mediaDownloads});
         }
         if(url.pathname==='/webdav'){const target=route(request.url,resolve('web/dist'));return requestWebdav(request,target.webdav,(...args)=>net.fetch(...args));}
         return net.fetch((url.pathname==='/'?base:new URL(base).origin+url.pathname)+url.search);
