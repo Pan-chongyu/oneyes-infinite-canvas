@@ -56,7 +56,11 @@ app.whenReady().then(async () => {
         })()`);
         assert.equal(result.width, 603); assert.equal(result.height, 99); assert.ok(result.difference > 100, 'AI result must differ from interpolated pixels');
         assert.deepEqual(result.cut, [80,60]); assert.equal(result.alpha[2], 0); assert.ok(result.alpha[0] < result.alpha[1]);
-        assert.deepEqual(result.composition, [4,3,127,0,128,255]); assert.equal(result.invalid,true);
+        assert.deepEqual(result.composition.slice(0,2), [4,3]);
+        // Skia's premultiplied-alpha rounding differs by one byte across native backends.
+        const [red,green,blue,opacity] = result.composition.slice(2);
+        assert.ok(Math.abs(red-127) <= 1 && Math.abs(blue-128) <= 1);
+        assert.equal(green,0); assert.equal(opacity,255); assert.equal(result.invalid,true);
         assert.ok(localRequests.some(file=>file.endsWith('.wasm')) && localRequests.some(file=>file.endsWith('u2netp.onnx')) && localRequests.some(file=>file.endsWith('espcn-3x.onnx')));
         console.log('CREATOR_TOOLS_OFFLINE_OK: real local models/WASM, 3x tiled inference, transparent cutout, layer blending, original sizes');
         app.exit(0);
