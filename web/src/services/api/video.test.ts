@@ -9,7 +9,7 @@ globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k, v)
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } = await import('./video');
 const { defaultConfig } = await import('@/stores/use-config-store');
-const { isUnsupportedGrokVideoResolution, usesGrokVideoReferences } = await import('@/lib/video-capabilities');
+const { isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, usesGrokVideoReferences } = await import('@/lib/video-capabilities');
 const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: 'fixture-key' }], model: 'default::grok-imagine-video', videoSeconds: '5', size: '1:1', vquality: '480' };
 const original = axios.defaults.adapter;
 function adapter(handle: (request: AxiosRequestConfig) => { data: unknown; status?: number }) {
@@ -32,6 +32,26 @@ test('Grok video uses canonical JSON and request_id, while other models retain m
         assert.ok(calls[1].data instanceof FormData);
         assert.equal(calls[1].data.get('resolution_name'), '1080p');
         assert.match(calls[1].url!, /\/v1\/videos$/);
+    } finally { axios.defaults.adapter = original; }
+});
+
+test('MiniMax H accepts only 768P, 1080P and 2K without submitting unsupported requests', async () => {
+    const miniMax = { ...config, model: 'default::minimax-h3', vquality: '480' };
+    assert.equal(isUnsupportedMiniMaxVideoResolution(miniMax), true);
+    let posts = 0;
+    const calls: AxiosRequestConfig[] = [];
+    try {
+        adapter(() => { posts++; return { data: { id: 'unexpected' } }; });
+        await assert.rejects(createVideoGenerationTask(miniMax, 'invalid resolution'), /MiniMax H.*768P.*1080P.*2K/);
+        assert.equal(posts, 0);
+
+        for (const [resolution, expected] of [['768', '768P'], ['1080', '1080P'], ['2k', '2K']] as const) {
+            adapter(request => { posts++; calls.push(request); return { data: { id: `mini-${expected}` } }; });
+            const task = await createVideoGenerationTask({ ...miniMax, vquality: resolution }, 'valid resolution');
+            assert.equal(task.id, `mini-${expected}`);
+            assert.equal((calls.at(-1)?.data as FormData).get('resolution_name'), expected);
+        }
+        assert.equal(posts, 3);
     } finally { axios.defaults.adapter = original; }
 });
 

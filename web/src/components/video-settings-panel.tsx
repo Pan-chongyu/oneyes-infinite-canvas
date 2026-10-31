@@ -7,19 +7,13 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
 import { type AiConfig } from "@/stores/use-config-store";
-import { emptyVideoReferences, usesGrokVideoReferences, type VideoReferenceSummary } from "@/lib/video-capabilities";
-
-const resolutionOptions = [
-    { value: "480", label: "480p" },
-    { value: "720", label: "720p" },
-    { value: "1080", label: "1080p" },
-];
+import { emptyVideoReferences, isMiniMaxVideoModel, isSupportedMiniMaxVideoResolution, usesGrokVideoReferences, videoResolutionOptionsForModel, type VideoReferenceSummary } from "@/lib/video-capabilities";
 const videoModeOptions = [
     { value: "frames", labelKey: "frames" },
     { value: "reference", labelKey: "reference" },
 ];
 
-export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
+export const videoResolutionOptions = videoResolutionOptionsForModel("");
 export const videoSizeOptions = videoRatioOptions.map((item) => ({ value: item.value, get label() { return item.value === "auto" ? i18n.t("settingsPanels.common.auto") : item.value; } }));
 export const videoSecondsRange = { min: VIDEO_SECONDS_MIN, max: VIDEO_SECONDS_MAX };
 
@@ -35,6 +29,9 @@ type VideoSettingsPanelProps = {
 export function VideoSettingsPanel({ config, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
     const referenceLimited = usesGrokVideoReferences(config, inputs);
+    const selectedModel = config.model || config.videoModel;
+    const miniMaxModel = isMiniMaxVideoModel(selectedModel);
+    const resolutionOptions = videoResolutionOptionsForModel(selectedModel);
     const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
     const videoMode = normalizeVideoModeValue(config.videoMode);
     const resolution = parseVideoResolution(config.vquality);
@@ -62,8 +59,9 @@ export function VideoSettingsPanel({ config, inputs = emptyVideoReferences, onCo
                                 {item.label}
                             </OptionPill>
                         ))}
-                        <ResolutionInput value={resolution} theme={theme} onChange={selectResolution} />
+                        <ResolutionInput value={resolution} allowNamedTier={miniMaxModel} theme={theme} onChange={selectResolution} />
                     </div>
+                    {miniMaxModel && !isSupportedMiniMaxVideoResolution(config.vquality) ? <p role="alert" className="text-xs leading-5" style={{ color: theme.node.muted }}>该模型仅支持 768P、1080P、2K，请先选择支持的分辨率。</p> : null}
                     {referenceLimited ? <p role="status" className="text-xs leading-5" style={{ color: theme.node.muted }}>{t("apiErrors.grokVideoReferenceResolutionHint")}</p> : null}
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
@@ -112,7 +110,8 @@ export function VideoSettingsPanel({ config, inputs = emptyVideoReferences, onCo
 }
 
 export function videoResolutionLabel(value: string) {
-    return `${parseVideoResolution(value)}p`;
+    const normalized = parseVideoResolution(value);
+    return normalized === "2K" ? "2K" : `${normalized}p`;
 }
 
 export function videoSizeLabel(value: string) {
@@ -168,12 +167,12 @@ function SettingGroup({ title, color, children }: { title: string; color: string
     );
 }
 
-function ResolutionInput({ value, theme, onChange }: { value: string; theme: CanvasTheme; onChange: (value: string) => void }) {
+function ResolutionInput({ value, allowNamedTier = false, theme, onChange }: { value: string; allowNamedTier?: boolean; theme: CanvasTheme; onChange: (value: string) => void }) {
     return (
         <label className="flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
-            <input type="number" min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+            <input type={allowNamedTier ? "text" : "number"} min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center uppercase outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
             <span className="grid w-7 place-items-center pr-1" style={{ color: theme.node.muted }}>
-                p
+                {allowNamedTier && value === "2K" ? "" : "p"}
             </span>
         </label>
     );

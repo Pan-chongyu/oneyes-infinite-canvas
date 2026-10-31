@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
-import { isGrokVideoModel, isUnsupportedGrokVideoResolution } from "@/lib/video-capabilities";
+import { isGrokVideoModel, isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, normalizeVideoResolutionForModel } from "@/lib/video-capabilities";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -75,6 +75,7 @@ function videoTaskFailed(message: string) {
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
     if (isUnsupportedGrokVideoResolution({ ...config, model: selectedModel }, { imageCount: references.length, audioCount: options?.audios?.length || 0, videoCount: options?.videos?.length || 0 })) throw new Error(apiText("grokVideoReferenceResolution"));
+    if (isUnsupportedMiniMaxVideoResolution({ ...config, model: selectedModel })) throw new Error(apiText("miniMaxVideoResolution"));
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
@@ -112,7 +113,7 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
             params: {
                 seconds: normalizeVideoSeconds(config.videoSeconds),
                 size: normalizeVideoSize(config.size, config.vquality),
-                resolution: normalizeVideoResolution(config.vquality),
+                resolution: normalizeVideoResolution(config.vquality, model),
                 ratio: videoAspectRatio(config.size),
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
@@ -165,7 +166,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     if (ratio && ratio !== "auto") {
         body.append("ratio", ratio);
     }
-    body.append("resolution_name", normalizeVideoResolution(config.vquality));
+    body.append("resolution_name", normalizeVideoResolution(config.vquality, model));
     body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
     body.append("watermark", String(boolConfig(config.videoWatermark, false)));
     body.append("mode", mode);
@@ -206,7 +207,7 @@ async function createGrokVideoTask(config: AiConfig, model: string, prompt: stri
     } else {
         body.duration = Number(normalizeVideoSeconds(config.videoSeconds));
         body.aspect_ratio = videoAspectRatio(config.size);
-        body.resolution = normalizeVideoResolution(config.vquality);
+        body.resolution = normalizeVideoResolution(config.vquality, model);
         const images = await Promise.all((await prepareReferenceFiles(references, options?.signal)).map(readFileAsDataUrl));
         if (resolveVideoMode(config.videoMode, images.length) === "reference" || audios.length) {
             if (images.length) body.reference_images = images.map(url => ({ url }));
@@ -283,7 +284,7 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
             parameters: {
                 aspectRatio: videoAspectRatio(config.size),
                 durationSeconds: Number(normalizeVideoSeconds(config.videoSeconds)) || 8,
-                resolution: normalizeVideoResolution(config.vquality),
+                resolution: normalizeVideoResolution(config.vquality, model),
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 addWatermark: boolConfig(config.videoWatermark, false),
             },
@@ -380,11 +381,8 @@ function normalizeVideoSize(value: string, resolution?: string) {
     return computeVideoSize(resolution || "720", ratio);
 }
 
-function normalizeVideoResolution(value: string) {
-    if (value === "low") return "480p";
-    if (value === "auto" || value === "high" || value === "medium") return "720p";
-    const resolution = value.replace(/p$/i, "") || "720";
-    return `${resolution}p`;
+function normalizeVideoResolution(value: string, model?: string) {
+    return normalizeVideoResolutionForModel(value, model);
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {

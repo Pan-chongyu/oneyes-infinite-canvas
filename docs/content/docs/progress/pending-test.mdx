@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.62：选择 `minimax-h` 视频模型时，视频设置和默认偏好只显示 768P、1080P、2K；旧的 480p 配置显示明确提示，点击生成不会发送 POST。分别选择三种分辨率，确认请求字段为 `768P`、`1080P`、`2K`，16:9、9:16、1:1 尺寸预览按所选分辨率计算；Grok、Gemini、自定义脚本及 Claude 接口保持原协议。使用真实 MiniMax H 线路确认上游生成，隔离回归不得发送付费请求。
+
 - OneYes Canvas v0.20.61：检查准备附件或等待 turn/start 时停止任务、历史会话超过 40 条继续加载、切换或断线后加载状态释放、旧连接事件忽略和非 JSON 响应明确报错。Claude 接口保留，Windows 不经 shell 启动，提示词经标准输入传递，任务末行无换行仍接收；取消应结束进程，临时 MCP 配置随任务清理。网页 Origin 首次有效连接绑定，其他网页不能自动扩张白名单，内置桌面来源与已绑定网页共存且仍需有效 token。已终态 Codex 错误不重复提交，附件准备部分失败清理全部临时文件。隔离回归不调用付费模型或修改真实 Codex 配置；真实 Claude 登录态、MCP 工具执行与三平台交互需升级后实机确认。v0.20.58—v0.20.60 未进入公开 OTA，相关修改由本版一并交付；TODO 已核对，Claude SDK 适配仍是独立待办。
 
 - OneYes Canvas v0.20.57：WebDAV 冷恢复应模拟旧进程的 Blob 地址已失效，实际从远端下载原图，进度显示下载 0/N，并核对恢复后的 SHA-256 与原图一致；生产逻辑仍优先复用当前进程中可读取的原图，不强制重复下载。真实网盘／NAS 环境仍待用户升级确认。
