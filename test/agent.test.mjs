@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { configureCodex, createAgent } = require('../desktop/agent.cjs');
 const toml = require('@iarna/toml');
-const settings = { url: 'http://127.0.0.1:17371', token: 'local-test-token' };
+const settings = { url: 'http://127.0.0.1:17371', token: 'local-test-token-0123456789012345' };
 
 test('persistent Codex setup preserves account/models/other MCP, backs up once, rejects corrupt files', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-codex-'));

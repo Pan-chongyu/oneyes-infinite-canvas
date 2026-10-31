@@ -1,24 +1,10 @@
 import { saveAs } from "file-saver";
 
 import { createZip, readZip } from "@/lib/zip";
-import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { validateAssetExport, type AssetExportFile, type AssetExportItem } from "@/lib/import-validation";
+import { deleteStoredMedia, getMediaBlob, setMediaBlob } from "@/services/file-storage";
+import { deleteStoredImages, getImageBlob, setImageBlob } from "@/services/image-storage";
 import type { Asset } from "@/stores/use-asset-store";
-
-type AssetExportFile = {
-    app: "infinite-canvas";
-    version: 1;
-    exportedAt: string;
-    assets: Asset[];
-    files: AssetExportItem[];
-};
-
-type AssetExportItem = {
-    storageKey: string;
-    path: string;
-    mimeType: string;
-    bytes: number;
-};
 
 export async function exportAssets(assets: Asset[], filename: string) {
     const files: AssetExportItem[] = [];
@@ -46,15 +32,21 @@ export async function readAssetPackage(file: File) {
     const zip = await readZip(file);
     const assetFile = zip.get("assets.json");
     if (!assetFile) throw new Error("missing assets.json");
-    const data = JSON.parse(await assetFile.text()) as AssetExportFile;
-    await Promise.all(
-        data.files.map(async (item) => {
-            const blob = zip.get(item.path);
-            if (!blob) return;
+    const data = validateAssetExport(JSON.parse(await assetFile.text()) as unknown, zip);
+    const backups = await Promise.all(data.files.map(async (item) => ({ item, blob: item.storageKey.startsWith("image:") ? await getImageBlob(item.storageKey) : await getMediaBlob(item.storageKey) })));
+    try {
+        await Promise.all(data.files.map(async (item) => {
+            const blob = zip.get(item.path)!;
             const typedBlob = blob.type ? blob : blob.slice(0, blob.size, item.mimeType);
             await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
-        }),
-    );
+        }));
+    } catch (error) {
+        await Promise.all(backups.map(({ item, blob }) => {
+            if (blob) return item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, blob) : setMediaBlob(item.storageKey, blob);
+            return item.storageKey.startsWith("image:") ? deleteStoredImages([item.storageKey]) : deleteStoredMedia([item.storageKey]);
+        }));
+        throw error;
+    }
     return data.assets;
 }
 

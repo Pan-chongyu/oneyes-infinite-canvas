@@ -51,9 +51,9 @@ export type AgentSkillDraftResponse = { ok?: boolean; data?: AgentSkillDraft };
 
 export async function postState(endpoint: string, token: string, clientId: string, snapshot: CanvasAgentSnapshot | null) {
     try {
-        const response = await fetch(`${endpoint}/canvas/state?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, {
+        const response = await fetch(`${endpoint}/canvas/state?clientId=${encodeURIComponent(clientId)}`, {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: agentHeaders(token, { "content-type": "application/json" }),
             body: JSON.stringify(snapshot ? { ...snapshot, hasCanvas: true } : { hasCanvas: false }),
         });
         return response.ok;
@@ -64,7 +64,7 @@ export async function postState(endpoint: string, token: string, clientId: strin
 
 export async function activateAgentClient(endpoint: string, token: string, clientId: string) {
     try {
-        await fetch(`${endpoint}/canvas/activate?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, { method: "POST" });
+        await fetch(`${endpoint}/canvas/activate?clientId=${encodeURIComponent(clientId)}`, { method: "POST", headers: agentHeaders(token) });
     } catch {}
 }
 
@@ -124,8 +124,7 @@ export function setCodexSkillEnabled(endpoint: string, token: string, skill: Pic
 }
 
 export async function fetchAgentJson<T>(endpoint: string, token: string, path: string, init?: RequestInit) {
-    const url = `${endpoint}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
-    const res = await fetch(url, init);
+    const res = await fetch(`${endpoint}${path}`, { ...init, headers: agentHeaders(token, init?.headers) });
     const data = (await res.json().catch(() => ({}))) as T & { error?: string; msg?: string };
     if (!res.ok) throw new AgentApiError(res.status, data);
     return data;
@@ -144,4 +143,10 @@ export async function discoverAgentConfig(endpoint: string) {
 
 function jsonPost(body: unknown): RequestInit {
     return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
+}
+
+function agentHeaders(token: string, input?: HeadersInit) {
+    const headers = new Headers(input);
+    headers.set("x-canvas-agent-token", token);
+    return headers;
 }

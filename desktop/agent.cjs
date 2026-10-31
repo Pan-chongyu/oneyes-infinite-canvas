@@ -50,8 +50,9 @@ function createAgent({ directory, runtime, executable = process.execPath, agentH
         if (text === null) return null;
         try {
             const value = JSON.parse(text), url = new URL(value.url);
-            if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.pathname !== '/' || url.search || url.hash || typeof value.token !== 'string' || !value.token) throw new Error();
-            return { ...value, url: url.origin };
+            const port = Number(url.port || 17371);
+            if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.pathname !== '/' || url.search || url.hash || !Number.isInteger(port) || port < 1 || port > 65535 || typeof value.token !== 'string' || !/^[A-Za-z0-9_-]{24,256}$/.test(value.token)) throw new Error();
+            return { ...value, url: `http://127.0.0.1:${port}` };
         } catch { throw new Error('本地 Agent 配置无效，原文件已保留。请检查 canvas-agent.json 后重试。'); }
     }
     async function running(value) {

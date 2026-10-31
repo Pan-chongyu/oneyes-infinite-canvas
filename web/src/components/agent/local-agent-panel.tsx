@@ -1553,7 +1553,7 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
             const id = String(item.id || "");
             const attachmentId = String(item.attachmentId || "");
             if (!id || !attachmentId) throw new Error(rt("invalidAttachmentNode"));
-            const res = await fetch(`${endpoint}/agent/attachments/${encodeURIComponent(attachmentId)}?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`);
+            const res = await fetch(`${endpoint}/agent/attachments/${encodeURIComponent(attachmentId)}?clientId=${encodeURIComponent(clientId)}`, { headers: { "x-canvas-agent-token": token } });
             if (!res.ok) {
                 const body = (await res.json().catch(() => null)) as { error?: string } | null;
                 throw new Error(body?.error || rt("attachmentReadFailed"));
@@ -1596,7 +1596,7 @@ async function importGeneratedImages(endpoint: string, token: string, item: Agen
         sources.map(async (source, index) => {
             const response = source.startsWith("data:image/")
                 ? await fetch(source)
-                : await fetch(`${endpoint}/agent/local-image?token=${encodeURIComponent(token)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: source }) });
+                : await fetch(`${endpoint}/agent/local-image`, { method: "POST", headers: { "content-type": "application/json", "x-canvas-agent-token": token }, body: JSON.stringify({ path: source }) });
             if (!response.ok) throw new Error(rt("generatedImageReadFailed"));
             const blob = await response.blob();
             const upload = await uploadImage(blob);

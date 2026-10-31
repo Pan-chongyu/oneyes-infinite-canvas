@@ -4,9 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { writeConfigFile, type CanvasAgentConfig } from "./config.js";
+import { parseConfig, writeConfigFile, type CanvasAgentConfig } from "./config.js";
 
-const sample: CanvasAgentConfig = { url: "http://127.0.0.1:17371", token: "test-token" };
+const sample: CanvasAgentConfig = { url: "http://127.0.0.1:17371", token: "test-token-0123456789012345" };
 
 function makeTempBase(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), "canvas-agent-config-test-"));
@@ -52,4 +52,17 @@ test("writeConfigFile persists the config content", () => {
     } finally {
         fs.rmSync(base, { recursive: true, force: true });
     }
+});
+
+test("parseConfig rejects non-local or malformed agent endpoints", () => {
+    assert.throws(() => parseConfig({ url: "http://0.0.0.0:17371", token: sample.token }), /127\.0\.0\.1/);
+    assert.throws(() => parseConfig({ url: "https://127.0.0.1:17371", token: sample.token }), /127\.0\.0\.1/);
+    assert.throws(() => parseConfig({ url: sample.url, token: "short" }), /token/);
+});
+
+test("parseConfig normalizes valid origins and rejects malformed workspace state", () => {
+    const config = parseConfig({ url: sample.url, token: sample.token, origins: ["http://127.0.0.1:1420", "http://127.0.0.1:1420"], workspace: { workspacePath: "~/canvas", pinnedThreadIds: ["thread-1"] } });
+    assert.deepEqual(config.origins, ["http://127.0.0.1:1420"]);
+    assert.equal(config.workspace?.pinnedThreadIds?.[0], "thread-1");
+    assert.throws(() => parseConfig({ url: sample.url, token: sample.token, workspace: { workspacePath: "" } }), /workspace/);
 });

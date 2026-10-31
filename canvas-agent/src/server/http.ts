@@ -160,10 +160,12 @@ export function startHttpServer() {
     });
     app.get("/agent/attachments/:attachmentId", route(async (req, res) => {
         const attachment = session.getTurnAttachment(String(req.query.clientId || ""), routeParam(req.params.attachmentId));
-        const data = attachment.dataUrl.split(",", 2)[1];
-        if (!data) throw new Error("图片附件内容无效");
+        const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]*={0,2})$/i.exec(attachment.dataUrl);
+        if (!match || !match[2]) throw new Error("图片附件内容无效");
+        const data = Buffer.from(match[2], "base64");
+        if (!data.length) throw new Error("图片附件内容无效");
         res.setHeader("Cache-Control", "no-store");
-        res.type(attachment.type).send(Buffer.from(data, "base64"));
+        res.type(match[1]).send(data);
     }));
     app.get("/agent/message-assets/:messageKey/:assetFile", route(async (req, res) => {
         const asset = await messageMetadataStore.readAsset(routeParam(req.params.messageKey), routeParam(req.params.assetFile));
@@ -180,7 +182,7 @@ export function startHttpServer() {
     }));
     app.post("/agent/local-image", route(async (req, res) => {
         const filePath = String(req.body?.path || "");
-        if (!path.isAbsolute(filePath) || !/\.(?:avif|gif|jpe?g|png|webp)$/i.test(filePath)) return res.status(400).json({ ok: false, error: "图片路径无效" });
+        if (!path.isAbsolute(filePath) || filePath.includes("\0") || !/\.(?:avif|gif|jpe?g|png|webp)$/i.test(filePath)) return res.status(400).json({ ok: false, error: "图片路径无效" });
         const file = await stat(filePath);
         if (!file.isFile()) return res.status(400).json({ ok: false, error: "图片文件无效" });
         res.setHeader("Cache-Control", "no-store");
