@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
-import { Dropdown, Tooltip } from "antd";
-import { BookOpen, Keyboard, Languages, Moon, MoreHorizontal, Puzzle, Settings2, Sun } from "lucide-react";
+import { Tooltip } from "antd";
+import { BookOpen, Keyboard, Puzzle, Settings2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
@@ -28,17 +28,6 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
     const locale = i18n.resolvedLanguage as AppLocale;
     const nextLocale = locale === "zh-CN" ? "en-US" : "zh-CN";
     const languageLabel = t("topNav.switchLanguage", { language: t(nextLocale === "zh-CN" ? "locale.zhCN" : "locale.enUS") });
-
-    if (variant === "canvas") return <div className="inline-flex items-center gap-1">
-        {showConfig ? <Tooltip title={t("navigation.config")}><button type="button" className="creator-icon" onClick={() => openConfigDialog(false)} aria-label={t("navigation.config")}><Settings2 size={16} /></button></Tooltip> : null}
-        <Dropdown trigger={["click"]} menu={{ items: [
-            ...(onOpenPlugins ? [{ key: "plugins", label: t("topNav.plugins"), icon: <Puzzle size={16} />, onClick: onOpenPlugins }] : []),
-            { key: "docs", label: t("topNav.docs"), icon: <BookOpen size={16} />, onClick: () => window.open(DOCS_URL, "_blank", "noopener,noreferrer") },
-            ...(onOpenShortcuts ? [{ key: "shortcuts", label: t("topNav.shortcuts"), icon: <Keyboard size={16} />, onClick: onOpenShortcuts }] : []),
-            { key: "language", label: languageLabel, icon: <Languages size={16} />, onClick: () => void changeAppLocale(nextLocale) },
-            { key: "theme", label: t(theme === "dark" ? "topNav.lightTheme" : "topNav.darkTheme"), icon: theme === "dark" ? <Sun size={16} /> : <Moon size={16} />, onClick: () => setTheme(theme === "dark" ? "light" : "dark") },
-        ] }}><button type="button" className="creator-icon" aria-label={t("canvas.workbench.more")}><MoreHorizontal size={17} /></button></Dropdown>
-    </div>;
 
     return (
         <div className="inline-flex shrink-0 items-center gap-1">

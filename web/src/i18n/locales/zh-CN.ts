@@ -215,7 +215,6 @@ export default {
         empty: "还没有生成视频",
     },
     canvas: {
-        workbench: { tools: "创作工具", assistant: "创作助手", more: "更多", import: "导入素材", start: "从一个想法，开始创作", description: "让图片、文字与视频，在同一张画布上连接。", addImage: "添加图片", addVideo: "添加视频", addText: "写点文字", hint: "拖入素材，或双击画布添加节点", navigationHint: "双击添加节点 · 滚轮缩放", elementCount: "{{count}} 个元素" },
         defaultTitle: "无限画布 {{count}}",
         library: "画布库",
         title: "无限画布",

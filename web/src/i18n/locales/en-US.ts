@@ -215,7 +215,6 @@ export default {
         empty: "No video generated yet",
     },
     canvas: {
-        workbench: { tools: "Creation tools", assistant: "Assistant", more: "More", import: "Import media", start: "Make room for your next idea", description: "Connect images, words and video on one canvas.", addImage: "Add image", addVideo: "Add video", addText: "Write something", hint: "Drop media here, or double-click to add a node", navigationHint: "Double-click to add · Scroll to zoom", elementCount: "{{count}} elements" },
         defaultTitle: "Infinite Canvas {{count}}",
         library: "Canvas library",
         title: "Infinite Canvas",
