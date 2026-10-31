@@ -3,6 +3,7 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {execFile} from 'node:child_process';
+import {randomBytes} from 'node:crypto';
 import {promisify} from 'node:util';
 import toml from '@iarna/toml';
 
@@ -24,7 +25,8 @@ try {
   const cached=await prepareWindowsMcp(options);
   assert.equal(cached.command,prepared.command);
   assert.equal(await readFile(path.join(directory,'config.toml'),'utf8'),original);
-  await writeFile(path.join(directory,'canvas-agent.json'),JSON.stringify({url:'http://127.0.0.1:1',token:'isolated-smoke-token-0123456789'}));
+  const {saveConfig}=await import('../canvas-agent/dist/config.js');
+  saveConfig({url:'http://127.0.0.1:1',token:randomBytes(18).toString('hex')});
   const {CodexAppClient}=await import('../canvas-agent/dist/agent/codex-client.js');
   const events=[];
   codex=await CodexAppClient.start((type,payload)=>events.push({type,payload}),()=>{});

@@ -2,23 +2,26 @@ import { saveAs } from "file-saver";
 
 import { createZip, readZip } from "@/lib/zip";
 import { validateAssetExport, type AssetExportFile, type AssetExportItem } from "@/lib/import-validation";
-import { deleteStoredMedia, getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { deleteStoredImages, getImageBlob, setImageBlob } from "@/services/image-storage";
+import { getMediaBlob } from "@/services/file-storage";
+import { getImageBlob } from "@/services/image-storage";
+import { importPackageFiles } from "@/services/import-package-files";
 import type { Asset } from "@/stores/use-asset-store";
 
 export async function exportAssets(assets: Asset[], filename: string) {
     const files: AssetExportItem[] = [];
     const zipFiles: { name: string; data: BlobPart }[] = [];
+    const included = new Set<string>();
 
     await Promise.all(
         assets.map(async (asset) => {
             if (asset.kind !== "image" && asset.kind !== "video") return;
             const storageKey = asset.data.storageKey;
-            if (!storageKey) return;
+            if (!storageKey || included.has(storageKey)) return;
+            included.add(storageKey);
             const blob = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
             if (!blob) return;
             const path = `files/${safeFileName(storageKey)}.${fileExtension(blob.type, asset.kind)}`;
-            files.push({ storageKey, path, mimeType: blob.type || asset.data.mimeType, bytes: blob.size });
+            files.push({ storageKey, path, mimeType: blob.type || asset.data.mimeType || "application/octet-stream", bytes: blob.size });
             zipFiles.push({ name: path, data: blob });
         }),
     );
@@ -33,20 +36,7 @@ export async function readAssetPackage(file: File) {
     const assetFile = zip.get("assets.json");
     if (!assetFile) throw new Error("missing assets.json");
     const data = validateAssetExport(JSON.parse(await assetFile.text()) as unknown, zip);
-    const backups = await Promise.all(data.files.map(async (item) => ({ item, blob: item.storageKey.startsWith("image:") ? await getImageBlob(item.storageKey) : await getMediaBlob(item.storageKey) })));
-    try {
-        await Promise.all(data.files.map(async (item) => {
-            const blob = zip.get(item.path)!;
-            const typedBlob = blob.type ? blob : blob.slice(0, blob.size, item.mimeType);
-            await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
-        }));
-    } catch (error) {
-        await Promise.all(backups.map(({ item, blob }) => {
-            if (blob) return item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, blob) : setMediaBlob(item.storageKey, blob);
-            return item.storageKey.startsWith("image:") ? deleteStoredImages([item.storageKey]) : deleteStoredMedia([item.storageKey]);
-        }));
-        throw error;
-    }
+    await importPackageFiles(data.files, zip);
     return data.assets;
 }
 

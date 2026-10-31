@@ -6,11 +6,9 @@ import { useTranslation } from "react-i18next";
 
 import { readZip } from "@/lib/zip";
 import { validateCanvasExport } from "@/lib/import-validation";
-import { deleteStoredMedia, getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { deleteStoredImages, getImageBlob, setImageBlob } from "@/services/image-storage";
+import { importPackageFiles } from "@/services/import-package-files";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
-import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
@@ -44,22 +42,9 @@ export default function CanvasPage() {
             const zip = await readZip(file);
             const projectFile = zip.get("projects.json");
             if (!projectFile) throw new Error("missing projects.json");
-            const data = validateCanvasExport(JSON.parse(await projectFile.text()) as unknown, zip);
+            const data = await validateCanvasExport(JSON.parse(await projectFile.text()) as unknown, zip);
             const files = data.projects.flatMap((project) => project.files);
-            const backups = await Promise.all(files.map(async (item) => ({ item, blob: item.storageKey.startsWith("image:") ? await getImageBlob(item.storageKey) : await getMediaBlob(item.storageKey) })));
-            try {
-                await Promise.all(files.map(async (item) => {
-                    const blob = zip.get(item.path)!;
-                    const typedBlob = blob.type ? blob : blob.slice(0, blob.size, item.mimeType);
-                    await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
-                }));
-            } catch (error) {
-                await Promise.all(backups.map(({ item, blob }) => {
-                    if (blob) return item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, blob) : setMediaBlob(item.storageKey, blob);
-                    return item.storageKey.startsWith("image:") ? deleteStoredImages([item.storageKey]) : deleteStoredMedia([item.storageKey]);
-                }));
-                throw error;
-            }
+            await importPackageFiles(files, zip);
             data.projects.forEach((item) => importProject(item.project));
             message.success(t("canvas.imported", { count: data.projects.length }));
         } catch {

@@ -7,9 +7,9 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
-- OneYes Canvas v0.20.55：Windows x64／ARM64 发布冒烟测试写入符合新配置校验规则的隔离 Canvas Agent token，自动补齐 Windows-MCP 依赖后应能启动 Codex app-server、完成 MCP 握手并读取工具清单；不能修改原 Codex 配置或发送模型任务。发布前需确认两种 Windows 架构均完成依赖准备、安装包启动检查和签名 OTA 清单生成。
+- OneYes Canvas v0.20.56：Windows x64／ARM64 发布冒烟测试写入符合新配置校验规则的隔离 Canvas Agent token，自动补齐 Windows-MCP 依赖后应能启动 Codex app-server、完成 MCP 握手并读取工具清单；不能修改原 Codex 配置或发送模型任务。发布前需确认两种 Windows 架构均完成依赖准备、安装包启动检查和签名 OTA 清单生成。
 
-- OneYes Canvas v0.20.55：导入画布或素材 ZIP 时，目录穿越、绝对路径、重复文件、未声明文件、缺失媒体、错误清单、重复 storageKey 和媒体字节数不一致都应在写入前拒绝；写入中断应恢复已存在的 Blob，不留下半完成导入。standalone Canvas Agent 使用非本机地址、非法端口、短 token、错误 origins 或损坏 workspace 配置时应拒绝启动且不覆盖原文件；普通 Agent API 请求不再把 token 放在 URL。当前版本只增加格式／路径／结构校验，未增加 ZIP 或本地图片大小上限；真实用户导入包、独立 Agent 与多标签页连接仍待升级后确认。MCP SDK、Zod、Axios、Nanoid、React Router、file-type 等依赖已升级，canvas-agent 生产审计清零；Web 仍保留仅由上游大版本可修复的低／中风险依赖。
+- OneYes Canvas v0.20.56：导入画布或素材 ZIP 时，目录穿越、绝对路径、重复文件、未声明文件、缺失媒体、错误清单、同一画布重复 storageKey、跨画布同键内容冲突和媒体字节数不一致都应在写入前拒绝；写入中断应等待所有写入结束再恢复已存在的 Blob，不留下半完成导入；多画布共用相同原图可正常导入，素材导出按同键去重。原始 ZIP 重名必须在库覆盖前拒绝，正常目录项可读取。v0.20.54／v0.20.55 未进入公开 OTA，本次一并交付。standalone Canvas Agent 使用非本机地址、非法端口、短 token、错误 origins 或损坏 workspace 配置时应拒绝启动且不覆盖原文件；普通 Agent API 请求不再把 token 放在 URL。当前版本只增加格式／路径／结构校验，未增加 ZIP 或本地图片大小上限；真实用户导入包、独立 Agent 与多标签页连接仍待升级后确认。MCP SDK、Zod、Axios、Nanoid、React Router、file-type 等依赖已升级，canvas-agent 生产审计清零；Web 仍保留仅由上游大版本可修复的低／中风险依赖。
 
 - OneYes Canvas v0.20.53：WebDAV 对 HEAD 405／501 使用 PROPFIND 识别文件；已有目录返回 MKCOL 403 仅在 207 资源证明存在且为目录后继续；识别 DAV XML 命名空间、编码路径、资源内 404／权限错误，拒绝登录 HTML、无关资源及非目录。带 BOM 与旧版无哈希清单可读，恢复后补齐媒体哈希。弱／无 ETag 时清单写入前复核内容，透传 Last-Modified 条件并阻止已检测的并发修改；不支持条件写入的服务仍有复核后竞态窗口，不承诺服务端锁。媒体字段的完整 Data URL／可读 Blob 可补回同键原图，冲突候选拒绝写入，损坏主副本可使用同哈希有效备份。Electron 原生服务模拟、52 项前端回归及 HTTP／SOCKS 转发验证已通过；真实网盘／NAS 环境仍待用户升级确认，未宣称已在所有厂商实机验收。TODO 已核对，无对应项需迁移。
 

@@ -20,7 +20,14 @@ export async function createZip(files: ZipFile[]) {
 }
 
 export async function readZip(file: Blob) {
-    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+    const names = new Set<string>();
+    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()), { filter: ({ name }) => {
+        const directory = name.endsWith("/");
+        validateZipEntryName(directory ? name.slice(0, -1) : name);
+        if (names.has(name)) throw new Error("ZIP 中存在重复文件");
+        names.add(name);
+        return !directory;
+    } });
     const result = new Map<string, Blob>();
     for (const [name, data] of Object.entries(entries)) {
         validateZipEntryName(name);
@@ -32,7 +39,7 @@ export async function readZip(file: Blob) {
 
 /** 只接受导入器需要的相对 POSIX 路径，拒绝目录穿越、绝对路径和编码绕过。 */
 export function validateZipEntryName(name: string) {
-    if (!name || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) || /[\u0000-\u001f]/.test(name) || /%(?:2e|2f|5c)/i.test(name)) throw new Error("ZIP 文件路径无效");
+    if (!name || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) || /[\u0000-\u001f\u007f]/.test(name) || /%(?:2e|2f|5c)/i.test(name)) throw new Error("ZIP 文件路径无效");
     const parts = name.split("/");
     if (parts.some((part) => !part || part === "." || part === "..")) throw new Error("ZIP 文件路径无效");
     return name;
