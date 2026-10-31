@@ -19,4 +19,6 @@ test('creator release pins all six native media runtimes and distributes verifie
     const pkg = JSON.parse(await readFile('package.json', 'utf8'));
     const resources = pkg.build.extraResources.find(entry => entry.to === 'media-bin');
     assert.ok(['ffmpeg','ffmpeg.exe','ffprobe','ffprobe.exe','*.LICENSE','SOURCES.txt'].every(name=>resources.filter.includes(name)));
+    const media = await readFile('desktop/media-tools.cjs', 'utf8');
+    assert.ok(media.includes("'-fps_mode:v', 'vfr'") && !media.includes("'-vsync'"), 'frame extraction must support both bundled FFmpeg generations');
 });

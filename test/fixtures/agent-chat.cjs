@@ -31,10 +31,11 @@ app.whenReady().then(async () => {
         await wait('chatTest.state().modelsStatus === "ready"');
     };
     const select = async (testId, text) => {
-        await js(`document.querySelector('[data-testid="${testId}"]').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}))`);
+        await js(`document.querySelector('[data-testid="${testId}"]').focus(); document.querySelector('[data-testid="${testId}"]').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}))`);
         await wait('document.querySelectorAll("[role=option]").length > 0');
         await js(`Array.from(document.querySelectorAll('[role=option]')).find(item => item.textContent.includes(${JSON.stringify(text)})).click()`);
         await wait('!document.querySelector("[role=listbox]")');
+        await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     };
     try {
         await win.loadURL(process.argv[2]);

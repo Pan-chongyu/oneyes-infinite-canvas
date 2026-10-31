@@ -66,7 +66,7 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
         if (job.operation === 'analyze') {
             const times = [];
             notify(job, '正在检测镜头并提取原尺寸关键帧');
-            await run(job, 'ffmpeg', ['-nostdin', '-y', '-i', input(job, 0), '-vf', `select='eq(n,0)+gt(scene,${job.options.threshold})',showinfo`, '-vsync', 'vfr', join(job.path, 'frame-%06d.png')], line => {
+            await run(job, 'ffmpeg', ['-nostdin', '-y', '-i', input(job, 0), '-vf', `select='eq(n,0)+gt(scene,${job.options.threshold})',showinfo`, '-fps_mode:v', 'vfr', join(job.path, 'frame-%06d.png')], line => {
                 const match = line.match(/pts_time:([\d.]+)/);
                 if (match) { const time = Number(match[1]); times.push(times.length ? time : 0); notify(job, '正在检测镜头并提取原尺寸关键帧', time / metadata[0].duration * 100); }
             });
