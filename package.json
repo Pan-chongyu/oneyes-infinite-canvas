@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.64",
+  "version": "0.20.65",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -20,11 +20,15 @@
     "pretest": "npm --prefix canvas-agent run build",
     "test:webdav": "node scripts/test-agent-chat.mjs --webdav",
     "test:plugins": "node scripts/test-agent-chat.mjs --plugins",
-    "test:videos": "node scripts/test-agent-chat.mjs --videos"
+    "test:videos": "node scripts/test-agent-chat.mjs --videos",
+    "media:prepare": "node scripts/prepare-media-tools.mjs",
+    "test:creator-codec": "node scripts/test-creator-tools.mjs",
+    "test:creators": "node scripts/test-agent-chat.mjs --creators"
   },
   "devDependencies": {
     "electron": "44.9.1",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "extract-zip": "2.0.1"
   },
   "build": {
     "appId": "ai.oneyes.canvas",
@@ -116,6 +120,20 @@
           "!@esbuild/**/*",
           "!esbuild/**/*",
           "!@types/**/*"
+        ]
+      },
+      {
+        "from": "desktop/media-bin",
+        "to": "media-bin",
+        "filter": [
+          "ffmpeg",
+          "ffmpeg.exe",
+          "ffprobe",
+          "ffprobe.exe",
+          "*.LICENSE",
+          "*.README",
+          "LICENSE.txt",
+          "SOURCES.txt"
         ]
       }
     ]

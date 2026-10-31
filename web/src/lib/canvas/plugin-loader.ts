@@ -3,7 +3,10 @@ import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import type { CanvasPlugin } from "@/types/canvas-plugin";
 import i18n from "@/i18n";
-import builtinPlugins from "virtual:canvas-builtin-plugins";
+import bundledPlugins from "virtual:canvas-builtin-plugins";
+import { creatorToolsPlugin } from "@/components/canvas/creator-tools-plugin";
+
+const builtinPlugins = [...bundledPlugins, creatorToolsPlugin];
 
 export { builtinPlugins };
 export const isBuiltinPlugin = (id: string) => builtinPlugins.some(plugin => plugin.id === id);

@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createRequire } from 'node:module';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const { createMediaTools } = createRequire(import.meta.url)('../desktop/media-tools.cjs');
+const binaries = resolve('desktop/media-bin');
+const binary = name => join(binaries, name + (process.platform === 'win32' ? '.exe' : ''));
+const run = promisify(execFile);
+const probe = async file => JSON.parse((await run(binary('ffprobe'), ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file])).stdout);
+
+test('local video tools preserve dimensions, shot timing, order and audio; reject unsafe inputs and clean cancellation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'canvas-media-test-'));
+    const engine = createMediaTools({ directory: dir, binaries });
+    const upload = async (id, index, bytes) => engine.request(new Request(`oneyes-canvas://app/media-tools/${id}/input/${index}`, { method: 'PUT', body: bytes }));
+    const output = async (id, item) => {
+        const response = await engine.request(new Request(`oneyes-canvas://app/media-tools/${id}/output/${item.name}`));
+        const bytes = Buffer.from(await response.arrayBuffer()); assert.equal(bytes.length, item.bytes); return bytes;
+    };
+    try {
+        for (const color of ['red', 'blue']) await run(binary('ffmpeg'), ['-nostdin', '-y', '-f', 'lavfi', '-i', `color=${color}:s=96x64:r=12:d=1`, '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=1', '-map', '0:v', '-map', '1:a', '-map', '2:a', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', join(dir, `${color}.mp4`)]);
+        const red = await readFile(join(dir, 'red.mp4')), blue = await readFile(join(dir, 'blue.mp4'));
+        const concat = await engine.create('concat', 2, { trims: [{}, {}] });
+        await upload(concat, 0, red); await upload(concat, 1, blue);
+        await assert.rejects(upload(concat, 1, blue), /无效媒体输入/);
+        const promise = engine.start(concat);
+        assert.equal(await engine.start(concat), await promise, 'duplicate start shares the same native job');
+        const result = (await promise)[0], merged = await output(concat, result);
+        const file = join(dir, 'merged.mp4'); await writeFile(file, merged);
+        const info = await probe(file);
+        assert.equal(info.streams[0].width, 96); assert.equal(info.streams[0].height, 64);
+        assert.equal(info.streams.filter(item => item.codec_type === 'audio').length, 2); assert.ok(Number(info.format.duration) >= 1.9);
+        const first = (await run(binary('ffmpeg'), ['-v', 'error', '-i', file, '-frames:v', '1', '-vf', 'scale=1:1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-'], { encoding: 'buffer' })).stdout;
+        const last = (await run(binary('ffmpeg'), ['-v', 'error', '-ss', '1.5', '-i', file, '-frames:v', '1', '-vf', 'scale=1:1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-'], { encoding: 'buffer' })).stdout;
+        assert.ok(first[0] > first[2] + 100 && last[2] > last[0] + 100, 'concat preserves selected order');
+        await engine.release(concat);
+        const analysis = await engine.create('analyze', 1, { threshold: 0.3, clips: true, audio: true });
+        await upload(analysis, 0, merged);
+        const items = await engine.start(analysis), frames = items.filter(item => item.kind === 'image');
+        assert.equal(frames.length, 2); assert.equal(frames[0].time, 0); assert.ok(frames[1].time >= 0.9);
+        for (const item of frames) { const png = await output(analysis, item); assert.equal(png.readUInt32BE(16), 96); assert.equal(png.readUInt32BE(20), 64); }
+        assert.equal(items.filter(item => item.kind === 'video').length, 2);
+        assert.equal(items.filter(item => item.kind === 'audio').length, 2);
+        assert.match((await output(analysis, items.find(item => item.kind === 'text'))).toString(), /镜头 2/);
+        await assert.rejects(engine.request(new Request(`oneyes-canvas://app/media-tools/${analysis}/output/unknown`)), /无效媒体输出/);
+        await engine.release(analysis);
+        await run(binary('ffmpeg'), ['-nostdin','-y','-display_rotation:v:0','90','-i',join(dir,'red.mp4'),'-map','0','-c','copy',join(dir,'rotated.mp4')]);
+        const rotated = await engine.create('analyze',1,{threshold:0.3,clips:true});
+        await upload(rotated,0,await readFile(join(dir,'rotated.mp4')));
+        const rotatedItems=await engine.start(rotated), rotatedFrame=await output(rotated,rotatedItems.find(item=>item.kind==='image'));
+        assert.equal(rotatedFrame.readUInt32BE(16),64);assert.equal(rotatedFrame.readUInt32BE(20),96);
+        await engine.release(rotated);
+        const missing = await engine.create('analyze', 1, { threshold: 0.3 });
+        await assert.rejects(engine.start(missing), /全部素材/); await engine.release(missing);
+        const unsafe = await engine.create('analyze', 1, { threshold: 0.3 });
+        await upload(unsafe, 0, Buffer.from('#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://127.0.0.1:1/private\n'));
+        await assert.rejects(engine.start(unsafe), /无法处理/); await engine.release(unsafe);
+        const cancelled = await engine.create('analyze', 1, { threshold: 0.3 });
+        await upload(cancelled, 0, merged);
+        const cancelledResult = engine.start(cancelled);
+        const rejected = assert.rejects(cancelledResult, /取消|aborted/i);
+        await engine.release(cancelled); await rejected;
+        await assert.rejects(stat(join(dir, 'media-work', cancelled)), { code: 'ENOENT' });
+        assert.deepEqual(await readdir(join(dir, 'media-work')), []);
+        assert.deepEqual(await readFile(join(dir, 'red.mp4')), red, 'source remains unchanged');
+    } finally { await engine.close(); await rm(dir, { recursive: true, force: true }); }
+});

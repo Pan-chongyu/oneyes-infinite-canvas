@@ -2,6 +2,16 @@ const { contextBridge, ipcRenderer } = require('electron');
 const key = 'infinite-canvas:ai_config_store';
 function check(name) { if (name !== key) throw new Error('不支持的配置'); }
 contextBridge.exposeInMainWorld('oneYesDesktop', {
+    media: {
+        create: (operation, count, options) => ipcRenderer.invoke('media:create', operation, count, options),
+        start: id => ipcRenderer.invoke('media:start', id),
+        release: id => ipcRenderer.invoke('media:release', id),
+        subscribe(callback) {
+            const listener = (_event, state) => callback(state);
+            ipcRenderer.on('media:state', listener);
+            return () => ipcRenderer.removeListener('media:state', listener);
+        },
+    },
     diagnostics: { report: input => ipcRenderer.invoke('diagnostics:report', input) },
     windowChrome: {
         platform: process.platform,

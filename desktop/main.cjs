@@ -4,6 +4,7 @@ const { createDiagnostics } = require('./diagnostics.cjs');
 const { createVault } = require('./vault.cjs');
 const { route } = require('./protocol.cjs');
 const { downloadImage } = require('./image-download.cjs');
+const { createMediaTools } = require('./media-tools.cjs');
 const { requestWebdav } = require('./webdav.cjs');
 const { createAccount } = require('./account.cjs');
 const { createAgent } = require('./agent.cjs');
@@ -40,6 +41,7 @@ app.whenReady().then(async () => {
     process.on('uncaughtExceptionMonitor', error => report('app', 'crash', error));
     const saved = await vault.read(); // Refuse to overwrite an unreadable vault.
     const network = await createNetwork((...args) => net.fetch(...args));
+    const media = createMediaTools({ directory: app.getPath('userData'), binaries: app.isPackaged ? join(process.resourcesPath, 'media-bin') : join(__dirname, 'media-bin'), changed: state => { if (window && !window.isDestroyed()) window.webContents.send('media:state', state); } });
     network.configure(saved ? JSON.parse(saved).state?.config : {});
     const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: network.fetch });
     const listModels = createModelCatalog(network.fetch);
@@ -61,10 +63,11 @@ app.whenReady().then(async () => {
         if (diagnosticsClosed) return;
         event.preventDefault();
         // Persist only; never hold app exit waiting for a network upload.
-        void diagnostics.close().finally(() => { diagnosticsClosed = true; app.quit(); });
+        void Promise.allSettled([diagnostics.close(), media.close()]).finally(() => { diagnosticsClosed = true; app.quit(); });
     });
     protocol.handle('oneyes-canvas', async request => {
         try {
+            if (request.url.startsWith('oneyes-canvas://app/media-tools/')) return await media.request(request);
             const target = route(request.url, root);
             if (target.file) return net.fetch(target.file);
             if (target.image) return await downloadImage(request, target.image, network.fetch);
@@ -102,6 +105,9 @@ app.whenReady().then(async () => {
     const trusted = event => {
         if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('oneyes-canvas://app/')) throw new Error('拒绝访问配置');
     };
+    ipcMain.handle('media:create', (event, operation, count, options) => { trusted(event); return media.create(operation, count, options); });
+    ipcMain.handle('media:start', async (event, id) => { trusted(event); try { return { data: await media.start(id) }; } catch (error) { return { error: error.message }; } });
+    ipcMain.handle('media:release', (event, id) => { trusted(event); return media.release(id); });
     ipcMain.handle('diagnostics:report', (event, input) => { trusted(event); return diagnostics.report(input); });
     ipcMain.handle('window:theme', (event, theme) => { trusted(event); syncWindowTheme(window, nativeTheme, theme); });
     ipcMain.handle('window:fullscreen', event => { trusted(event); return window.isFullScreen(); });
@@ -169,6 +175,7 @@ app.whenReady().then(async () => {
                     const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
+                await require('./media-smoke.cjs').smokeMedia(app.isPackaged ? join(process.resourcesPath, 'media-bin') : join(__dirname, 'media-bin'), window);
                 const chrome = await window.webContents.executeJavaScript(`(async () => {
                     const bar = document.querySelector('.desktop-titlebar'), api = window.oneYesDesktop.windowChrome;
                     return { platform: api.platform, fullscreen: await api.fullscreen(), height: bar?.getBoundingClientRect().height,

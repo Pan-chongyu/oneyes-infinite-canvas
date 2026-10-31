@@ -1,4 +1,4 @@
-> OneYes 桌面分支：Markdown、SVG、HTML、3D 全景和便利贴已随客户端内置，默认启用，渲染依赖离线可用。无需按下文单独安装官方插件；以下 SDK 与独立插件发布流程供第三方开发使用。内置构建入口为 `web/build/builtin-plugins.mjs`，版本与客户端一起发布。
+> OneYes 桌面分支：Markdown、SVG、HTML、3D 全景、便利贴及本地创作工具（拉片、拼接、抠图、图层合成、AI 超分）已随客户端内置，默认启用，依赖离线可用。无需按下文单独安装官方插件；以下 SDK 与独立插件发布流程供第三方开发使用。独立插件构建入口为 `web/build/builtin-plugins.mjs`，本地创作节点在 `web/src/components/canvas/creator-tools-plugin.tsx`，都与客户端一起发布。
 
 # Infinite Canvas 画布节点插件
 
@@ -117,6 +117,7 @@ SDK 导出的 hooks(`useState/useEffect/useMemo/useRef/...`)运行时转发宿�
     resource?: (node) => { kind: "text"|"image"|"video"|"audio", text?, url? } | null; // 作为上游输入被消费时输出什么
     Content: ({ ctx }) => ReactNode;         // 节点主体渲染
     Panel?: ({ ctx, onClose }) => ReactNode; // 可选:节点下方面板
+    renderOwnStatus?: boolean; // 自行渲染 loading/error 状态时启用；须提供取消／重试与中断恢复交互
     toolbar?: (ctx) => Array<{ id, title, label, icon, onClick, danger? }>; // 追加到 hover 工具栏
     onDoubleClick?: (ctx) => boolean;        // 返回 true 表示已处理双击
 }
@@ -137,6 +138,7 @@ SDK 导出的 hooks(`useState/useEffect/useMemo/useRef/...`)运行时转发宿�
 | `ctx.applyOps(ops)` | 用画布指令集增删节点/连线、选择、触发生成(见下) |
 | `ctx.emit(event, payload)` / `ctx.on(event, handler)` | 节点/插件间事件通信 |
 | `ctx.storage` | 插件私有持久化(按插件 id 命名空间) |
+| `ctx.processing?` | 可选本地创作能力：`start(nodeId)`、`cancel(nodeId)`、`state(nodeId)`；仅处理当前画布的 `creator-tools:*` 节点，不执行任意命令，不替代 `ctx.ai` |
 
 > `metadata` 的**内置字段**(content、status、model…)是强类型;插件写入的**自定义字段**读出为 `unknown`,按需 `as` 断言(参考 `sticky-note` 的 `pluginColor`)。
 

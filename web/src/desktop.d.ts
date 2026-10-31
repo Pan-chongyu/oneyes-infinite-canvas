@@ -2,6 +2,12 @@ export {};
 declare global {
     interface Window {
         oneYesDesktop?: {
+            media?: {
+                create(operation: 'analyze' | 'concat', count: number, options: Record<string, unknown>): Promise<string>;
+                start(id: string): Promise<{ data?: Array<{ name: string; kind: 'image' | 'video' | 'audio' | 'text'; bytes: number; time?: number }>; error?: string }>;
+                release(id: string): Promise<void>;
+                subscribe(callback: (state: { id: string; stage: string; progress?: number }) => void): () => void;
+            };
             diagnostics?: { report(input: { component: string; stage: string; error: { name: string; message: string; stack: string; code: string; status: number } }): Promise<void> };
             windowChrome?: {
                 platform: string;
