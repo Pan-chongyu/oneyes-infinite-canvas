@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.58",
+  "version": "0.20.59",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -130,3 +130,4 @@
     "socks-proxy-agent": "8.0.5"
   }
 }
+

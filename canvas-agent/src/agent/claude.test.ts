@@ -11,7 +11,12 @@ test("Claude Windows resolver uses the installed CLI without a shell", async () 
     const bin = path.join(root, "bin");
     const cli = path.join(bin, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
     await fs.mkdir(path.dirname(cli), { recursive: true });
-    await fs.writeFile(cli, "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({type:'result', text:'ok'})));\n", { mode: 0o600 });
+    const script = "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({type:'result', text:'ok'})));\n";
+    await fs.writeFile(cli, script, { mode: 0o600 });
+    if (process.platform !== "win32") {
+        const executable = path.join(bin, "claude");
+        await fs.writeFile(executable, `#!/usr/bin/env node\n${script}`, { mode: 0o700 });
+    }
     try {
         const command = await claudeCommand({ PATH: bin }, "win32");
         assert.equal(command.command, process.execPath);
@@ -30,7 +35,9 @@ test("Claude abort stops the child and reports cancellation", async () => {
     const bin = path.join(root, "bin");
     const cli = path.join(bin, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
     await fs.mkdir(path.dirname(cli), { recursive: true });
-    await fs.writeFile(cli, "setInterval(() => {}, 1000);\n", { mode: 0o600 });
+    const script = "setInterval(() => {}, 1000);\n";
+    await fs.writeFile(cli, script, { mode: 0o600 });
+    if (process.platform !== "win32") await fs.writeFile(path.join(bin, "claude"), `#!/usr/bin/env node\n${script}`, { mode: 0o700 });
     const controller = new AbortController();
     const run = runClaudeTurn("stop", () => undefined, { env: { PATH: bin }, signal: controller.signal });
     await new Promise((resolve) => setTimeout(resolve, 50));
