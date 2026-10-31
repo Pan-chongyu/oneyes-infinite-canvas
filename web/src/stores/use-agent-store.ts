@@ -67,6 +67,8 @@ type AgentStore = {
     tokenUsage: AgentTokenUsage | null;
     eventLogs: AgentEventLog[];
     threads: AgentThreadSummary[];
+    nextThreadCursor: string;
+    loadingMoreThreads: boolean;
     activeThreadId: string;
     activeTurnId: string;
     workspacePath: string;
@@ -139,6 +141,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     tokenUsage: null,
     eventLogs: [],
     threads: [],
+    nextThreadCursor: "",
+    loadingMoreThreads: false,
     activeThreadId: "",
     activeTurnId: "",
     workspacePath: "",

@@ -130,6 +130,23 @@ test("中断请求只作用于当前运行线程", async () => {
     assert.equal(await draftInterrupt, true);
 });
 
+test("turn/start 尚未返回时停止会排队并在拿到 turn id 后立即中断", async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    const child = { stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } };
+    const client = Reflect.construct(CodexAppClient, [child, () => undefined, emptyEventHistory]) as CodexAppClient;
+    const running = client.startTurn("thread-pending-stop", "fixture", []);
+    assert.equal(await client.interruptCurrentTurn("thread-pending-stop"), true);
+    const start = writes.find((item) => item.method === "turn/start");
+    assert.ok(start);
+    client.handle({ id: start.id, result: { turn: { id: "turn-pending-stop" } } });
+    await new Promise((resolve) => setImmediate(resolve));
+    const interrupt = writes.find((item) => item.method === "turn/interrupt");
+    assert.ok(interrupt);
+    client.handle({ id: interrupt.id, result: {} });
+    client.handleNotification("turn/completed", { threadId: "thread-pending-stop", turn: { id: "turn-pending-stop", error: null } });
+    await running;
+});
+
 test("Skill 列表与启用配置使用 app-server 原生协议", async () => {
     const writes: Array<Record<string, unknown>> = [];
     const child = { stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } };

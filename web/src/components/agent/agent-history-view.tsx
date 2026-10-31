@@ -4,7 +4,7 @@ import { FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import type { AgentThreadSummary } from "@/stores/use-agent-store";
+import { useAgentStore, type AgentThreadSummary } from "@/stores/use-agent-store";
 
 export function AgentHistoryView({
     theme,
@@ -18,6 +18,7 @@ export function AgentHistoryView({
     onNewThread,
     onResumeThread,
     onDeleteThreads,
+    onLoadMore,
 }: {
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     threads: AgentThreadSummary[];
@@ -30,8 +31,11 @@ export function AgentHistoryView({
     onNewThread: () => void;
     onResumeThread: (threadId: string) => void;
     onDeleteThreads: (threadIds: string[]) => void;
+    onLoadMore: () => void;
 }) {
     const { i18n, t } = useTranslation();
+    const nextCursor = useAgentStore((state) => state.nextThreadCursor);
+    const loadingMore = useAgentStore((state) => state.loadingMoreThreads);
     const [selectedIds, setSelectedIds] = useState(() => new Set<string>());
     const selectedThreads = threads.filter((thread) => selectedIds.has(thread.id));
     const allSelected = Boolean(threads.length) && selectedThreads.length === threads.length;
@@ -117,6 +121,7 @@ export function AgentHistoryView({
                             </div>
                         );
                     })}
+                    {nextCursor ? <Button type="text" block loading={loadingMore} disabled={!connected || loading || busy} onClick={onLoadMore}>{t("agent.history.loadMore")}</Button> : null}
                     {!threads.length ? (
                         <div className="px-3 py-8 text-center text-sm" style={{ color: theme.node.muted }}>
                             {t(connected ? "agent.history.noWorkspaceThreads" : "agent.history.connectHint")}

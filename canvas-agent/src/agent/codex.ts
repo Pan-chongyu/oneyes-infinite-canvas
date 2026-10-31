@@ -56,14 +56,21 @@ let codexApp: CodexAppClient | null = null;
 let codexAppStart: Promise<CodexAppClient> | null = null;
 /** 仅表示最近主动加载/选择的线程；运行中的 turn 身份由 CodexAppClient 自己维护。 */
 let loadedThreadId = "";
+type CodexRun = { threadId: string; started: boolean; cancelled: boolean };
+let activeRun: CodexRun | undefined;
 
 export { summarizeCodexThread } from "./codex-history.js";
 
 /** 将 Codex turn 加入串行队列并等待执行完成。 */
 export async function runCodexTurn(prompt: string, lifecycleEmit: AgentEmit, attachments: AgentAttachment[] = [], options: CodexRunOptions = {}) {
     if (!prompt.trim()) return;
-    codexQueue = codexQueue.catch(() => undefined).then(() => runCodexTurnNow(prompt, lifecycleEmit, attachments, options));
-    await codexQueue;
+    const run = { threadId: options.threadId || "", started: false, cancelled: false };
+    codexQueue = codexQueue.catch(() => undefined).then(() => {
+        activeRun = run;
+        return runCodexTurnNow(prompt, lifecycleEmit, attachments, options, run);
+    });
+    try { await codexQueue; }
+    finally { if (activeRun === run) activeRun = undefined; }
 }
 
 /** 从当前对话或指定网页画布生成可编辑草稿，不写入 Skill 文件。 */
@@ -75,8 +82,11 @@ export async function generateCodexSkillDraft(emit: AgentEmit, cwd: string, inpu
 
 /** 中断当前线程正在执行的 Codex turn。 */
 export async function interruptCodexTurn(threadId?: string) {
-    if (!codexApp) return false;
-    return await codexApp.interruptCurrentTurn(threadId);
+    const run = activeRun && (!threadId || activeRun.threadId === threadId) ? activeRun : undefined;
+    if (run && !run.started) { run.cancelled = true; return true; }
+    const ok = await codexApp?.interruptCurrentTurn(threadId) || false;
+    if (ok && run) run.cancelled = true;
+    return ok;
 }
 
 /** 回复当前 app-server 的待处理权限请求。 */
@@ -103,7 +113,7 @@ export async function resumeCodexThread(emit: AgentEmit, threadId: string, cwd?:
 }
 
 /** 查询当前工作空间中的 Codex 线程。 */
-export async function listCodexThreads(emit: AgentEmit, options: { cwd: string; searchTerm?: string; limit?: number }) {
+export async function listCodexThreads(emit: AgentEmit, options: { cwd: string; searchTerm?: string; limit?: number; cursor?: string }) {
     const app = await getCodexApp(emit);
     const result = await app.listThreads({
         limit: options.limit || 40,
@@ -111,8 +121,10 @@ export async function listCodexThreads(emit: AgentEmit, options: { cwd: string; 
         sortDirection: "desc",
         sourceKinds: ["cli", "vscode", "appServer", "exec"],
         cwd: options.cwd,
+        ...(options.cursor ? { cursor: options.cursor } : {}),
         ...(options.searchTerm ? { searchTerm: options.searchTerm } : {}),
     });
+    if (options.cursor && field(result, "nextCursor") === options.cursor) throw new Error("会话历史分页异常，请刷新后重试");
     const data = Array.isArray(field(result, "data")) ? (field(result, "data") as unknown[]).map(summarizeCodexThread).filter((thread) => threadInWorkspace(thread, options.cwd)) : [];
     return { data, nextCursor: field(result, "nextCursor") || null, backwardsCursor: field(result, "backwardsCursor") || null };
 }
@@ -183,34 +195,44 @@ async function mergeMessageMetadata<T extends { role: string; threadId: string; 
 
 /** 判断线程异常是否允许自动新建线程后重试。 */
 export function isRecoverableThreadError(error: unknown) {
-    return /thread not loaded|no rollout found/i.test(errorMessage(error));
+    return !(error instanceof CodexReportedError) && /thread not loaded|no rollout found/i.test(errorMessage(error));
 }
 
 /** 执行一次 Codex turn，并负责附件临时文件和线程恢复。 */
-async function runCodexTurnNow(prompt: string, lifecycleEmit: AgentEmit, attachments: AgentAttachment[], options: CodexRunOptions) {
+async function runCodexTurnNow(prompt: string, lifecycleEmit: AgentEmit, attachments: AgentAttachment[], options: CodexRunOptions, run: CodexRun) {
     let files: string[] = [];
     try {
+        if (run.cancelled) return;
         options.onStart?.();
         files = await writeAttachmentFiles(attachments);
+        if (run.cancelled) return;
         const app = await getCodexApp(options.appEmit || lifecycleEmit);
+        if (run.cancelled) return;
         let threadId = await ensureCodexThread(app, options, lifecycleEmit);
+        run.threadId = threadId;
         options.onThread?.(threadId);
+        if (run.cancelled) return;
         try {
+            run.started = true;
             await app.startTurn(threadId, prompt, files, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
         } catch (error) {
-            if (!isRecoverableThreadError(error)) throw error;
+            if (run.cancelled || !isRecoverableThreadError(error)) throw error;
+            run.started = false;
             lifecycleEmit("agent_log", { text: `Codex thread unavailable, starting a new thread: ${errorMessage(error)}` });
             loadedThreadId = "";
             threadId = await ensureCodexThread(app, { cwd: options.cwd }, lifecycleEmit);
+            run.threadId = threadId;
             options.onThread?.(threadId);
+            if (run.cancelled) return;
+            run.started = true;
             await app.startTurn(threadId, prompt, files, options.permissionMode || "request", options.model, options.effort, options.onTurn, options.skill, options.messageText);
         }
     } catch (error) {
         logger.error("Codex turn failed", error);
         if (!(error instanceof CodexReportedError)) lifecycleEmit("agent_error", { message: errorMessage(error) });
     } finally {
-        options.onFinish?.();
-        await Promise.all(files.map((file) => fs.unlink(file).catch(() => undefined)));
+        try { options.onFinish?.(); }
+        finally { await Promise.all(files.map((file) => fs.unlink(file).catch(() => undefined))); }
     }
 }
 
@@ -487,21 +509,33 @@ function samePath(left: string, right: string) {
 }
 
 /** 将图片附件写入临时文件供 Codex 读取。 */
-async function writeAttachmentFiles(attachments: AgentAttachment[]) {
-    return await Promise.all(attachments.filter((item) => item.dataUrl?.startsWith("data:image/")).map(writeAttachmentFile));
+export async function writeAttachmentFiles(attachments: AgentAttachment[]) {
+    const results = await Promise.allSettled(attachments.map(writeAttachmentFile));
+    const files = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+        await Promise.all(files.map((file) => fs.unlink(file).catch(() => undefined)));
+        throw failure.reason;
+    }
+    return files;
 }
 
 /** 将单个 Data URL 图片附件写入临时文件。 */
 async function writeAttachmentFile(item: AgentAttachment) {
-    const [, meta = "", data = ""] = item.dataUrl?.match(/^data:([^;]+);base64,(.+)$/) || [];
-    if (!data) throw new Error(`图片附件无效：${item.name || "未命名图片"}`);
+    const [, meta = "", data = ""] = item?.dataUrl?.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/i) || [];
+    if (!data) throw new Error(`图片附件无效：${item?.name || "未命名图片"}`);
     const file = path.join(os.tmpdir(), `infinite-canvas-${Date.now()}-${Math.random().toString(16).slice(2)}.${imageExt(meta || item.type)}`);
-    await fs.writeFile(file, Buffer.from(data, "base64"));
+    const handle = await fs.open(file, "wx", 0o600);
+    try { await handle.writeFile(Buffer.from(data, "base64")); }
+    catch (error) { await handle.close(); await fs.unlink(file).catch(() => undefined); throw error; }
+    await handle.close();
     return file;
 }
 
 /** 根据图片 MIME 类型返回临时文件扩展名。 */
 function imageExt(type = "") {
+    type = type.toLowerCase();
+    if (type.includes("gif")) return "gif";
     if (type.includes("png")) return "png";
     if (type.includes("webp")) return "webp";
     return "jpg";

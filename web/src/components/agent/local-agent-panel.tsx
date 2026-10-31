@@ -78,7 +78,7 @@ const HISTORY_RETRY_DELAYS_MS = [0, 150, 350, 700, 1200];
 const rt = (key: string, options?: Record<string, unknown>) => i18n.t(`agent.runtime.${key}`, options);
 
 type AgentWorkspace = { workspacePath: string; activeThreadId?: string };
-type AgentThreadsResponse = { ok?: boolean; workspace?: AgentWorkspace; conversation?: AgentConversationState; data?: AgentThreadSummary[] };
+type AgentThreadsResponse = { ok?: boolean; workspace?: AgentWorkspace; conversation?: AgentConversationState; data?: AgentThreadSummary[]; nextCursor?: string | null };
 type AgentThreadResponse = { ok?: boolean; workspace?: AgentWorkspace; conversation?: AgentConversationState; thread?: AgentThreadSummary; messages?: AgentChatItem[]; settledTurnIds?: string[]; historyReady?: boolean };
 type AgentWorkspaceResponse = { ok?: boolean; workspace?: AgentWorkspace; conversation?: AgentConversationState };
 type AgentTurnResponse = { ok?: boolean; threadId?: string };
@@ -313,7 +313,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const currentThreadId = current.activeThreadId || data.workspace?.activeThreadId || "";
             if (!data.conversation && currentThreadId !== current.activeThreadId) sequence = applyWorkspaceChange({ activeThreadId: currentThreadId });
             if (sequence !== loadThreadsSequenceRef.current || useAgentStore.getState().activeThreadId !== currentThreadId) return;
-            setAgentState({ threads: data.data || [], workspacePath: data.workspace?.workspacePath || "" });
+            setAgentState({ threads: data.data || [], nextThreadCursor: data.nextCursor || "", loadingMoreThreads: false, workspacePath: data.workspace?.workspacePath || "" });
             if (currentThreadId && !skipHistory) {
                 await loadThreadSnapshot(currentThreadId, sequence, undefined, expectedTurnId);
             } else {
@@ -327,6 +327,28 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             if (request === loadThreadsRequestRef.current && !threadOperationRef.current) setAgentState({ loadingThreads: false });
         }
     }, [applyConversationState, applyWorkspaceChange, endpoint, loadThreadSnapshot, setAgentState, token]);
+    const loadMoreThreads = async () => {
+        const state = useAgentStore.getState();
+        const cursor = state.nextThreadCursor;
+        if (!state.connected || !cursor || state.loadingThreads || state.loadingMoreThreads) return;
+        const sequence = loadThreadsSequenceRef.current;
+        setAgentState({ loadingMoreThreads: true });
+        try {
+            const data = await fetchAgentJson<AgentThreadsResponse>(endpoint, token, `/agent/codex/threads?cursor=${encodeURIComponent(cursor)}`);
+            if (sequence !== loadThreadsSequenceRef.current || !useAgentStore.getState().connected) return;
+            if (data.nextCursor === cursor) throw new Error(rt("historyReadFailed"));
+            const threads = new Map(useAgentStore.getState().threads.map((thread) => [thread.id, thread]));
+            (data.data || []).forEach((thread) => threads.set(thread.id, thread));
+            setAgentState({ threads: [...threads.values()], nextThreadCursor: data.nextCursor || "" });
+        } catch (error) {
+            if (sequence === loadThreadsSequenceRef.current) {
+                addEventLog(rt("historyReadFailed"), error);
+                message.error(rt("historyReadFailed"));
+            }
+        } finally {
+            if (sequence === loadThreadsSequenceRef.current) setAgentState({ loadingMoreThreads: false });
+        }
+    };
     // Imperatively subscribe to canvasContext to keep the ref current and debounce snapshot reports without rerendering the panel.
     useEffect(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -480,6 +502,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             });
         });
         source.addEventListener("agent_bootstrap", (event) => {
+            if (!isCurrentConnection()) return;
             const data = parseEventData<AgentBootstrapEvent>(event);
             if (!data?.type) return;
             if (data.type === "codex.preparing") {
@@ -1006,6 +1029,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             messages: [],
             tokenUsage: null,
             threads: [],
+            nextThreadCursor: "",
+            loadingMoreThreads: false,
             activeThreadId: "",
             activeTurnId: "",
             workspacePath: "",
@@ -1394,6 +1419,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 <AgentSkillsView clientId={clientIdRef.current} />
             ) : activeTab === "history" ? (
                 <AgentHistoryView
+                    onLoadMore={loadMoreThreads}
                     theme={theme}
                     threads={threads}
                     activeThreadId={activeThreadId}

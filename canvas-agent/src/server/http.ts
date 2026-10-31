@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -26,6 +27,7 @@ export function startHttpServer() {
     const initialWorkspace = ensureSiteWorkspace(config);
     const session = new CanvasSession(initialWorkspace.activeThreadId || "");
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
+    let claudeRun: { controller: AbortController; threadId: string; turnId: string } | undefined;
     /** 将 Agent 事件广播到所属线程或全部网页。 */
     const emit = (type: string, payload: unknown) => {
         const value = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload };
@@ -261,7 +263,7 @@ export function startHttpServer() {
     }));
     app.get("/agent/codex/threads", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
-        const result = await listCodexThreads(emit, { cwd: workspace.workspacePath, searchTerm: String(req.query.searchTerm || "") });
+        const result = await listCodexThreads(emit, { cwd: workspace.workspacePath, searchTerm: String(req.query.searchTerm || ""), cursor: String(req.query.cursor || "") || undefined });
         res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot, ...result });
     }));
     app.post("/agent/codex/threads/new", codexMutation(async (req, res) => {
@@ -436,11 +438,41 @@ export function startHttpServer() {
         res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "审批请求已失效" }) });
     }));
     app.post("/agent/codex/interrupt", route(async (req, res) => {
+        if (claudeRun && (!req.body?.threadId || req.body.threadId === claudeRun.threadId)) {
+            claudeRun.controller.abort();
+            return res.json({ ok: true });
+        }
         const ok = await interruptCodexTurn(skillDraftRunning ? undefined : String(req.body?.threadId || ""));
         res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "当前没有可停止的任务" }) });
     }));
-    app.post("/agent/claude/turn", (req, res) => {
-        runClaudeTurn(String(req.body?.prompt || ""), emit);
+    app.post("/agent/claude/turn", codexMutation(async (req, res) => {
+        const prompt = String(req.body?.prompt || "");
+        if (!prompt.trim()) return res.status(400).json({ ok: false, error: "请输入任务内容" });
+        const clientId = String(req.body?.clientId || session.targetClientId);
+        if (!clientId || !session.hasClient(clientId)) return res.status(409).json({ ok: false, error: "发起任务的网页已断开，请重新连接后再试" });
+        const workspace = ensureSiteWorkspace(config);
+        const run = { controller: new AbortController(), threadId: workspace.activeThreadId || "", turnId: `claude-${crypto.randomUUID()}` };
+        claudeRun = run;
+        session.bindClient(clientId);
+        session.markConversationRunning(run.threadId);
+        session.setCodexState({ busy: true, threadId: run.threadId, turnId: run.turnId });
+        const claudeEmit = (type: string, payload: unknown) => session.emitThread(type, run.threadId, { ...(payload as Record<string, unknown>), agent: "claude", threadId: run.threadId, turnId: run.turnId, sourceClientId: clientId });
+        void runClaudeTurn(prompt, claudeEmit, {
+            cwd: workspace.workspacePath,
+            signal: run.controller.signal,
+            mcpConfig: { mcpServers: { "infinite-canvas": { type: "http", url: `${config.url}/mcp`, headers: { "x-canvas-agent-token": config.token } } } },
+        }).finally(() => {
+            if (claudeRun !== run) return;
+            claudeRun = undefined;
+            session.releaseClient(clientId);
+            session.setCodexState({ busy: false, threadId: run.threadId, turnId: run.turnId });
+            session.finishConversationRun(run.threadId);
+        });
+        res.json({ ok: true, threadId: run.threadId, turnId: run.turnId });
+    }));
+    app.post("/agent/claude/interrupt", (req, res) => {
+        if (!claudeRun || req.body?.turnId && req.body.turnId !== claudeRun.turnId) return void res.status(409).json({ ok: false, error: "当前没有可停止的 Claude 任务" });
+        claudeRun.controller.abort();
         res.json({ ok: true });
     });
     app.use((_req, res) => res.status(404).json({ ok: false, error: "not found" }));
@@ -542,20 +574,25 @@ function requestUrl(req: Request, config: CanvasAgentConfig) {
 }
 
 /** 设置跨域响应头并记录通过 token 授权的来源。 */
-function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfig) {
+export function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfig, persist = saveConfig) {
     const origin = req.headers.origin;
+    res.setHeader("Vary", "Origin");
+    if (origin && !["/health", "/config"].includes(url.pathname)) {
+        const origins = config.origins || [];
+        if (!origins.includes(origin)) {
+            if (origins.length || !/^https?:\/\//.test(origin)) return false;
+            if (req.method !== "OPTIONS") {
+                if (!validToken(req, url, config.token)) return false;
+                persist({ ...config, origins: [origin] });
+                config.origins = [origin];
+            }
+        }
+    }
     res.setHeader("Access-Control-Allow-Origin", origin || "*");
     res.setHeader("Access-Control-Allow-Headers", "content-type,x-canvas-agent-token");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Private-Network", "true");
-    if (!origin || req.method === "OPTIONS" || url.pathname === "/health" || url.pathname === "/config") return true;
-    config.origins ||= [];
-    if (validToken(req, url, config.token) && !config.origins.includes(origin)) {
-        config.origins.push(origin);
-        saveConfig(config);
-    }
-    res.setHeader("Vary", "Origin");
-    return config.origins.includes(origin);
+    return true;
 }
 
 /** 校验请求查询参数或请求头中的连接 token。 */

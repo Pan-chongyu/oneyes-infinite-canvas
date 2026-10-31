@@ -73,7 +73,7 @@ export class CanvasSession {
     }
 
     /** 获取当前 turn 绑定或最近激活的网页客户端。 */
-    private get targetClientId() {
+    get targetClientId() {
         return this.boundClientId || this.activeClientId;
     }
 

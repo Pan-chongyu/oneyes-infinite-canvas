@@ -18,7 +18,7 @@ type ActiveTurn = PendingRequest & { threadId: string; turnId: string; prompt: s
 type ItemDeltaParams = { threadId: string; turnId: string; itemId: string; delta: string; summaryIndex?: number };
 type PendingDelta = { delta: string; itemType: string; params: ItemDeltaParams; timer: ReturnType<typeof setTimeout> };
 type ApprovalRequest = { id: number; method: string; params: JsonRecord; decision?: string };
-type PendingTurnStart = { threadId: string; prompt: string; messageText?: string; turnId?: string; onTurn?: (turnId: string) => void };
+type PendingTurnStart = { threadId: string; prompt: string; messageText?: string; turnId?: string; onTurn?: (turnId: string) => void; interruptRequested?: boolean };
 
 const canvasAgentMcp = canvasAgentMcpCommand();
 const require = createRequire(import.meta.url);
@@ -325,7 +325,12 @@ export class CodexAppClient {
     async interruptCurrentTurn(requestedThreadId?: string) {
         const threadId = this.currentThreadId;
         const turnId = this.currentTurnId;
-        if (!threadId || !turnId || (requestedThreadId && requestedThreadId !== threadId)) return false;
+        if (!threadId || (requestedThreadId && requestedThreadId !== threadId)) return false;
+        if (!turnId) {
+            if (this.pendingTurnStart?.threadId !== threadId) return false;
+            this.pendingTurnStart.interruptRequested = true;
+            return true;
+        }
         try {
             logger.warn("Interrupting active Codex turn", { threadId, turnId });
             await this.request("turn/interrupt", { threadId, turnId });
@@ -707,6 +712,12 @@ export class CodexAppClient {
         if (!registration) return;
         this.startedTurnKeys.add(key);
         registration.onTurn?.(turnId);
+        if (registration.interruptRequested) {
+            registration.interruptRequested = false;
+            void this.interruptCurrentTurn(threadId).then((ok) => {
+                if (!ok) this.emit("agent_error", { threadId, turnId, message: "停止任务失败，请再次点击停止" });
+            });
+        }
     }
 
     /** 自动回复 app-server 发起的授权或交互请求。 */
