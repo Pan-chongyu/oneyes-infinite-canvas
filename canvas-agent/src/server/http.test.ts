@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Request, Response } from "express";
 import { setCors } from "./http.js";
-import type { CanvasAgentConfig } from "../config.js";
+import { parseConfig, type CanvasAgentConfig } from "../config.js";
 
 test("首次有效网页绑定后，新来源即使持有 token 也不能自动加入白名单", () => {
     const config: CanvasAgentConfig = { url: "http://127.0.0.1:17371", token: "fixture-token" };
@@ -26,4 +26,17 @@ test("首次有效网页绑定后，新来源即使持有 token 也不能自动�
     assert.equal(call("oneyes-canvas://app"), true);
     assert.deepEqual(config.origins, ["https://canvas.example"]);
     assert.equal(call("null"), false);
+});
+
+test("a migrated desktop-only origin permits the first authenticated website binding without widening existing bindings", () => {
+    const config = parseConfig({ url: "http://127.0.0.1:17371", token: "fixture-token-0123456789012345", origins: ["oneyes-canvas://app"] });
+    const res = { setHeader() {} } as unknown as Response;
+    const call = (origin: string, token = config.token) => setCors({ headers: { origin, "x-canvas-agent-token": token }, method: "POST" } as Request, res, new URL("/canvas/state", config.url), config, () => {});
+    assert.equal(call("oneyes-canvas://app"), true);
+    assert.equal(call("https://canvas.example", "wrong"), false);
+    assert.deepEqual(config.origins, []);
+    assert.equal(call("https://canvas.example"), true);
+    assert.deepEqual(config.origins, ["https://canvas.example"]);
+    assert.equal(call("https://other.example"), false);
+    assert.equal(call("oneyes-canvas://app.evil"), false);
 });

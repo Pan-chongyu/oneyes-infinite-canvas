@@ -3,9 +3,12 @@ const components = ['app', 'image', 'video', 'webdav', 'agent', 'update', 'accou
 const stages = ['startup', 'request', 'submit', 'poll', 'save', 'restore', 'sync', 'connect', 'install', 'download', 'renderer', 'crash', 'load', 'setup', 'check'];
 const reasons = ['unknown', 'network', 'timeout', 'authentication', 'permission', 'not-found', 'rate-limit', 'server', 'invalid-image', 'invalid-data', 'storage', 'integrity', 'configuration', 'cancelled', 'runtime'];
 const errorTypes = ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'DOMException', 'AgentApiError', 'ImageTaskHttpError', 'AxiosError'];
-const codes = ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOSPC', 'EACCES', 'EPERM', 'ENOENT', 'ERR_NETWORK', 'ERR_CANCELED', 'ERR_CONNECTION_CLOSED', 'ERR_FAILED', 'ERR_INTERNET_DISCONNECTED'];
+const codes = ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOSPC', 'EACCES', 'EPERM', 'ENOENT', 'EADDRINUSE', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_AGENT_CONFIG', 'ERR_AGENT_STARTUP', 'ERR_AGENT_EXIT', 'ERR_NETWORK', 'ERR_CANCELED', 'ERR_CONNECTION_CLOSED', 'ERR_FAILED', 'ERR_INTERNET_DISCONNECTED'];
 function classify(text, status, code) {
     if (/abort|cancel|取消/i.test(text) || code === 'ERR_CANCELED') return 'cancelled';
+    if (['ERR_AGENT_CONFIG', 'EADDRINUSE'].includes(code)) return 'configuration';
+    if (['ERR_AGENT_STARTUP', 'ERR_AGENT_EXIT', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND'].includes(code)) return 'runtime';
+    if (['EACCES', 'EPERM'].includes(code)) return 'permission';
     if (status === 401 || /unauthor|api.?key.*(?:invalid|无效)|认证/i.test(text)) return 'authentication';
     if (status === 403 || /permission|权限/i.test(text)) return 'permission';
     if (status === 404 || status === 410 || /not found|不存在|已过期|缺失/i.test(text)) return 'not-found';

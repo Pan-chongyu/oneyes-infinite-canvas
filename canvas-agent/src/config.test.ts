@@ -66,3 +66,15 @@ test("parseConfig normalizes valid origins and rejects malformed workspace state
     assert.equal(config.workspace?.pinnedThreadIds?.[0], "thread-1");
     assert.throws(() => parseConfig({ url: sample.url, token: sample.token, workspace: { workspacePath: "" } }), /workspace/);
 });
+
+test("legacy built-in desktop origin is removed without losing credentials, website binding or conversation state", () => {
+    const workspace = { workspacePath: "~/canvas", activeThreadId: "thread-active", pinnedThreadIds: ["thread-pinned"] };
+    const legacy = { ...sample, workspace, origins: ["oneyes-canvas://app", "https://canvas.example", "oneyes-canvas://app"] };
+    assert.deepEqual(parseConfig(legacy), { ...sample, workspace, origins: ["https://canvas.example"] });
+    assert.deepEqual(parseConfig({ ...legacy, origins: ["oneyes-canvas://app"] }).origins, []);
+    // Never silently discard arbitrary custom origins or accept near-matches.
+    for (const origin of ["oneyes-canvas://app/", "oneyes-canvas://app.evil", "oneyes-canvas://app?token=x", "file://app", "null", "https://canvas.example/path"]) {
+        assert.throws(() => parseConfig({ ...legacy, origins: ["oneyes-canvas://app", origin] }), /origins/);
+    }
+    assert.deepEqual(legacy.origins, ["oneyes-canvas://app", "https://canvas.example", "oneyes-canvas://app"]);
+});

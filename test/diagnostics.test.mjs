@@ -10,6 +10,14 @@ const { createVault } = require('../desktop/vault.cjs');
 const { createDiagnostics } = require('../desktop/diagnostics.cjs');
 const { normalize } = require('../desktop/diagnostic-format.cjs');
 const metadata = { version: '0.20.63', platform: 'macos', arch: 'arm64', os_release: '24.6.0', electron: '44.9.1' };
+
+test('Agent startup diagnostics distinguish configuration, port, permissions and runtime without raw messages', () => {
+    for (const [code, reason] of [['ERR_AGENT_CONFIG', 'configuration'], ['EADDRINUSE', 'configuration'], ['EPERM', 'permission'], ['EACCES', 'permission'], ['ERR_MODULE_NOT_FOUND', 'runtime'], ['ERR_AGENT_EXIT', 'runtime']]) {
+        const safe = normalize({ component: 'agent', stage: 'startup', error: { code, message: 'PRIVATE token=SECRET' } });
+        assert.equal(safe.code, code); assert.equal(safe.reason, reason); assert.equal(safe.stage, 'startup');
+        assert.doesNotMatch(JSON.stringify(safe), /PRIVATE|SECRET/);
+    }
+});
 test('redaction keeps technical classification and source locations without credentials or user content', () => {
     const value = normalize({ component: 'image', stage: 'submit', error: { name: 'TypeError', message: 'Invalid image data; prompt: private content sk-SECRET', code: 'Bearer SECRET', stack: 'Error: secret\n at method (/Users/private-name/app/desktop/main.cjs:2:4)\n at https://file.test/secret.png?token=PRIVATE\n at index-abc.js:1:2' }, prompt: 'PRIVATE', apiKey: 'SECRET' });
     assert.equal(value.reason, 'invalid-image'); assert.equal(value.error_type, 'TypeError');

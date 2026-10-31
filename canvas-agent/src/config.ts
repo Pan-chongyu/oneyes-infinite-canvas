@@ -18,7 +18,7 @@ export function loadConfig(create = false): CanvasAgentConfig {
     try {
         return parseConfig(JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")));
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Canvas Agent 配置无法读取，已保留原文件，请检查配置后重试");
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw Object.assign(new Error("Canvas Agent 配置无法读取，已保留原文件，请检查配置后重试"), { code: (error as NodeJS.ErrnoException).code || "ERR_AGENT_CONFIG" });
         const config = { url: `http://127.0.0.1:${Number(process.env.PORT) || DEFAULT_PORT}`, token: crypto.randomBytes(18).toString("hex") };
         if (create) saveConfig(config);
         return config;
@@ -49,7 +49,9 @@ export function parseConfig(value: unknown): CanvasAgentConfig {
     if (parsedUrl.protocol !== "http:" || parsedUrl.hostname !== "127.0.0.1" || parsedUrl.username || parsedUrl.password || parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Canvas Agent 必须只监听 127.0.0.1 的有效 HTTP 地址");
     const token = source.token;
     if (typeof token !== "string" || !/^[A-Za-z0-9_-]{24,256}$/.test(token)) throw new Error("Canvas Agent token 格式无效");
-    const origins = source.origins === undefined ? undefined : source.origins;
+    // Older desktop builds persisted the built-in origin. It is authorized
+    // separately by setCors and must not occupy the first website binding.
+    const origins = Array.isArray(source.origins) ? source.origins.filter((origin) => origin !== "oneyes-canvas://app") : source.origins;
     if (origins !== undefined && (!Array.isArray(origins) || origins.some((origin) => !validOrigin(origin)))) throw new Error("Canvas Agent origins 配置无效");
     const workspace = source.workspace;
     if (workspace !== undefined) {

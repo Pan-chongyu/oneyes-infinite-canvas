@@ -37,7 +37,8 @@ test('corrupt Agent config and an occupied port never replace Codex settings', a
     const server = createServer(socket => socket.destroy());
     const port = await new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
     const options = { directory: dir, agentHome: join(dir, 'agent'), codexHome: join(dir, 'codex'), runtime: resolve('canvas-agent') };
-    const agent = createAgent(options);
+    const errors = [];
+    const agent = createAgent({ ...options, onError: error => errors.push(error) });
     try {
         await mkdir(options.agentHome); await mkdir(options.codexHome);
         const file = join(options.codexHome, 'config.toml'), original = 'model="preserved"\n';
@@ -47,9 +48,10 @@ test('corrupt Agent config and an occupied port never replace Codex settings', a
         await assert.rejects(agent.setup(), /原文件已保留/);
         assert.equal(await readFile(agentFile, 'utf8'), '{broken');
         await writeFile(agentFile, JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}` }));
-        await assert.rejects(agent.setup(), /无法启动/);
+        await assert.rejects(agent.setup(), error => error.code === 'EADDRINUSE' && /端口已被占用/.test(error.message));
         assert.equal(await readFile(file, 'utf8'), original);
         assert.deepEqual(await agent.status(), { configured: false });
+        assert.deepEqual(errors, []); // The rejected startup is reported once by its caller, not again as a runtime exit.
     } finally { agent.stop(); await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -62,10 +64,15 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         assert.deepEqual(await agent.restore(), { configured: false });
         assert.deepEqual(await readdir(dir), []);
         await mkdir(options.agentHome);
-        await writeFile(join(options.agentHome, 'canvas-agent.json'), JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}` }));
+        const workspace = { workspacePath: join(dir, 'workspace'), pinnedThreadIds: ['fixture-pinned'] };
+        await writeFile(join(options.agentHome, 'canvas-agent.json'), JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}`, origins: ['oneyes-canvas://app', 'https://bound.example'], workspace }));
         const [connection, duplicate] = await Promise.all([agent.setup(), agent.setup()]);
         assert.deepEqual(connection, duplicate);
         assert.equal(connection.configured, true);
+        const persisted = JSON.parse(await readFile(join(options.agentHome, 'canvas-agent.json'), 'utf8'));
+        assert.equal(persisted.token, settings.token);
+        assert.deepEqual(persisted.origins, ['https://bound.example']);
+        assert.deepEqual(persisted.workspace, workspace);
         const unauthorized = await fetch(`${connection.url}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
         assert.equal(unauthorized.status, 401);
         const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'x-canvas-agent-token': connection.token };
@@ -97,4 +104,35 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         const started = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, CODEX_HOME: options.codexHome, ONEYES_CANVAS_AGENT_HOME: options.agentHome, ONEYES_DESKTOP_AGENT: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy, ALL_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, all_proxy: proxy, NO_PROXY: '', no_proxy: '' }, timeout: 20_000 });
         assert.ok(started.stdout.includes('CODEX_APP_SERVER_READY'));
     } finally { agent.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('startup config and module errors retain their cause, preserve originals and allow retry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'canvas-agent-startup-'));
+    const port = await new Promise(resolve => { const server = createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
+    const options = { directory: dir, agentHome: join(dir, 'agent'), codexHome: join(dir, 'codex'), runtime: resolve('canvas-agent') };
+    const errors = [];
+    const agent = createAgent({ ...options, onError: error => errors.push(error) });
+    let broken;
+    try {
+        await mkdir(options.agentHome); await mkdir(options.codexHome);
+        const agentFile = join(options.agentHome, 'canvas-agent.json'), codexFile = join(options.codexHome, 'config.toml');
+        const original = JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}`, origins: ['oneyes-canvas://app.evil'] });
+        await writeFile(agentFile, original); await writeFile(codexFile, 'model="preserved"\n');
+        await assert.rejects(agent.setup(), error => error.code === 'ERR_AGENT_CONFIG' && /配置无效/.test(error.message) && !/端口/.test(error.message));
+        assert.equal(await readFile(agentFile, 'utf8'), original);
+        assert.equal(await readFile(codexFile, 'utf8'), 'model="preserved"\n');
+        // Copy only the real bootstrap: missing dynamic imports must be reported through IPC.
+        const runtime = join(dir, 'runtime'); await mkdir(join(runtime, 'dist'), { recursive: true });
+        await writeFile(join(runtime, 'package.json'), '{"type":"module"}');
+        await writeFile(join(runtime, 'dist/index.js'), await readFile(resolve('canvas-agent/dist/index.js')));
+        broken = createAgent({ ...options, runtime, onError: error => errors.push(error) });
+        await assert.rejects(broken.setup(), error => error.code === 'ERR_MODULE_NOT_FOUND' && /依赖缺失/.test(error.message) && !error.message.includes(dir));
+        await writeFile(join(runtime, 'dist/index.js'), 'process.exit(1)');
+        await assert.rejects(broken.setup(), error => error.code === 'ERR_AGENT_EXIT' && /进程意外退出/.test(error.message));
+        await writeFile(agentFile, JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}`, origins: ['oneyes-canvas://app'] }));
+        assert.equal((await agent.setup()).configured, true);
+        assert.equal(toml.parse(await readFile(codexFile, 'utf8')).model, 'preserved');
+        assert.deepEqual(JSON.parse(await readFile(agentFile, 'utf8')).origins, []);
+        assert.deepEqual(errors, []);
+    } finally { agent.stop(); broken?.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true }); }
 });

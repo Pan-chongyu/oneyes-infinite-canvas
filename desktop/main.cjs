@@ -47,9 +47,9 @@ app.whenReady().then(async () => {
         const smokePort = await new Promise(resolve => { const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
         const fs = require('node:fs/promises');
         await fs.mkdir(join(app.getPath('userData'), 'agent'), { recursive: true });
-        await fs.writeFile(join(app.getPath('userData'), 'agent/canvas-agent.json'), JSON.stringify({ url: `http://127.0.0.1:${smokePort}`, token: require('node:crypto').randomBytes(18).toString('hex') }));
+        await fs.writeFile(join(app.getPath('userData'), 'agent/canvas-agent.json'), JSON.stringify({ url: `http://127.0.0.1:${smokePort}`, token: require('node:crypto').randomBytes(18).toString('hex'), origins: ['oneyes-canvas://app'] }));
     }
-    const agent = createAgent({ directory: app.getPath('userData'), onError: error => report('agent', 'request', error), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
+    const agent = createAgent({ directory: app.getPath('userData'), onError: (error, stage) => report('agent', stage, error), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
         ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
     const updater = createUpdater({ currentVersion: app.getVersion(), directory: app.getPath('userData'), target: () => updateTarget(), fetcher: network.fetch,
         enabled: app.isPackaged && !smoke,
@@ -127,7 +127,7 @@ app.whenReady().then(async () => {
         trusted(event);
         if (!['status', 'setup', 'restore'].includes(operation)) throw new Error('不支持的接入操作');
         try { return { data: await agent[operation]() }; }
-        catch (error) { report('agent', 'request', error); return { error: error.message }; }
+        catch (error) { report('agent', operation === 'status' ? 'check' : 'startup', error); return { error: error.message }; }
     });
     ipcMain.handle('update:call', async (event, operation) => {
         trusted(event);
@@ -186,6 +186,8 @@ app.whenReady().then(async () => {
                 await require('./proxy-smoke.cjs').runProxySmoke(window);
                 const connection = await agent.setup();
                 if (!connection.configured || !(await agent.status()).configured) throw new Error('Persistent Codex setup failed');
+                const migrated = JSON.parse(await require('node:fs/promises').readFile(join(app.getPath('userData'), 'agent/canvas-agent.json'), 'utf8'));
+                if (migrated.token !== connection.token || migrated.origins?.length !== 0) throw new Error('Legacy desktop Agent origin migration failed');
                 const mcp = await fetch(`${connection.url}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'x-canvas-agent-token': connection.token }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'desktop-smoke', version: '1' } } }) }).then(r => r.json());
                 if (!mcp.result?.serverInfo) throw new Error('Packaged MCP handshake failed');
                 const runtime = app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent');
