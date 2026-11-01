@@ -5,7 +5,7 @@ import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, Loca
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
-import { getNodeSpec } from "@/constant/canvas";
+import { NodeLibrary } from "./node-library";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,7 @@ export function CanvasToolbar({
     onAddConfig,
     onAddGroup,
     onAddExtensionNode,
+    onAddTemplate,
     onUndo,
     onRedo,
     onUpload,
@@ -47,6 +48,7 @@ export function CanvasToolbar({
     onAddConfig: () => void;
     onAddGroup: () => void;
     onAddExtensionNode: (type: string) => void;
+    onAddTemplate: (id: string) => void;
     onUndo: () => void;
     onRedo: () => void;
     onUpload: () => void;
@@ -183,31 +185,10 @@ export function CanvasToolbar({
 
             {extensionsOpen && extensionDefs.length ? (
                 <div
-                    className="thin-scrollbar pointer-events-auto absolute bottom-[72px] z-30 max-h-[50vh] w-[240px] -translate-x-1/2 overflow-y-auto rounded-xl border p-2 shadow-xl backdrop-blur"
+                    className="pointer-events-auto absolute bottom-[72px] z-30 w-[320px] max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-xl border p-2 shadow-xl backdrop-blur"
                     style={{ left: extPanelX || "50%", background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
                 >
-                    <div className="px-1.5 pb-1.5 text-[11px] font-medium opacity-50">{t("canvas.toolbar.extensions")}</div>
-                    <div className="grid gap-0.5">
-                        {extensionDefs.map((def) => (
-                            <button
-                                key={def.type}
-                                type="button"
-                                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm transition"
-                                style={{ color: theme.toolbar.item }}
-                                onMouseEnter={(event) => (event.currentTarget.style.background = theme.toolbar.itemHover)}
-                                onMouseLeave={(event) => (event.currentTarget.style.background = "transparent")}
-                                onClick={() => {
-                                    onAddExtensionNode(def.type);
-                                    setExtensionsOpen(false);
-                                }}
-                            >
-                                <span className="grid size-7 shrink-0 place-items-center rounded-md text-base" style={{ background: theme.toolbar.itemHover }}>
-                                    {def.icon}
-                                </span>
-                                <span className="min-w-0 flex-1 truncate">{getNodeSpec(def.type).title}</span>
-                            </button>
-                        ))}
-                    </div>
+                    <NodeLibrary extensionsOnly onCreate={onAddExtensionNode} onTemplate={onAddTemplate} onClose={() => setExtensionsOpen(false)} />
                 </div>
             ) : null}
 

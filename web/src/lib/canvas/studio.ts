@@ -1,5 +1,5 @@
 import type { CanvasNodeData } from "@/types/canvas";
-import type { StoryShot, SubtitleCue } from "@/types/studio";
+import type { StoryShot, SubtitleCue, StudioTool } from "@/types/studio";
 
 export const studioTools = {
     storyboard: { title: "分镜脚本", description: "将故事拆成可编辑镜头，再连接生图与视频", action: "生成分镜" },
@@ -10,13 +10,27 @@ export const studioTools = {
     ocr: { title: "OCR 文字提取", description: "使用视觉模型提取图片文字，保留段落", action: "提取文字" },
     export: { title: "批量导出", description: "按顺序打包原始素材、提示词和参数", action: "导出 ZIP" },
 };
+export function studioAccepts(tool: StudioTool, type: string) {
+    if (tool === "storyboard") return type === "text";
+    if (tool === "batch") return ["image", "text", "studio:reference"].includes(type);
+    if (tool === "subtitles") return ["audio", "video"].includes(type);
+    if (tool === "export") return ["image", "video", "audio", "text"].includes(type);
+    return type === "image";
+}
 export function studioSources(node: CanvasNodeData, nodes: CanvasNodeData[], links: { fromNodeId: string; toNodeId: string }[]) {
     const ids = node.metadata?.studio?.sourceIds ?? links.filter((link) => link.toNodeId === node.id).map((link) => link.fromNodeId);
     return [...new Set(ids)].map((id) => {
         const source = nodes.find((item) => item.id === id);
         if (!source) throw Error("所选素材已删除，请重新选择");
+        if (source.id === node.id || (node.type.startsWith("studio:") && !studioAccepts(node.type.slice(7) as StudioTool, source.type))) throw Error(`「${source.title}」类型不匹配，请移除该连线或重新选择素材`);
         return source;
     });
+}
+export function shotsToBatchText(shots: StoryShot[]) {
+    return readShots(JSON.stringify(shots)).map(shot => [shot.picture, shot.camera && `运镜：${shot.camera}`, shot.dialogue && `台词：${shot.dialogue}`].filter(Boolean).join("；").replace(/\s*\r?\n\s*/g, " ")).join("\n");
+}
+export function batchPrompts(node: CanvasNodeData, sources: CanvasNodeData[]) {
+    return [node.metadata?.studio?.text, ...sources.filter(n => n.type === "text").map(n => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 }
 export function readShots(text: string): StoryShot[] {
     let raw;

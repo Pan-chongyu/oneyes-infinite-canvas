@@ -80,6 +80,7 @@ import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-mana
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
+import { createWorkflowOps } from "@/lib/canvas/node-library";
 import {
     CanvasNodeType,
     type CanvasAssistantImage,
@@ -3362,6 +3363,7 @@ function InfiniteCanvasPage() {
                         <NodeCreateMenu
                             position={nodeCreatePosition}
                             scale={viewport.k}
+                            onTemplate={(id) => applyAgentOps(createWorkflowOps(id, nodeCreatePosition))}
                             onCreate={(type) => {
                                 createNode(type, nodeCreatePosition);
                                 setNodeCreatePosition(null);
@@ -3449,6 +3451,7 @@ function InfiniteCanvasPage() {
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
                     onAddExtensionNode={(type) => createNode(type)}
+                    onAddTemplate={(id) => applyAgentOps(createWorkflowOps(id, getCanvasCenter()))}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}

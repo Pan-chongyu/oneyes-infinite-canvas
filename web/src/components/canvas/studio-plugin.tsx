@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Input, InputNumber, Select, Segmented, Slider } from "antd";
-import { BookOpen, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown } from "lucide-react";
+import { BookOpen, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown, Plus, Trash2 } from "lucide-react";
 import { nanoid } from "nanoid";
 import { readFileAsDataUrl } from "@/lib/image-utils";
 import { saveAs } from "file-saver";
-import { studioTools, studioSources, readShots, subtitleSrt } from "@/lib/canvas/studio";
+import { studioTools, studioSources, studioAccepts, readShots, shotsToBatchText, batchPrompts, subtitleSrt } from "@/lib/canvas/studio";
+import { SourceSummary } from "./source-summary";
 import { creatorSourceBlob, processNativeVideo } from "@/services/creator-media";
 import { exportStudioSources } from "@/services/studio-export";
 import { uploadImage, deleteStoredImages } from "@/services/image-storage";
@@ -108,21 +109,13 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
     } catch (error) {
         sourceError = (error as Error).message;
     }
-    const allowed = (node: CanvasNodeData) =>
-        node.id !== ctx.node.id &&
-        (tool === "subtitles"
-            ? ["audio", "video"].includes(node.type)
-            : ["reference", "compare", "ocr"].includes(tool)
-              ? node.type === "image"
-              : tool === "export"
-                ? ["image", "video", "audio", "text"].includes(node.type)
-                : ["image", "text", "studio:reference"].includes(node.type));
+    const allowed = (node: CanvasNodeData) => node.id !== ctx.node.id && studioAccepts(tool, node.type);
     const options = ctx
         .getNodes()
         .filter(allowed)
         .map((node) => ({ value: node.id, label: node.title }));
     const single = tool === "ocr" || tool === "subtitles";
-    const ids = sources.map((n) => n.id);
+    const ids = s.sourceIds ?? ctx.getConnections().filter(link => link.toNodeId === ctx.node.id).map(link => link.fromNodeId);
     const add = (type: string, title: string, metadata: CanvasNodeMetadata, index = 0): CanvasAgentOp[] => {
         const id = nanoid();
         return [
@@ -237,7 +230,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
     const confirmBatch = () =>
         modal.confirm({
             title: "开始批量生成？",
-            content: `本次最多提交 ${s.items ? s.items.filter(item=>item.state==='pending').length : s.text?.split(/\r?\n/).filter((p) => p.trim()).length || 0} 项新图片任务，每次执行 1 项；会调用已配置的模型并产生费用。单项失败暂停，已有任务只检查结果，重启后不自动重发。`,
+            content: `本次最多提交 ${s.items ? s.items.filter(item=>item.state==='pending').length : batchPrompts(ctx.node, sources).length} 项新图片任务，每次执行 1 项；会调用已配置的模型并产生费用。单项失败暂停，已有任务只检查结果，重启后不自动重发。`,
             okText: s.items?.length ? "继续未完成任务" : "确认生成",
             cancelText: "取消",
             onOk: () => {
@@ -245,6 +238,11 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
             },
         });
     const smallButton = "!px-2";
+    const requestAction = () => {
+        const replacing = tool === "storyboard" && s.shots?.length ? "分镜" : tool === "subtitles" && s.cues?.length ? "字幕" : "";
+        if (replacing) modal.confirm({ title: `重新生成${replacing}？`, content: `这会调用模型并替换当前${replacing}，已输出的节点保持不变。`, okText: "重新生成", cancelText: "保留当前内容", onOk: action });
+        else action();
+    };
     return (
         <section className="w-full space-y-3 rounded-xl border p-4" style={{ background: ctx.theme.toolbar.panel, borderColor: ctx.theme.toolbar.border, color: ctx.theme.node.text }} onPointerDown={(e) => e.stopPropagation()} data-studio-panel={tool}>
             <header className="flex items-center justify-between">
@@ -272,14 +270,13 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     {sourceError}
                 </p>
             )}
-            {!single && sources.length > 1 && (
-                <div className="max-h-32 overflow-auto">
+            {sources.length > 0 && (
+                <div className="max-h-40 space-y-1 overflow-auto">
                     {sources.map((node, index) => (
-                        <div key={node.id} className="flex items-center text-xs">
-                            <span className="min-w-0 flex-1 truncate">
-                                {index + 1}. {node.title}
-                            </span>
-                            {[-1, 1].map((offset) => (
+                        <div key={node.id} className="flex items-center gap-1 py-1 text-xs">
+                            <span className="w-4 shrink-0 text-center opacity-60">{index + 1}</span>
+                            <SourceSummary node={node} />
+                            {!single && [-1, 1].map((offset) => (
                                 <Button
                                     key={offset}
                                     type="text"
@@ -294,6 +291,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                                     }}
                                 />
                             ))}
+                            <Button type="text" size="small" aria-label={`移除 ${node.title}`} disabled={disabled} icon={<X size={12} />} onClick={() => patch({ sourceIds: ids.filter(id => id !== node.id) })} />
                         </div>
                     ))}
                 </div>
@@ -344,10 +342,14 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     </p>
                 </div>
             )}
-            {tool === "storyboard" && s.shots && (
+            {tool === "storyboard" && (
                 <div className="max-h-80 space-y-3 overflow-auto">
-                    {s.shots.map((shot, index) => (
+                    {(s.shots || []).map((shot, index) => (
                         <div key={index} className="space-y-2 border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
+                            <div className="flex items-center gap-1 text-xs"><span className="flex-1">镜头 {index + 1}</span>
+                                {[-1, 1].map(offset => <Button key={offset} type="text" size="small" aria-label={`镜头${index + 1}${offset < 0 ? "上移" : "下移"}`} disabled={disabled || index + offset < 0 || index + offset >= (s.shots?.length || 0)} icon={offset < 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />} onClick={() => { const shots = [...s.shots!]; [shots[index], shots[index + offset]] = [shots[index + offset], shots[index]]; patch({ shots }); }} />)}
+                                <Button type="text" size="small" aria-label={`删除镜头${index + 1}`} icon={<Trash2 size={12} />} disabled={disabled} onClick={() => patch({ shots: s.shots!.filter((_, i) => i !== index) })} />
+                            </div>
                             {(["title", "picture", "dialogue", "camera"] as const).map((key) => (
                                 <label key={key} className="block space-y-1 text-xs">
                                     <span>{{ title: "镜头标题", picture: "画面提示词", dialogue: "台词", camera: "运镜" }[key]}</span>
@@ -365,9 +367,10 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                             <span className="ml-2 text-xs">秒</span>
                         </div>
                     ))}
+                    <Button type="text" size="small" disabled={disabled} icon={<Plus size={13} />} onClick={() => patch({ shots: [...(s.shots || []), { title: `镜头 ${(s.shots?.length || 0) + 1}`, picture: "", dialogue: "", camera: "", seconds: 5 }] })}>添加镜头</Button>
                     <Button
                         type="text"
-                        disabled={disabled}
+                        disabled={disabled || !s.shots?.length}
                         onClick={() => {
                             try {
                                 readShots(JSON.stringify(s.shots));
@@ -397,6 +400,14 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     >
                         输出镜头节点（不自动生成）
                     </Button>
+                    <Button type="text" size="small" icon={<Rows3 size={13} />} disabled={disabled || !s.shots?.length} onClick={() => {
+                        try {
+                            const text = shotsToBatchText(s.shots!);
+                            const id = nanoid();
+                            ctx.applyOps([{ type: "add_node", id, nodeType: "studio:batch", title: "分镜批量任务", position: { x: ctx.node.position.x + ctx.node.width + 100, y: ctx.node.position.y }, metadata: { studio: { text, sourceIds: [] }, status: "idle" } }, { type: "select_nodes", ids: [id] }]);
+                        } catch (error) { ctx.updateMetadata({ errorDetails: (error as Error).message }); }
+                    }}>转为批量任务</Button>
+                    <p className="text-xs" style={{ color: ctx.theme.node.muted }}>可手动编排，也可用模型拆分。转为批量后需检查提示词并确认生成。</p>
                 </div>
             )}
             {tool === "compare" && (
@@ -450,7 +461,8 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                         <>
                             <div className="max-h-72 space-y-2 overflow-auto">
                                 {s.cues.map((cue, index) => (
-                                    <div key={index} className="space-y-1">
+                                    <div key={index} className="space-y-1 border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
+                                        <div className="flex items-center justify-between text-xs"><span>字幕 {index + 1}</span><Button type="text" size="small" aria-label={`删除字幕${index + 1}`} disabled={disabled} icon={<Trash2 size={12} />} onClick={() => patch({ cues: s.cues!.filter((_, i) => i !== index) })} /></div>
                                         <div className="flex gap-2">
                                             {(["start", "end"] as const).map((key) => (
                                                 <InputNumber
@@ -472,6 +484,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                             <Button
                                 type="text"
                                 size="small"
+                                disabled={disabled || !s.cues.length}
                                 onClick={() =>
                                     void run(async (_, check) => {
                                         const text = subtitleSrt(s.cues!);
@@ -485,7 +498,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                             <Button
                                 type="text"
                                 size="small"
-                                disabled={disabled || sources[0]?.type !== "video"}
+                                disabled={disabled || sources.length !== 1 || sources[0]?.type !== "video" || !s.cues.length}
                                 onClick={() =>
                                     void run(async (signal, check) => {
                                         const artifacts = await processNativeVideo("subtitles", sources, { srt: subtitleSrt(s.cues!) }, signal, () => {});
@@ -533,7 +546,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                         停止等待
                     </Button>
                 ) : (
-                    <Button className={smallButton} type="text" size="small" icon={<Play size={14} />} disabled={tool === "batch" && !ctx.batch} onClick={tool === "batch" ? () => confirmBatch() : action}>
+                    <Button className={smallButton} type="text" size="small" icon={<Play size={14} />} disabled={Boolean(sourceError) || (tool === "batch" && !ctx.batch)} onClick={tool === "batch" ? () => confirmBatch() : requestAction}>
                         {tool === "batch" && s.items ? "继续批量任务" : info.action}
                     </Button>
                 )}

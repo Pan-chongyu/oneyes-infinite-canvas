@@ -1,11 +1,10 @@
 import { useEffect, useRef } from "react";
-import { ImageIcon, List, Music2, Settings2, Video, X } from "lucide-react";
+import { ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
-import { getNodeSpec } from "@/constant/canvas";
+import { NodeLibrary } from "./node-library";
 import { CanvasNodeType, type ConnectionHandle, type Position } from "@/types/canvas";
 
 export type PendingConnectionCreate = {
@@ -78,12 +77,9 @@ export function ConnectionCreateOption({ theme, icon, title, description, onClic
     );
 }
 
-export function NodeCreateMenu({ position, scale = 1, onCreate, onClose }: { position: Position; scale?: number; onCreate: (type: string) => void; onClose: () => void }) {
+export function NodeCreateMenu({ position, scale = 1, onCreate, onTemplate, onClose }: { position: Position; scale?: number; onCreate: (type: string) => void; onTemplate?: (id: string) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const { t } = useTranslation();
-    useNodeRegistryVersion();
     const menuRef = useRef<HTMLDivElement>(null);
-    const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false);
     // Close automatically when clicking outside the menu.
     useEffect(() => {
         const handlePointerDown = (event: PointerEvent) => {
@@ -95,24 +91,12 @@ export function NodeCreateMenu({ position, scale = 1, onCreate, onClose }: { pos
     return (
         <div
             ref={menuRef}
-            className="absolute z-[120] max-h-[70vh] w-[240px] overflow-y-auto rounded-2xl border p-2 shadow-2xl backdrop-blur thin-scrollbar"
+            className="absolute z-[120] w-[320px] rounded-xl border p-2 shadow-2xl backdrop-blur"
             data-canvas-no-zoom
             style={{ left: position.x, top: position.y, transform: `scale(${1 / scale})`, transformOrigin: "top left", background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             onPointerDown={(event) => event.stopPropagation()}
         >
-            <div className="mb-1.5 flex items-center justify-between px-1">
-                <span className="text-sm font-medium" style={{ color: theme.node.muted }}>
-                    {t("canvas.createMenu.select")}
-                </span>
-                <button type="button" className="grid size-7 place-items-center rounded-lg opacity-55 transition hover:opacity-100" onClick={onClose} aria-label={t("canvas.createMenu.close")}>
-                    <X className="size-4" />
-                </button>
-            </div>
-            <div className="grid gap-0.5">
-                {definitions.map((def) => (
-                    <ConnectionCreateOption key={def.type} theme={theme} icon={def.icon} title={getNodeSpec(def.type).title} description={def.description} onClick={() => onCreate(def.type)} />
-                ))}
-            </div>
+            <NodeLibrary onCreate={onCreate} onTemplate={onTemplate} onClose={onClose} />
         </div>
     );
 }

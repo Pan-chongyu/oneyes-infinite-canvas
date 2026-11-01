@@ -7,6 +7,9 @@ import "@/i18n";
 import "@/styles/globals.css";
 import { studioPlugin } from "@/components/canvas/studio-plugin";
 import { creatorToolsPlugin } from "@/components/canvas/creator-tools-plugin";
+import { NodeLibrary } from "@/components/canvas/node-library";
+import { createWorkflowOps } from "@/lib/canvas/node-library";
+import { useThemeStore } from "@/stores/use-theme-store";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { registerNodeDefinitions } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
@@ -25,6 +28,7 @@ import type { CanvasPluginHost, CanvasPluginAi } from "@/types/canvas-plugin";
 registerBuiltinNodes();
 registerNodeDefinitions(studioPlugin.nodes, "studio");
 registerNodeDefinitions(creatorToolsPlugin.nodes, "creator-tools");
+useThemeStore.setState({ theme: "light" });
 const seeds: CanvasNodeData[] = [];
 for (const [index, color] of ["red", "blue"].entries()) {
     const canvas = new OffscreenCanvas(9 + index, 7 + index),
@@ -38,6 +42,7 @@ const restored = await localforage.getItem<{ nodes: CanvasNodeData[]; connection
 function Fixture() {
     const ref = useRef(restored || { nodes: seeds, connections: [] });
     const [, render] = useState(0);
+    const [library, setLibrary] = useState(false);
     const [dark, setDark] = useState(false),
         [project, setProject] = useState("A");
     const settings = useRef({ failSave: false, failGenerate: false, hold: false, release: () => {} });
@@ -130,6 +135,8 @@ function Fixture() {
                 });
             },
             patch: (value: any) => updateMetadata("tool", value),
+            library: () => setLibrary(true),
+            textSource: (text: string) => applyOps([{ type: "add_node", id: "words", nodeType: "text", metadata: { content: text } }]),
             batch: () => batch.start("tool").catch(() => {}),
             pause: () => batch.pause("tool"),
             active: () => batch.active("tool"),
@@ -139,6 +146,7 @@ function Fixture() {
             release: () => settings.current.release(),
             theme: (value: boolean) => {
                 document.documentElement.classList.toggle("dark", value);
+                useThemeStore.setState({ theme: value ? "dark" : "light" });
                 setDark(value);
             },
             switch: () => flushSync(() => setProject("B")),
@@ -169,6 +177,7 @@ function Fixture() {
         <ConfigProvider theme={getAntThemeConfig(dark)}>
             <App>
                 <main style={{ background: canvasThemes[dark ? "dark" : "light"].canvas.background, minHeight: "100vh", padding: 20 }}>
+                    {library && <div style={{ width: 320, background: canvasThemes[dark ? "dark" : "light"].toolbar.panel, color: canvasThemes[dark ? "dark" : "light"].node.text, padding: 8 }}><NodeLibrary onCreate={nodeType => applyOps([{ type: "add_node", nodeType }])} onTemplate={id => applyOps(createWorkflowOps(id, { x: 100, y: 100 }))} onClose={() => setLibrary(false)} /></div>}
                     <div style={{ width: 320, height: 190 }}>{ctx && Content && <Content ctx={ctx} />}</div>
                     <div style={{ maxWidth: 600 }}>{ctx && Panel && <Panel key={`${project}:${node!.type}`} ctx={ctx} onClose={() => {}} />}</div>
                 </main>

@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import type { BatchItem } from "@/types/studio";
-import { studioSources } from "@/lib/canvas/studio";
+import { studioSources, batchPrompts } from "@/lib/canvas/studio";
 
 type Params = {
     projectId: string;
@@ -63,13 +63,11 @@ export function useBatchProcessing(params: Params) {
             };
             try {
                 if (!items.length) {
-                    const prompts = (studio.text || "")
-                        .split(/\r?\n/)
-                        .map((p) => p.trim())
-                        .filter(Boolean);
+                    const inputs = studioSources(node, snapshot.nodes, snapshot.connections);
+                    const prompts = batchPrompts(node, inputs);
                     if (!prompts.length) throw Error("请每行填写一条提示词");
                     items = prompts.map((prompt) => ({ id: nanoid(), prompt, state: "pending" }));
-                    const sources = studioSources(node, snapshot.nodes, snapshot.connections).map((n) => n.id);
+                    const sources = inputs.filter(n => n.type !== "text").map((n) => n.id);
                     const ops: CanvasAgentOp[] = items.flatMap((item, index) => [
                         {
                             type: "add_node",

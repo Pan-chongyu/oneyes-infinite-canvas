@@ -30,7 +30,7 @@ app
           backgroundThrottling: false,
         },
       }),
-      js = (code) => win.webContents.executeJavaScript(code);
+      js = (code) => win.webContents.executeJavaScript(code).catch(error => { throw new Error("Studio evaluate failed: " + code, {cause:error}); });
     const wait = async (code) => {
       const until = Date.now() + 20000;
       while (!(await js(code))) {
@@ -43,6 +43,13 @@ app
       await js(
         `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(text)}).click()`,
       );
+    };
+    const screenshot = async (suffix = "") => {
+      if (!process.env.CANVAS_STUDIO_TEST_SCREENSHOT) return;
+      win.showInactive();
+      await js('Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))).then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+      await writeFile(process.env.CANVAS_STUDIO_TEST_SCREENSHOT.replace(/\.png$/,suffix+".png"),(await win.webContents.capturePage()).toPNG());
+      win.hide();
     };
     try {
       await win.loadURL(process.argv[2]);
@@ -71,10 +78,51 @@ app
         app.exit(0);
         return;
       }
+      await js('studioTest.library()');
+      await wait('document.querySelector("[aria-label=搜索节点或流程]")===document.activeElement');
+      await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await screenshot("-library-light");
+      await win.webContents.insertText("OCR");
+      await wait('document.querySelector("[aria-label=节点列表]").querySelectorAll("button").length===1');
+      win.webContents.sendInputEvent({type:"keyDown",keyCode:"Return"});
+      win.webContents.sendInputEvent({type:"keyUp",keyCode:"Return"});
+      await wait('!document.querySelector("[data-node-library]")&&studioTest.state().nodes.some(n=>n.type==="studio:ocr")');
+      await js('studioTest.library()');
+      await wait('document.querySelector("[data-node-library]")');
+      await click("常用流程");
+      await wait('document.querySelector("[aria-label=常用流程列表]").querySelectorAll("button").length===4');
+      await js('document.querySelector("[aria-label=常用流程列表]").querySelector("button").click()');
+      await wait('!document.querySelector("[data-node-library]")');
+      assert.equal(await js('studioTest.state().connections.length'),2);
+      assert.equal(await js('studioTest.calls().length+studioTest.requests().length'),0,"templates must never submit model requests");
+      await js('studioTest.tool("storyboard",[],{shots:[{title:"手工镜头",picture:"街道",dialogue:"",camera:"",seconds:5},{title:"第二镜头",picture:"晴天",dialogue:"",camera:"",seconds:3}]})');
+      await wait('document.querySelector("[data-studio-panel=storyboard]")');
+      await js('document.querySelector("[aria-label=镜头2上移]").click()');
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.shots[0].title'),"第二镜头");
+      await js('document.querySelector("[aria-label=删除镜头2]").click()');
+      await click("添加镜头");
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.shots.length===2');
+      await js('document.querySelector("[aria-label=删除镜头2]").click()');
+      await click("转为批量任务");
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.type==="studio:batch").metadata.studio.text'),"晴天");
+      assert.equal(await js('studioTest.calls().length'),0,"converting storyboard is a draft, not paid execution");
+      await click("生成分镜");
+      await wait('document.body.textContent.includes("保留当前内容")');
+      await click("保留当前内容");
+      assert.equal(await js('studioTest.requests().length'),0,"cancel replacement preserves the manual storyboard without a model request");
+      await js('studioTest.tool("subtitles",[],{cues:[{start:0,end:1,text:"手工字幕"}]})');
+      await wait('document.querySelector("[data-studio-panel=subtitles]")');
+      await js('document.querySelector("[aria-label=删除字幕1]").click()');
+      await click("添加字幕");
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.cues.length'),1);
+      await js('studioTest.tool("ocr",["tool"])');
+      await wait('document.querySelector("[data-studio-panel=ocr]")');
+      assert.match(await js('document.body.textContent'),/类型不匹配/);
+      assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="提取文字").disabled'),true);
       await js('studioTest.tool("storyboard",[],{text:"雨夜跑车"})');
       await wait('document.querySelector("[data-studio-panel=storyboard]")');
       await click("生成分镜");
-      await wait('document.body.textContent.includes("输出镜头节点")');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.shots?.length===1');
       await click("输出镜头节点（不自动生成）");
       assert.equal(
         await js('studioTest.state().nodes.filter(n=>n.type==="video").length'),
@@ -110,7 +158,7 @@ app
         await js("studioTest.image()").then((x) => [x.width, x.height]),
         [10, 8],
       );
-      if(process.env.CANVAS_STUDIO_TEST_SCREENSHOT)await writeFile(process.env.CANVAS_STUDIO_TEST_SCREENSHOT,(await win.webContents.capturePage()).toPNG());
+      await screenshot();
       const exported = await js("studioTest.export()");
       assert.equal(exported.identical, true);
       assert.equal(exported.names.length, 2);
@@ -118,6 +166,13 @@ app
       assert.doesNotMatch(exported.params, /fixture-private-secret|apiKey/);
       await js("studioTest.theme(true)");
       await wait('document.documentElement.classList.contains("dark")');
+      await js('studioTest.library()');
+      await wait('document.querySelector("[aria-label=搜索节点或流程]")===document.activeElement');
+      await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await screenshot("-library-dark");
+      win.webContents.sendInputEvent({type:"keyDown",keyCode:"Escape"});
+      win.webContents.sendInputEvent({type:"keyUp",keyCode:"Escape"});
+      await wait('!document.querySelector("[data-node-library]")');
       await js(
         'studioTest.tool("creator-tools:board",["source0","source1"],{columns:2,gap:2,labels:false})',
       );
@@ -142,7 +197,7 @@ app
         await js("studioTest.image()").then((x) => [x.width, x.height]),
         [9, 7],
       );
-      await js('studioTest.tool("batch",[],{text:"第一张\\n第二张"})');
+      await js('studioTest.tool("batch",["words"],{});studioTest.textSource("第一张\\n第二张")');
       await wait('document.querySelector("[data-studio-panel=batch]")');
       await click("开始批量生成");
       await wait('document.body.textContent.includes("确认生成")');
