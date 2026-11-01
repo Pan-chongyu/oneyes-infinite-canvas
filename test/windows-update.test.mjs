@@ -49,7 +49,11 @@ test('Windows helper waits for its parent, installs real NSIS in Unicode paths, 
             await wait(() => exists(join(folder, 'handoff')));
             assert.equal(await exists(join(destination, 'opened.txt')), false, 'installer must wait for the running app to exit');
             await writeFile(join(folder, 'exit'), 'exit'); assert.equal(await finished, 0);
-            await wait(() => exists(join(destination, 'opened.txt')));
+            // WriteAllText creates the file before filling it. Existence alone
+            // can observe an empty file on ARM64 before the relaunch args land.
+            await wait(() => scenario === 'success'
+                ? readFile(join(destination, 'opened.txt'), 'utf8').then(text => text === '--oneyes-updated', () => false)
+                : exists(join(destination, 'opened.txt')));
             if (scenario === 'success') {
                 assert.equal(await readFile(join(folder, 'install-error.txt'), 'utf8').catch(() => ''), '', 'successful install must not use failure fallback');
                 assert.equal(await readFile(join(destination, 'opened.txt'), 'utf8'), '--oneyes-updated');
