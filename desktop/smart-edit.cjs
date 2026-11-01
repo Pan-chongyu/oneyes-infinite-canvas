@@ -111,7 +111,7 @@ async function processSmartEdit(job, { run, input, output, notify, binaries }) {
         // Pairwise composition avoids opening every source simultaneously for long timelines.
         let previous = join(job.path, 'clip-0.mp4'), elapsed = clips[0].end - clips[0].start;
         for (let i = 1; i < clips.length; i++) {
-            const filters = [`[0:v]settb=AVTB,setpts=PTS-STARTPTS[v0];[1:v]settb=AVTB,setpts=PTS-STARTPTS[v1];[v0][v1]xfade=transition=fade:duration=${options.transition}:offset=${elapsed - options.transition}[v]`];
+            const filters = [`[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=${fps}[v0];[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=${fps}[v1];[v0][v1]xfade=transition=fade:duration=${options.transition}:offset=${elapsed - options.transition}[v]`];
             for (let n = 0; n < totalTracks; n++) filters.push(`[0:a:${n}][1:a:${n}]acrossfade=d=${options.transition}[a${n}]`);
             const next = i === clips.length - 1 ? assembly : join(job.path, `transition-${i}.mp4`);
             const args = ['-nostdin', '-y', '-i', previous, '-i', join(job.path, `clip-${i}.mp4`), '-filter_complex', filters.join(';'), '-map', '[v]'];
@@ -138,8 +138,12 @@ async function processSmartEdit(job, { run, input, output, notify, binaries }) {
         }
         if (options.srt) { await writeFile(join(job.path, 'edit.srt'), options.srt); videoFilters.push("subtitles=filename=edit.srt:fontsdir=fonts:force_style='Fontname=Noto Sans CJK SC'"); }
         if (options.title) {
-            await writeFile(join(job.path, 'title.txt'), options.title, 'utf8');
-            videoFilters.push(`drawtext=fontfile=fonts/font.otf:textfile=title.txt:expansion=none:fontsize=${Math.max(1, Math.round(first.height / 24))}:fontcolor=white:borderw=1:bordercolor=black:x=(w-tw)/2:y=h/18`);
+            // All bundled builds include libass; some omit drawtext. SRT's decoder escapes ASS syntax.
+            const ms = Math.ceil(duration * 1000), pad = (n, length = 2) => String(n).padStart(length, '0');
+            const end = `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+            const text = options.title.replace(/[\r\n]+/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            await writeFile(join(job.path, 'title.srt'), `1\n00:00:00,000 --> ${end}\n${text}\n`, 'utf8');
+            videoFilters.push("subtitles=filename=title.srt:fontsdir=fonts:force_style='Fontname=Noto Sans CJK SC,Fontsize=12,Alignment=8,MarginV=16,Outline=1,Shadow=0'");
         }
         if (videoFilters.length) filters.push(`[0:v]${videoFilters.join(',')}[v]`);
         if (filters.length) args.push('-filter_complex', filters.join(';'));
