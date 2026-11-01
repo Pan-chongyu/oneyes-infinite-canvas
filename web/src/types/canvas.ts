@@ -47,6 +47,7 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    studio?: import('./studio').StudioSettings;
     directorScene?: import("./director").DirectorScene;
     creatorSettings?: import("./creator-tools").CreatorSettings;
     imageTaskId?: string;

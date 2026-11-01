@@ -5,6 +5,7 @@ import { createCanvasNode, imageMetadata, videoMetadata, audioMetadata } from "@
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { creatorSourceBlob, composeImages, processNativeVideo } from "@/services/creator-media";
 import { processLocalAi } from "@/services/creator-ai";
+import { studioImages } from '@/services/studio-images';
 import { uploadImage, deleteStoredImages } from "@/services/image-storage";
 import { uploadMediaFile, deleteStoredMedia } from "@/services/file-storage";
 import { reportError } from "@/services/diagnostics";
@@ -71,9 +72,12 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
             task.promise = (async () => {
                 try {
                     const sources = creatorSources(node, snapshot.nodes, snapshot.connections);
-                    task.sources = sources.map(source => source.id);
-                    const results = tool === "compose" ? await composeImages(sources, settings, signal)
-                        : tool === "analyze" || tool === "concat" ? await processNativeVideo(tool, sources, settings, signal, progress)
+                    task.sources = [...sources.map(source => source.id), ...(settings.matchId ? [settings.matchId] : [])];
+                    const reference=settings.matchId?snapshot.nodes.find(node=>node.id===settings.matchId):undefined;
+                    if(settings.matchId&&!reference)throw Error('调色参考图已删除，请重新选择');
+                    const results = tool === 'board'||tool==='color' ? await studioImages(tool,sources,settings,signal,reference)
+                        : tool === "compose" ? await composeImages(sources, settings, signal)
+                        : tool === "analyze" || tool === "concat" || tool==='mix' ? await processNativeVideo(tool, sources, settings, signal, progress)
                         : await processLocalAi(tool, await creatorSourceBlob(sources[0], signal), signal, progress);
                     check();
                     stage = "save";
@@ -108,7 +112,7 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
                     update({ status: "success", creatorSettings: { ...settings, resultCount: results.length } });
                 } catch (error) {
                     update({ status: signal.aborted ? "idle" : "error", errorDetails: signal.aborted ? undefined : error instanceof Error ? error.message : "本地处理失败，请重试" });
-                    if (!signal.aborted) { reportError(tool === "concat" || tool === "analyze" ? "video" : "image", stage, error); throw error; }
+                    if (!signal.aborted) { reportError(tool === "concat" || tool === "analyze" || tool === 'mix' ? "video" : "image", stage, error); throw error; }
                 } finally {
                     if (!committed) await Promise.allSettled([deleteStoredImages(imageKeys), deleteStoredMedia(mediaKeys)]);
                     if (jobs.current.get(id) === task) {

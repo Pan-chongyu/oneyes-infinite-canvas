@@ -871,6 +871,9 @@ function InfiniteCanvasPage() {
     });
 
     const { pluginHost, renderPluginPanel, buildNodeToolbarItems } = usePluginHost({
+        readNodes:()=>nodesRef.current,
+        flush:async()=>{updateProject(projectId,{nodes:nodesRef.current,connections:connectionsRef.current});await flushCanvasStorage();},
+        runGeneration:async(id,prompt)=>{if(!generateNodeRef.current)throw Error('生成服务尚未就绪');await generateNodeRef.current(id,'image',prompt);flushSync(()=>setNodes(value=>{nodesRef.current=value;return value;}));},
         projectId,
         effectiveConfig,
         isAiConfigReady,

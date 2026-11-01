@@ -14,12 +14,13 @@ export type GenerateImageOptions = GenerateOptions & { count?: number; size?: st
 export type GenerateImageResult = { images: string[] };
 export type GenerateVideoOptions = GenerateOptions & { size?: string; seconds?: string };
 export type GenerateVideoResult = { url: string; mimeType: string; width?: number; height?: number; durationMs?: number };
-export type GenerateTextOptions = { signal?: AbortSignal; model?: string; system?: string; onDelta?: (text: string) => void };
+export type GenerateTextOptions = { signal?: AbortSignal; model?: string; system?: string; references?: string[]; onDelta?: (text: string) => void };
 export type GenerateTextResult = { text: string };
 export type PluginModelCapability = "image" | "video" | "text" | "audio";
 export type ModelOption = { value: string; label: string };
 
 export type CanvasPluginAi = {
+    transcribe?: (blob: Blob, model: string, signal?: AbortSignal) => Promise<import('./studio').SubtitleCue[]>;
     generateImage: (prompt: string, options?: GenerateImageOptions) => Promise<GenerateImageResult>;
     generateVideo: (prompt: string, options?: GenerateVideoOptions) => Promise<GenerateVideoResult>;
     generateText: (prompt: string, options?: GenerateTextOptions) => Promise<GenerateTextResult>;
@@ -40,6 +41,7 @@ export type CanvasNodeToolbarItem = {
 
 // Context injected while rendering each node; the primary interface between plugins and the canvas.
 export type CanvasNodeContext = {
+    batch?: { start(id: string): Promise<void>; pause(id: string): void; active(id: string): boolean };
     projectId?: string;
     processing?: import("./creator-tools").CreatorProcessor;
     node: CanvasNodeData;
@@ -77,6 +79,7 @@ export type PluginStorage = {
 
 // Node-independent host capabilities constructed by the canvas page and injected into the render chain.
 export type CanvasPluginHost = {
+    batch?: CanvasNodeContext['batch'];
     projectId?: string;
     processing?: import("./creator-tools").CreatorProcessor;
     getNode: (id: string) => CanvasNodeData | null;

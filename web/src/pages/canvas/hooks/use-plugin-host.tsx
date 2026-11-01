@@ -11,6 +11,8 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { ensurePluginsLoaded } from "@/lib/canvas/plugin-loader";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCreatorProcessing } from "./use-creator-processing";
+import { transcribeAudio } from '@/services/api/transcription';
+import { useBatchProcessing } from './use-batch-processing';
 import type { CanvasNodeToolbarItem, CanvasPluginAi, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
@@ -19,6 +21,9 @@ import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/type
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
 type PluginHostParams = {
+    readNodes:()=>CanvasNodeData[];
+    flush: () => Promise<void>;
+    runGeneration: (nodeId:string,prompt:string)=>Promise<void>;
     projectId: string;
     effectiveConfig: AiConfig;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
@@ -41,6 +46,7 @@ export function usePluginHost(params: PluginHostParams) {
     const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodes, connections, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
     const processing = useCreatorProcessing({ projectId: params.projectId, nodes, connections, applyOps: applyAgentOps,
         updateMetadata: (id, patch) => setNodes(previous => previous.map(node => node.id === id ? { ...node, metadata: { ...node.metadata, ...patch } } : node)) });
+    const batch=useBatchProcessing(params);
 
     // Host capabilities available to plugin nodes; methods receive nodeId and are not bound to a specific node.
     const pluginAi = useMemo<CanvasPluginAi>(() => {
@@ -54,6 +60,7 @@ export function usePluginHost(params: PluginHostParams) {
             }
         };
         return {
+            transcribe:(blob,model,signal)=>transcribeAudio(effectiveConfig,blob,model,signal),
             generateImage: async (prompt, options) => {
                 const config = { ...buildGenerationConfig(effectiveConfig, undefined, "image"), count: String(options?.count || 1), ...(options?.model ? { model: options.model } : {}), ...(options?.size ? { size: options.size } : {}) };
                 ensureReady(config);
@@ -83,7 +90,7 @@ export function usePluginHost(params: PluginHostParams) {
             generateText: async (prompt, options) => {
                 const config = { ...buildGenerationConfig(effectiveConfig, undefined, "text"), ...(options?.model ? { model: options.model } : {}) };
                 ensureReady(config);
-                const messages: AiTextMessage[] = [...(options?.system ? [{ role: "system" as const, content: options.system }] : []), { role: "user" as const, content: prompt }];
+                const messages: AiTextMessage[] = [...(options?.system ? [{ role: "system" as const, content: options.system }] : []), { role: "user" as const, content: options?.references?.length ? [{type:'text',text:prompt},...options.references.map(url=>({type:'image_url' as const,image_url:{url}}))] : prompt }];
                 const text = await requestImageQuestion(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
                 return { text };
             },
@@ -114,10 +121,11 @@ export function usePluginHost(params: PluginHostParams) {
             applyOps: (ops) => applyAgentOps(ops),
             ai: pluginAi,
             processing,
+            batch,
             openPanel: (nodeId) => setDialogNodeId(nodeId),
             closePanel: () => setDialogNodeId(null),
         }),
-        [params.projectId, applyAgentOps, pluginAi, nodes, connections, processing],
+        [params.projectId, applyAgentOps, pluginAi, nodes, connections, processing,batch],
     );
 
     const renderPluginPanel = useCallback(

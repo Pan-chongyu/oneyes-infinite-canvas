@@ -1,6 +1,9 @@
-export type CreatorTool = "analyze" | "concat" | "cutout" | "compose" | "superResolution";
+export type CreatorTool = "analyze" | "concat" | "cutout" | "compose" | "superResolution" | "board" | "color" | "mix";
 export type CreatorLayer = { x?: number; y?: number; scale?: number; opacity?: number; blend?: "source-over" | "multiply" | "screen" };
 export type CreatorSettings = {
+    columns?: number; gap?: number; labels?: boolean;
+    exposure?: number; contrast?: number; temperature?: number; matchId?: string;
+    volume?: number; originalVolume?: number; fadeIn?: number; fadeOut?: number;
     sourceIds?: string[];
     threshold?: number;
     clips?: boolean;

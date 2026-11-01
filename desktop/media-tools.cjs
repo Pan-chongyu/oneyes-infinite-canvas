@@ -1,7 +1,7 @@
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { join, basename } = require('node:path');
-const { mkdir, rm, readdir, writeFile, stat } = require('node:fs/promises');
+const { mkdir, rm, readdir, writeFile, stat, copyFile } = require('node:fs/promises');
 const { createWriteStream, createReadStream } = require('node:fs');
 const { Readable } = require('node:stream');
 const { pipeline, finished } = require('node:stream/promises');
@@ -17,11 +17,11 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
     const get = id => { const job = jobs.get(id); if (!job) throw new Error('处理任务已结束，请重新开始'); return job; };
     const run = (job, name, args, line = () => {}) => new Promise((resolve, reject) => {
         job.controller.signal.throwIfAborted();
-        const formats = ['-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpeg,mpegts,ogg,flv,asf,rm'];
+        const formats = ['-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpeg,mpegts,ogg,flv,asf,rm,wav,mp3,flac,aac'];
         // Uploaded media must be self-contained, never a playlist reading paths or network URLs.
         if (name === 'ffprobe') args = [...formats, ...args];
-        else if (!args.includes('concat')) { args = [...args]; args.splice(args.indexOf('-i'), 0, ...formats); }
-        const child = spawn(binary(name), args, { shell: false, windowsHide: true, signal: job.controller.signal });
+        else if (!args.includes('concat')) { args = args.flatMap(arg=>arg==='-i'?[...formats,arg]:[arg]); }
+        const child = spawn(binary(name), args, { cwd:job.path, shell: false, windowsHide: true, signal: job.controller.signal });
         let stdout = '', pending = '';
         child.stdout.on('data', chunk => { stdout += chunk; });
         child.stderr.on('data', chunk => { pending += chunk; const lines = pending.split(/\r?\n/); pending = lines.pop(); lines.forEach(line); });
@@ -55,6 +55,7 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
     async function processJob(job) {
         await Promise.all(job.uploads.values());
         if (job.received.size !== job.count) throw new Error('请等待全部素材上传完成');
+        if(['extract','mix','subtitles'].includes(job.operation))return processStudioMedia(job);
         const metadata = [];
         for (let index = 0; index < job.count; index++) metadata.push(await probe(job, input(job, index)));
         const results = [];
@@ -113,9 +114,43 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
         notify(job, '处理完成', 100);
         return results;
     }
+    async function processStudioMedia(job){
+        notify(job,'正在处理音视频');
+        const audioInfo=async(index)=>{const info=JSON.parse(await run(job,'ffprobe',['-v','error','-show_streams','-show_format','-of','json',input(job,index)]));if(!info.streams.some(s=>s.codec_type==='audio'))throw Error('所选素材没有音轨');return info;};
+        if(job.operation==='extract'){
+            await audioInfo(0);
+            await run(job,'ffmpeg',['-nostdin','-y','-i',input(job,0),'-map','0:a:0','-vn','-c:a','pcm_s16le',join(job.path,'speech.wav')]);
+            return [await output(job,'speech.wav','audio')];
+        }
+        const meta=await probe(job,input(job,0));
+        if(job.operation==='subtitles'){
+            await mkdir(join(job.path,'fonts'));
+            await copyFile(join(binaries,'NotoSansCJKsc-Regular.otf'),join(job.path,'fonts','NotoSansCJKsc-Regular.otf'));
+            await writeFile(join(job.path,'captions.srt'),job.options.srt,'utf8');
+            await run(job,'ffmpeg',['-nostdin','-y','-i',input(job,0),'-map','0:v:0','-map','0:a?','-vf',"subtitles=filename=captions.srt:fontsdir=fonts:force_style='Fontname=Noto Sans CJK SC'",'-c:v','libx264','-crf','18','-c:a','copy','-movflags','+faststart',join(job.path,'subtitled.mp4')]);
+            const actual=await probe(job,join(job.path,'subtitled.mp4'));
+            if(actual.width!==meta.width||actual.height!==meta.height||actual.audios.length!==meta.audios.length)throw Error('字幕结果尺寸或音轨不符，已停止保存');
+            return [await output(job,'subtitled.mp4','video')];
+        }
+        const args=['-nostdin','-y','-i',input(job,0)],filters=[],labels=[];
+        // Preserve every original audio track by mixing the soundtrack into each.
+        for(let i=1;i<job.count;i++){await audioInfo(i);args.push('-i',input(job,i));const fadeOut=job.options.fadeOut;filters.push(`[${i}:a:0]volume=${job.options.volume},apad,atrim=duration=${meta.duration},afade=t=in:st=0:d=${job.options.fadeIn},afade=t=out:st=${Math.max(0,meta.duration-fadeOut)}:d=${fadeOut}[music${i}]`);labels.push(`[music${i}]`);}
+        if(!labels.length)throw Error('请添加至少一份旁白或配乐');
+        filters.push(`${labels.join('')}amix=inputs=${labels.length}:duration=longest:normalize=0[music]`);
+        const tracks=Math.max(1,meta.audios.length);
+        filters.push(`[music]asplit=${tracks}${Array.from({length:tracks},(_,i)=>`[track${i}]`).join('')}`);
+        for(let i=0;i<tracks;i++)filters.push(meta.audios.length?`[0:a:${i}]volume=${job.options.originalVolume}[original${i}];[original${i}][track${i}]amix=inputs=2:duration=longest:normalize=0[out${i}]`:`[track${i}]anull[out${i}]`);
+        args.push('-filter_complex',filters.join(';'),'-map','0:v:0');for(let i=0;i<tracks;i++)args.push('-map',`[out${i}]`);
+        args.push('-t',String(meta.duration),'-c:v','copy','-c:a','aac','-movflags','+faststart',join(job.path,'mixed.mp4'));
+        await run(job,'ffmpeg',args);const actual=await probe(job,join(job.path,'mixed.mp4'));
+        if(actual.width!==meta.width||actual.height!==meta.height||actual.audios.length!==tracks)throw Error('混音结果尺寸或音轨不符，已停止保存');
+        return [await output(job,'mixed.mp4','video')];
+    }
     return {
         async create(operation, count, options = {}) {
-            if (!['analyze', 'concat'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (operation === 'analyze' && count !== 1)) throw new Error('无效的媒体处理任务');
+            if (!['analyze', 'concat','extract','mix','subtitles'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (['analyze','extract','subtitles'].includes(operation) && count !== 1)) throw new Error('无效的媒体处理任务');
+            if(operation==='mix'&&(count<2||['volume','originalVolume','fadeIn','fadeOut'].some(key=>!Number.isFinite(options[key])||options[key]<0)))throw Error('请填写有效的混音音量和淡入淡出时间');
+            if(operation==='subtitles'&&(typeof options.srt!=='string'||!/^\d+\r?\n\d\d:\d\d:\d\d,\d{3} --> /m.test(options.srt)))throw Error('字幕内容无效');
             if (operation === 'analyze' && (!Number.isFinite(options.threshold) || options.threshold < 0 || options.threshold > 1)) throw new Error('请设置有效的镜头检测灵敏度');
             if (operation === 'concat' && !Array.isArray(options.trims)) throw new Error('请设置视频片段顺序');
             await ready;

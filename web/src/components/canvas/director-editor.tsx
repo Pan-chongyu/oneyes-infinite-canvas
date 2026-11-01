@@ -8,7 +8,7 @@ import type { DirectorKind, DirectorObject, DirectorScene, DirectorVector } from
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
 const icons = { person: UserRound, box: Box, sphere: Circle, cylinder: Cylinder };
-type Props = { scene: DirectorScene; theme: CanvasTheme; onChange: (scene: DirectorScene) => void; onCapture: (blob: Blob, scene: DirectorScene) => Promise<void> };
+type Props = { scene: DirectorScene; theme: CanvasTheme; onChange: (scene: DirectorScene) => void; onCapture: (blob: Blob, scene: DirectorScene,label?:string) => Promise<void> };
 export default function DirectorEditor({ scene, theme, onChange, onCapture }: Props) {
     const container = useRef<HTMLDivElement>(null), runtime = useRef<DirectorRuntime | null>(null);
     const current = useRef({ scene, onChange }); current.current = { scene, onChange };
@@ -19,6 +19,7 @@ export default function DirectorEditor({ scene, theme, onChange, onCapture }: Pr
     const [history] = useState(() => directorHistory(scene));
     const [settings, setSettings] = useState<"object" | "camera" | "light">("object");
     const [shotId, setShotId] = useState<string | null>(null);
+    const [output,setOutput]=useState<'color'|'depth'|'outline'|'mask'>('color');
     const savedShot = scene.shots?.find(shot => shot.id === shotId);
     const commit = (next: DirectorScene, group?: string) => { if (!history.commit(next, group)) return; current.current.scene = next; current.current.onChange(next); setSaved(false); };
     const update = (patch: Partial<DirectorScene>, group?: string) => commit({ ...current.current.scene, ...patch }, group);
@@ -41,12 +42,22 @@ export default function DirectorEditor({ scene, theme, onChange, onCapture }: Pr
     const duplicate = () => { if (!object || object.locked) return; const next = structuredClone(object); next.id = nanoid(); next.name += " 副本"; next.position[0] += 0.5; update({ objects: [...scene.objects, next] }); setSelected(next.id); };
     const remove = () => { if (!object || object.locked) return; update({ objects: scene.objects.filter(item => item.id !== object.id) }); setSelected(null); };
     const changeTransform = (value: typeof transform) => { setTransform(value); runtime.current?.transform(value); };
-    const capture = async () => {
+    const capture = async (all=false) => {
         if (!runtime.current || saving.current) return;
         saving.current = true; setBusy(true); setError(""); setSaved(false);
-        try { const snapshot = structuredClone(scene); const blob = await runtime.current.capture(); if (mounted.current) { await onCapture(blob, snapshot); if (mounted.current) setSaved(true); } }
+        try {
+            const original=structuredClone(scene),shots=all?original.shots:undefined;
+            if(all&&!shots?.length)throw Error('请先保存至少一个机位');
+            for(const shot of shots||[undefined]){
+                if(!mounted.current)break;
+                const snapshot=shot?{...original,camera:shot.camera,width:shot.width,height:shot.height}:original;
+                runtime.current.update(snapshot,selected);const blob=await runtime.current.capture(output,selected||undefined);
+                if(mounted.current)await onCapture(blob,snapshot,`${shot?shot.name+' · ':''}${{color:'取景图',depth:'深度图',outline:'轮廓图',mask:'物体蒙版'}[output]}`);
+            }
+            if(mounted.current){runtime.current.update(original,selected);setSaved(true);}
+        }
         catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : "保存取景图失败，请重试"); }
-        finally { saving.current = false; if (mounted.current) setBusy(false); }
+        finally { saving.current = false; if (mounted.current) {runtime.current?.update(current.current.scene,selected);setBusy(false);} }
     };
     const add = (kind: DirectorKind) => { const item = directorObject(kind); item.name += ` ${scene.objects.filter(item => item.kind === kind).length + 1}`; item.position[0] = (object?.position[0] || 0) + (scene.objects.length ? 0.8 : 0); update({ objects: [...scene.objects, item] }); setSelected(item.id); setSettings("object"); };
     const vector = (label: string, value: DirectorVector, change: (value: DirectorVector) => void, positive = false, disabled = busy) => <div className="space-y-1.5"><div className="text-xs" style={{ color: theme.node.muted }}>{label}</div><div className="grid grid-cols-3 gap-1.5">{value.map((number, i) => <InputNumber key={i} className="!w-full" size="small" aria-label={`${label} ${['X','Y','Z'][i]}`} prefix={<span style={{ color: theme.node.faint }}>{['X','Y','Z'][i]}</span>} step={label.includes("度") ? 5 : 0.1} min={positive ? 0.01 : undefined} value={number} disabled={disabled} onChange={v => { if (v !== null && Number.isFinite(v)) { const next: DirectorVector = [...value]; next[i] = v; change(next); } }} />)}</div></div>;
@@ -104,7 +115,7 @@ export default function DirectorEditor({ scene, theme, onChange, onCapture }: Pr
             </aside>
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3 border-t pt-3" style={{ borderColor: theme.toolbar.border }}><div className="flex flex-wrap items-end gap-2"><label className="space-y-1 text-xs">画幅<Select className="block w-24" size="small" aria-label="输出画幅" value={`${scene.width}:${scene.height}`} disabled={busy} onChange={value => { const [width,height] = value.split(':').map(Number); update({ width,height }); }} options={[{ value: '1536:864', label: '16:9' }, { value: '864:1536', label: '9:16' }, { value: '1024:1024', label: '1:1' }, { value: '1536:1024', label: '3:2' }, ...(!['1536:864','864:1536','1024:1024','1536:1024'].includes(`${scene.width}:${scene.height}`) ? [{ value: `${scene.width}:${scene.height}`, label: '自定义' }] : [])]} /></label><label className="space-y-1 text-xs">宽（px）<InputNumber className="!block !w-24" size="small" aria-label="输出宽度" min={1} precision={0} value={scene.width} disabled={busy} onChange={width => { if (width) update({ width }); }} /></label><label className="space-y-1 text-xs">高（px）<InputNumber className="!block !w-24" size="small" aria-label="输出高度" min={1} precision={0} value={scene.height} disabled={busy} onChange={height => { if (height) update({ height }); }} /></label></div>
-            <div className="flex items-center gap-3"><span className="text-xs" role="status" style={{ color: theme.node.muted }}>{busy ? "正在渲染并保存…" : saved ? "已保存到画布，可连接生图节点" : "场景自动保存 · 本机渲染"}</span><Button type="text" icon={<Camera size={16} />} loading={busy} disabled={!ready} onClick={() => void capture()}>输出取景图</Button></div>
+            <div className="flex items-center gap-3"><span className="text-xs" role="status" style={{ color: theme.node.muted }}>{busy ? "正在渲染并保存…" : saved ? "已保存到画布，可连接生图节点" : "场景自动保存 · 本机渲染"}</span><Select size="small" aria-label="导演台输出类型" value={output} disabled={busy} onChange={setOutput} options={[{value:"color",label:"取景图"},{value:"depth",label:"深度图（近白远黑）"},{value:"outline",label:"轮廓图"},{value:"mask",label:"所选物体蒙版"}]}/><Button type="text" size="small" disabled={!ready||busy||!scene.shots?.length} onClick={()=>void capture(true)}>输出全部机位</Button><Button type="text" icon={<Camera size={16} />} loading={busy} disabled={!ready} onClick={() => void capture()}>输出取景图</Button></div>
         </div>
         {error && <p className="text-xs leading-relaxed" role="alert">{error}</p>}
     </div>;

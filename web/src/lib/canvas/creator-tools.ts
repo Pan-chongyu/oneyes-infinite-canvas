@@ -2,6 +2,9 @@ import type { CanvasNodeData, CanvasConnection } from "@/types/canvas";
 import type { CreatorTool } from "@/types/creator-tools";
 
 export const creatorTools = {
+    board: { title: '拼图与分镜板', action: '生成分镜板', input: 'image', description: '按顺序排列原图，添加编号和说明，导出 PNG' },
+    color: { title: '调色与色彩匹配', action: '输出调色图片', input: 'image', description: '调整曝光、对比度、色温，匹配参考图片色调' },
+    mix: { title: '视频配乐与混音', action: '输出混音视频', input: 'video', description: '混入旁白与配乐，调整音量和淡入淡出，保留原尺寸' },
     analyze: { title: "视频拉片", action: "开始拉片", input: "video", description: "检测切镜，提取原尺寸关键帧、分镜和原音轨" },
     concat: { title: "视频拼接", action: "合并视频", input: "video", description: "按顺序拼接，可单独截取每段视频" },
     cutout: { title: "智能抠图", action: "开始抠图", input: "image", description: "U²-Netp 本地识别主体，输出原尺寸透明 PNG" },
@@ -19,9 +22,10 @@ export function creatorSources(node: CanvasNodeData, nodes: CanvasNodeData[], co
     if (!Array.isArray(ids) || !ids.length) throw new Error("请先选择素材，或将素材节点连入此节点");
     const selected = [...new Set(ids)].map(id => {
         const source = nodes.find(item => item.id === id);
-        if (!source || source.type !== creatorTools[tool].input) throw new Error("所选素材已删除或类型不匹配，请重新选择");
+        if (!source || source.type !== creatorTools[tool].input && !(tool === 'mix' && source.type === 'audio')) throw new Error("所选素材已删除或类型不匹配，请重新选择");
         return source;
     });
-    if (!["compose", "concat"].includes(tool) && selected.length !== 1) throw new Error("此工具每次处理一份素材，请选择一个节点");
+    if (!["compose", "concat", "board", "mix"].includes(tool) && selected.length !== 1) throw new Error("此工具每次处理一份素材，请选择一个节点");
+    if(tool==='mix' && (selected[0]?.type!=='video'||selected.slice(1).some(node=>node.type!=='audio')))throw Error('请先选一个视频，再按顺序添加旁白或配乐');
     return selected;
 }

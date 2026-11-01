@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { SobelOperatorShader } from 'three/addons/shaders/SobelOperatorShader.js';
+import { LuminosityShader } from 'three/addons/shaders/LuminosityShader.js';
 import type { DirectorObject, DirectorScene, DirectorVector } from "@/types/director";
 
 function disposeObject(root: THREE.Object3D) {
@@ -167,19 +172,40 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         view(value: "front" | "back" | "left" | "right" | "top" | "perspective") { const axes = { front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0], top: [0, 1, 0.001], perspective: [1, 0.6, 1] }; frame(new THREE.Vector3(...axes[value]).normalize(), selected); },
         ground(id: string) { const object = objects.get(id); if (!object || state.objects.find(item => item.id === id)?.locked) return; const bounds = new THREE.Box3().setFromObject(object); callbacks.object(id, { position: [object.position.x, object.position.y - bounds.min.y, object.position.z] }); },
         adoptView() { callbacks.camera({ position: editor.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens }); },
-        async capture() {
+        async capture(output: 'color'|'depth'|'outline'|'mask'='color',maskId?:string) {
             if (disposed || capturing || renderer.getContext().isContextLost()) throw new Error("三维渲染尚未就绪，请重新打开导演台");
             const context = renderer.getContext(), maxSize = Math.min(context.getParameter(context.MAX_TEXTURE_SIZE), context.getParameter(context.MAX_RENDERBUFFER_SIZE));
             const viewport = context.getParameter(context.MAX_VIEWPORT_DIMS) as Int32Array;
             if (state.width > Math.min(maxSize, viewport[0]) || state.height > Math.min(maxSize, viewport[1])) throw new Error(`当前显卡不支持 ${state.width} × ${state.height} 输出，请手动调整尺寸；不会自动降低分辨率`);
             capturing = true; controls.enabled = false; transform.enabled = false;
+            const background=scene.background,override=scene.overrideMaterial,tone=renderer.toneMapping;
+            const materials=new Map<THREE.Mesh,THREE.Material|THREE.Material[]>(),temporary:THREE.Material[]=[];
+            let composer:EffectComposer|undefined;
             try {
-                helpers.visible = false; renderer.setScissorTest(false); renderer.setSize(state.width, state.height, false); renderer.setViewport(0, 0, state.width, state.height); renderer.render(scene, shot);
+                helpers.visible = false; renderer.setScissorTest(false); renderer.setSize(state.width, state.height, false); renderer.setViewport(0, 0, state.width, state.height);
+                if(output==='mask'){
+                    if(!maskId||!objects.has(maskId)||!objects.get(maskId)!.visible)throw Error('请先选择可见物体，再输出蒙版');
+                    const white=new THREE.MeshBasicMaterial({color:0xffffff}),black=new THREE.MeshBasicMaterial({color:0x000000});temporary.push(white,black);
+                    for(const [id,object] of objects)object.traverse(child=>{if(child instanceof THREE.Mesh){materials.set(child,child.material);child.material=id===maskId?white:black;}});
+                    materials.set(floor,floor.material);(floor as THREE.Mesh).material=black;scene.background=new THREE.Color(0);renderer.toneMapping=THREE.NoToneMapping;
+                }else if(output==='depth'){
+                    shot.updateMatrixWorld();const box=new THREE.Box3();for(const object of objects.values())if(object.visible)box.expandByObject(object);
+                    if(box.isEmpty())throw Error('请添加可见物体后输出深度图');
+                    const distances:number[]=[];for(const x of [box.min.x,box.max.x])for(const y of [box.min.y,box.max.y])for(const z of [box.min.z,box.max.z])distances.push(-new THREE.Vector3(x,y,z).applyMatrix4(shot.matrixWorldInverse).z);
+                    const near=Math.max(shot.near,Math.min(...distances)),far=Math.max(near+Number.EPSILON,Math.max(...distances));
+                    const material=new THREE.ShaderMaterial({uniforms:{depthNear:{value:near},depthFar:{value:far}},vertexShader:'varying float viewDepth; void main(){vec4 view=modelViewMatrix*vec4(position,1.0);viewDepth=-view.z;gl_Position=projectionMatrix*view;}',fragmentShader:'uniform float depthNear;uniform float depthFar;varying float viewDepth;void main(){float depth=1.0-clamp((viewDepth-depthNear)/max(depthFar-depthNear,0.000001),0.0,1.0);gl_FragColor=vec4(vec3(depth),1.0);}'});
+                    scene.overrideMaterial=material;temporary.push(material);scene.background=new THREE.Color(0);renderer.toneMapping=THREE.NoToneMapping;
+                }else if(output==='outline'){
+                    const normal=new THREE.MeshNormalMaterial();scene.overrideMaterial=normal;temporary.push(normal);scene.background=new THREE.Color(0);
+                    composer=new EffectComposer(renderer);composer.setSize(state.width,state.height);
+                    composer.addPass(new RenderPass(scene,shot));composer.addPass(new ShaderPass(LuminosityShader));const sobel=new ShaderPass(SobelOperatorShader);sobel.uniforms.resolution.value.set(state.width,state.height);composer.addPass(sobel);
+                }
+                if(composer)composer.render();else renderer.render(scene, shot);
                 if (renderer.domElement.width !== state.width || renderer.domElement.height !== state.height) throw new Error("无法分配指定尺寸的图像，请释放显存后重试");
                 const blob = await new Promise<Blob>((resolve, reject) => renderer.domElement.toBlob(blob => blob ? resolve(blob) : reject(new Error("取景图导出失败，请重试")), "image/png"));
                 if (disposed || context.isContextLost()) throw new Error("导出已中断，场景设置保持不变");
                 return blob;
-            } finally { capturing = false; helpers.visible = true; controls.enabled = true; transform.enabled = true; if (!disposed) { renderer.setSize(width, height, false); render(); } }
+            } finally {scene.background=background;scene.overrideMaterial=override;renderer.toneMapping=tone;materials.forEach((material,mesh)=>{mesh.material=material;});if(composer){composer.passes.forEach(pass=>pass.dispose());composer.dispose();}temporary.forEach(material=>material.dispose()); capturing = false; helpers.visible = true; controls.enabled = true; transform.enabled = true; if (!disposed) { renderer.setSize(width, height, false); render(); } }
         },
         dispose() { disposed = true; cancelAnimationFrame(pending); resize.disconnect(); controls.dispose(); transform.dispose(); surface.removeEventListener("pointerdown", down); surface.removeEventListener("pointerup", up); surface.remove(); renderer.domElement.removeEventListener("webglcontextlost", contextLost); disposeObject(scene); key.shadow.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); objects.clear(); },
     };

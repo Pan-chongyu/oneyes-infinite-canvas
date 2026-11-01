@@ -1,0 +1,12 @@
+[
+  {
+    "name": "NotoSansCJKsc-Regular.otf",
+    "url": "https://api.github.com/repos/notofonts/noto-cjk/contents/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf?ref=f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+    "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b"
+  },
+  {
+    "name": "NotoSansCJK.LICENSE",
+    "url": "https://api.github.com/repos/notofonts/noto-cjk/contents/Sans/LICENSE?ref=f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+    "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+  }
+]

@@ -23,6 +23,14 @@ test('local video tools preserve dimensions, shot timing, order and audio; rejec
     try {
         for (const color of ['red', 'blue']) await run(binary('ffmpeg'), ['-nostdin', '-y', '-f', 'lavfi', '-i', `color=${color}:s=96x64:r=12:d=1`, '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=1', '-map', '0:v', '-map', '1:a', '-map', '2:a', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', join(dir, `${color}.mp4`)]);
         const red = await readFile(join(dir, 'red.mp4')), blue = await readFile(join(dir, 'blue.mp4'));
+        const extraction=await engine.create('extract',1);await upload(extraction,0,red);
+        const extracted=(await engine.start(extraction))[0],wav=await output(extraction,extracted);assert.equal(wav.toString('ascii',0,4),'RIFF');await engine.release(extraction);
+        const mix=await engine.create('mix',2,{volume:0.5,originalVolume:1,fadeIn:0.1,fadeOut:0.1});await upload(mix,0,red);await upload(mix,1,wav);
+        const mixed=(await engine.start(mix))[0];await writeFile(join(dir,'mixed.mp4'),await output(mix,mixed));const mixedInfo=await probe(join(dir,'mixed.mp4'));assert.equal(mixedInfo.streams[0].width,96);assert.equal(mixedInfo.streams.filter(s=>s.codec_type==='audio').length,2);await engine.release(mix);
+        const subtitles=await engine.create('subtitles',1,{srt:'1\n00:00:00,000 --> 00:00:00,900\n无限画布 Canvas\n'});await upload(subtitles,0,red);
+        const captioned=(await engine.start(subtitles))[0];await writeFile(join(dir,'captioned.mp4'),await output(subtitles,captioned));const captionInfo=await probe(join(dir,'captioned.mp4'));assert.equal(captionInfo.streams[0].width,96);assert.equal(captionInfo.streams.filter(s=>s.codec_type==='audio').length,2);await engine.release(subtitles);
+        await assert.rejects(engine.create('mix',2,{volume:NaN,originalVolume:1,fadeIn:0,fadeOut:0}));
+        await assert.rejects(engine.create('subtitles',1,{srt:'invalid'}));
         const concat = await engine.create('concat', 2, { trims: [{}, {}] });
         await upload(concat, 0, red); await upload(concat, 1, blue);
         await assert.rejects(upload(concat, 1, blue), /无效媒体输入/);

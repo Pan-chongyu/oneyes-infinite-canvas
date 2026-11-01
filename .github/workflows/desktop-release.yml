@@ -76,6 +76,8 @@ jobs:
       - run: npm ci --prefix canvas-agent --include=optional
       - name: Prepare checksum-pinned native media tools
         run: npm run media:prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npm --prefix canvas-agent test
       - name: Validate version and architecture
         shell: bash
@@ -91,6 +93,7 @@ jobs:
       - run: npm run test:webdav
       - run: npm run test:creators
       - run: npm run test:director
+      - run: npm run test:studio
       - run: npm --prefix web run typecheck
       - run: npm run build
       - run: npm run test:codec

@@ -53,6 +53,9 @@ function Fixture() {
     const read=async(blob:Blob)=>{const image=await createImageBitmap(blob);const result=[image.width,image.height];image.close();return result;};
     const hash=async(blob:Blob)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))).join(',');
     const sizes=[await read(first),await read(second)];const differs=await hash(first)!==await hash(second);
+    const passes=[];for(const output of ['depth','outline','mask'] as const){const blob=await runtime.capture(output,scene.objects[0].id);passes.push({output,size:await read(blob),hash:await hash(blob)});}
+    if(passes.some(pass=>pass.size[0]!==317||pass.size[1]!==191)||new Set(passes.map(pass=>pass.hash)).size!==3)throw Error('Director output passes must be distinct and retain exact pixel dimensions');
+    if(await hash(await runtime.capture())!==await hash(second))throw Error('Output passes must restore all original materials and lighting');
     scene.guide='thirds';runtime.update(scene,scene.objects[0].id);runtime.mode('camera');const withGuide=await runtime.capture();const cleanExport=await hash(withGuide)===await hash(second);
     scene.objects[0].visible=false;runtime.update(scene,scene.objects[0].id);const hidden=await runtime.capture();const visibility=await hash(hidden)!==await hash(second);
     scene.objects[0].visible=true;scene.objects[0].position[1]=4;runtime.update(scene,scene.objects[0].id);runtime.ground(scene.objects[0].id);const grounded=patches.at(-1)?.patch.position[1];

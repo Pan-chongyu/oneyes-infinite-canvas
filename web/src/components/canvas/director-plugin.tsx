@@ -18,7 +18,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     useEffect(() => ctx.on("director:open", payload => { if (payload === ctx.node.id) start(); }), [ctx.node.id]);
     useEffect(() => { generation.current++; setOpen(false); setScene(null); return () => { generation.current++; controller.current?.abort(); }; }, [ctx.node.id, ctx.projectId]);
     const change = (next: DirectorScene) => { setScene(next); latest.current.updateMetadata({ directorScene: next }); };
-    const capture = async (blob: Blob, scene: DirectorScene) => {
+    const capture = async (blob: Blob, scene: DirectorScene,label?:string) => {
         if (exporting.current) return;
         exporting.current = true;
         const token = generation.current, origin = latest.current, abort = new AbortController(); controller.current = abort;
@@ -33,7 +33,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
             for (const neighbor of [...latest.current.getNodes()].sort((a,b) => a.position.y - b.position.y)) {
                 if (position.x < neighbor.position.x + neighbor.width && position.x + size.width > neighbor.position.x && position.y < neighbor.position.y + neighbor.height && position.y + size.height > neighbor.position.y) position.y = neighbor.position.y + neighbor.height + 32;
             }
-            latest.current.applyOps([{ type: "add_node", id: output.id, nodeType: "image", title: `导演台取景 · ${scene.camera.lens}mm`, position, ...size, metadata }, { type: "connect_nodes", fromNodeId: node.id, toNodeId: output.id }]);
+            latest.current.applyOps([{ type: "add_node", id: output.id, nodeType: "image", title: `导演台${label||'取景'} · ${scene.camera.lens}mm`, position, ...size, metadata }, { type: "connect_nodes", fromNodeId: node.id, toNodeId: output.id }]);
             committed = true;
         } catch (error) { if (!abort.signal.aborted) { reportError("image", "save", error); throw error; } }
         finally { if (!committed && key) await deleteStoredImages([key]); if (controller.current === abort) controller.current = null; exporting.current = false; }

@@ -3,7 +3,7 @@ declare global {
     interface Window {
         oneYesDesktop?: {
             media?: {
-                create(operation: 'analyze' | 'concat', count: number, options: Record<string, unknown>): Promise<string>;
+                create(operation: 'analyze' | 'concat' | 'mix' | 'extract' | 'subtitles', count: number, options: Record<string, unknown>): Promise<string>;
                 start(id: string): Promise<{ data?: Array<{ name: string; kind: 'image' | 'video' | 'audio' | 'text'; bytes: number; time?: number }>; error?: string }>;
                 release(id: string): Promise<void>;
                 subscribe(callback: (state: { id: string; stage: string; progress?: number }) => void): () => void;

@@ -10,15 +10,16 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const target = join(root, 'desktop', 'media-bin');
 const manifest = JSON.parse(await readFile(join(root, 'desktop/media-binaries.json'), 'utf8'));
+const fonts = JSON.parse(await readFile(join(root, 'desktop/media-fonts.json'), 'utf8'));
 const platform = `${process.platform}-${process.arch}`;
 if (!manifest[platform]) throw new Error(`Unsupported media runtime: ${platform}`);
 await mkdir(target, { recursive: true });
-for (const asset of manifest[platform]) {
+for (const asset of [...manifest[platform], ...fonts]) {
     const destination = join(target, asset.name);
     const checksum = async file => { const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest('hex'); };
     if (await checksum(destination).catch(() => '') !== asset.sha256) {
         console.log(`Downloading ${asset.name}`);
-        const response = await fetch(asset.url);
+        const response = await fetch(asset.url, { headers: asset.url.startsWith('https://api.github.com/') ? { Accept: 'application/vnd.github.raw+json', ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) } : {} });
         if (!response.ok) throw new Error(`Media runtime download failed: ${response.status}`);
         const partial = destination + '.part';
         let received = 0, last = -1;
@@ -55,6 +56,6 @@ for (const asset of manifest[platform]) {
     }
     await rm(destination + '.part', { force: true });
 }
-await writeFile(join(target, 'SOURCES.txt'), 'FFmpeg runs as a separate local process.\n' + manifest[platform].map(asset => asset.url).join('\n') + '\nBuild sources: https://github.com/eugeneware/ffmpeg-static and https://github.com/BtbN/FFmpeg-Builds\nFFmpeg sources: https://git.ffmpeg.org/ffmpeg.git\n');
+await writeFile(join(target, 'SOURCES.txt'), 'FFmpeg runs as a separate local process.\n' + [...manifest[platform], ...fonts].map(asset => asset.url).join('\n') + '\nBuild sources: https://github.com/eugeneware/ffmpeg-static and https://github.com/BtbN/FFmpeg-Builds\nFFmpeg sources: https://git.ffmpeg.org/ffmpeg.git\nNoto Sans CJK SC: https://github.com/notofonts/noto-cjk (SIL Open Font License 1.1)\n');
 await createRequire(import.meta.url)('../desktop/media-smoke.cjs').smokeMedia(target);
 console.log(`Media runtime verified: ${platform}`);
