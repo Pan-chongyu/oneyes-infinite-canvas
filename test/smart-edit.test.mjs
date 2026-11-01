@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-const { createMediaTools } = createRequire(import.meta.url)('../desktop/media-tools.cjs');
 const binaries = resolve('desktop/media-bin');
 const binary = name => join(binaries, name + (process.platform === 'win32' ? '.exe' : ''));
 const run = promisify(execFile);
@@ -18,6 +17,7 @@ childProcess.spawn = (...args) => {
     child.on('close', code => { if (code && !args[2]?.signal?.aborted) console.error('Smart-edit fixture FFmpeg failure:', args[1], stderr); });
     return child;
 };
+const { createMediaTools } = createRequire(import.meta.url)('../desktop/media-tools.cjs');
 const defaults = { kinds: ['video'], silenceDb: -35, silenceSeconds: 0.2, sceneThreshold: 0.3, imageSeconds: 1, color: 'original', transition: 0, audioFade: 0, originalVolume: 1, musicVolume: 0.2, title: '', srt: '' };
 test('smart edit uses actual native analysis and render: exact dimensions, order, soundtracks, transitions, images, Unicode and safe cancellation', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-smart-edit-'));
