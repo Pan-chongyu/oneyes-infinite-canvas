@@ -16,6 +16,23 @@ app.whenReady().then(async()=>{
  const click=async(text)=>{await js(`Array.from(document.querySelectorAll('button')).find(item=>item.textContent.trim()===${JSON.stringify(text)}).click()`);};
  try{
   await win.loadURL(process.argv[2]);await wait('window.directorTest && document.querySelector("button")');
+  const webgl=await js('(()=>{const gl=document.createElement("canvas").getContext("webgl2");if(gl)gl.getExtension("WEBGL_lose_context")?.loseContext();return Boolean(gl);})()');
+  if(!webgl){
+   assert.ok(process.env.CI && process.platform==='darwin' && process.arch==='x64','real WebGL is required outside the known GPU-less Intel Mac runner');
+   assert.match(app.getGPUFeatureStatus().webgl,/disabled|unavailable/,'runner must explicitly report unavailable graphics');
+   if(process.env.CANVAS_DIRECTOR_TEST_PHASE==='restore'){
+    const state=await js('directorTest.state()');assert.equal(state.nodes[0].metadata.directorScene.camera.lens,85);assert.equal(state.nodes.filter(n=>n.type==='image').length,0);
+   }else{
+    assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});await js('directorTest.configure()');
+   }
+   await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');
+   assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出取景图").disabled'),true);
+   await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
+   await js('directorTest.save()');await js('document.querySelector("button[aria-label=Close]").click()');await wait('!document.querySelector("[data-director-editor]")');
+   await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');
+   await js('directorTest.switch()');await wait('!document.querySelector("[data-director-editor]")');
+   assert.deepEqual(external,[]);console.log('DIRECTOR_NO_GPU_OK: Intel CI VM explicitly lacks WebGL; local bundle, actionable notice, disabled export, scene/lens persistence, native-process restart and project isolation verified. Real rendering remains covered on the other five runners.');app.exit(0);return;
+  }
   if(process.env.CANVAS_DIRECTOR_TEST_PHASE==='restore'){
    const state=await js('directorTest.state()');assert.equal(state.nodes.find(n=>n.id==='director').metadata.directorScene.camera.lens,85);assert.equal(state.nodes.filter(n=>n.type==='image').length,2);
    const image=await js('directorTest.image()');assert.equal(image.width,321);assert.equal(image.height,197);assert.ok(image.colors>30);
