@@ -46,16 +46,22 @@ function Fixture() {
   runtime:async()=>{
    const container=document.createElement('div');container.style.cssText='position:fixed;left:0;top:0;width:640px;height:400px';document.body.append(container);
    const scene=directorPreset();scene.width=317;scene.height=191;
-   const runtime=createDirectorRuntime(container,scene,{camera:()=>{},object:()=>{},select:()=>{},error:()=>{}});
+   const cameras:any[]=[], patches:any[]=[];
+   const runtime=createDirectorRuntime(container,scene,{camera:value=>cameras.push(value),object:(id,patch)=>patches.push({id,patch}),select:()=>{},error:()=>{}});
    try{
     const first=await runtime.capture();scene.objects[0].pose='sit';runtime.update(scene,scene.objects[0].id);runtime.mode('scene');runtime.transform('rotate');const second=await runtime.capture();
     const read=async(blob:Blob)=>{const image=await createImageBitmap(blob);const result=[image.width,image.height];image.close();return result;};
     const hash=async(blob:Blob)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))).join(',');
     const sizes=[await read(first),await read(second)];const differs=await hash(first)!==await hash(second);
+    scene.guide='thirds';runtime.update(scene,scene.objects[0].id);runtime.mode('camera');const withGuide=await runtime.capture();const cleanExport=await hash(withGuide)===await hash(second);
+    scene.objects[0].visible=false;runtime.update(scene,scene.objects[0].id);const hidden=await runtime.capture();const visibility=await hash(hidden)!==await hash(second);
+    scene.objects[0].visible=true;scene.objects[0].position[1]=4;runtime.update(scene,scene.objects[0].id);runtime.ground(scene.objects[0].id);const grounded=patches.at(-1)?.patch.position[1];
+    scene.objects[0].locked=true;runtime.update(scene,scene.objects[0].id);runtime.ground(scene.objects[0].id);const lock=patches.length===1;
+    runtime.focus(scene.objects[0].id);runtime.view('top');const focused=cameras.length>=2&&cameras.every(camera=>camera.position.every(Number.isFinite)&&camera.target.every(Number.isFinite));
     scene.width=191;scene.height=317;runtime.update(scene,null);runtime.mode('camera');await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
     const rect=container.querySelector('[data-director-controls]')!.getBoundingClientRect();const portraitControls=Math.abs(rect.width/rect.height-191/317)<0.001;
     const max=Number(container.querySelector('canvas')!.getContext('webgl2')!.getParameter(WebGL2RenderingContext.MAX_TEXTURE_SIZE));scene.width=max+1;runtime.update(scene,null);let reason='';try{await runtime.capture();}catch(error){reason=(error as Error).message;}
-    return {sizes,differs,reason,portraitControls};
+    return {sizes,differs,reason,portraitControls,cleanExport,visibility,grounded,lock,focused};
    }finally{runtime.dispose();const canvases=container.querySelectorAll('canvas').length;container.remove();if(canvases)throw Error('Leaked renderer');}
   },
   validation:()=>{const scene=directorPreset();const copy=readDirectorScene(scene);copy.objects[0].position[0]=99;let invalid=0;for(const patch of [{schema:2},{width:0},{objects:[scene.objects[0],scene.objects[0]]},{camera:{...scene.camera,lens:NaN}}])try{readDirectorScene({...scene,...patch});}catch{invalid++;}return {independent:scene.objects[0].position[0]!==99,invalid};},
@@ -67,4 +73,5 @@ function Fixture() {
    onHoverStart={()=>{}} onHoverEnd={()=>{}} onConnectStart={()=>{}} onResizeStart={()=>{}} onResize={()=>{}} onResizeEnd={()=>{}} onContentChange={()=>{}} onTitleChange={()=>{}}/>}
  </InfiniteCanvas></main></App></ConfigProvider>;
 }
+useThemeStore.getState().setTheme(new URLSearchParams(location.search).get('theme') === 'dark' ? 'dark' : 'light');
 createRoot(document.getElementById('root')!).render(<Fixture/>);

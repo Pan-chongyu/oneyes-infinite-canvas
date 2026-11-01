@@ -10,15 +10,21 @@ export type DirectorObject = {
     rotation: DirectorVector;
     scale: DirectorVector;
     color: string;
+    visible?: boolean;
+    locked?: boolean;
 };
+export type DirectorCamera = { position: DirectorVector; target: DirectorVector; lens: number };
+export type DirectorShot = { id: string; name: string; camera: DirectorCamera; width: number; height: number };
 export type DirectorScene = {
     schema: 1;
     objects: DirectorObject[];
-    camera: { position: DirectorVector; target: DirectorVector; lens: number };
+    camera: DirectorCamera;
     light: { azimuth: number; elevation: number; intensity: number };
     background: string;
     floor: string;
     width: number;
     height: number;
     grid: boolean;
+    guide?: "none" | "thirds" | "center";
+    shots?: DirectorShot[];
 };

@@ -4,11 +4,13 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import type { DirectorObject, DirectorScene, DirectorVector } from "@/types/director";
 
 function disposeObject(root: THREE.Object3D) {
+    const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
     root.traverse(object => {
         const mesh = object as THREE.Mesh;
-        mesh.geometry?.dispose();
-        if (mesh.material) for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) material.dispose();
+        if (mesh.geometry) geometries.add(mesh.geometry);
+        if (mesh.material) for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) materials.add(material);
     });
+    geometries.forEach(geometry => geometry.dispose()); materials.forEach(material => material.dispose());
 }
 function mannequin(material: THREE.Material, pose: DirectorObject["pose"]) {
     const group = new THREE.Group();
@@ -56,18 +58,21 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     container.appendChild(renderer.domElement);
     // Controls must use the actual shot rectangle, including portrait letterboxing.
     const surface = document.createElement("div"); surface.dataset.directorControls = ""; surface.style.cssText = "position:absolute;touch-action:none"; container.appendChild(surface);
+    const guide = document.createElement("div"); guide.dataset.directorGuide = ""; guide.style.cssText = "position:absolute;inset:0;pointer-events:none"; surface.appendChild(guide);
     const scene = new THREE.Scene(), subjects = new THREE.Group(), helpers = new THREE.Group(); scene.add(subjects, helpers);
     const shot = new THREE.PerspectiveCamera(40, initial.width / initial.height, 0.01, 10000);
     const editor = new THREE.PerspectiveCamera(45, 1, 0.01, 10000); editor.position.set(6, 5, 8);
     const controls = new OrbitControls(shot, surface); controls.target.fromArray(initial.camera.target);
     const transform = new TransformControls(shot, surface); helpers.add(transform.getHelper());
     const cameraHelper = new THREE.CameraHelper(shot); helpers.add(cameraHelper);
+    const selection = new THREE.Box3Helper(new THREE.Box3(), 0xd5a454); helpers.add(selection); selection.visible = false;
     const grid = new THREE.GridHelper(100, 100, "#8c8881", "#b0aba2"); helpers.add(grid);
     const ambient = new THREE.HemisphereLight("#ffffff", "#6b6260", 2), key = new THREE.DirectionalLight("#ffffff", 3); scene.add(ambient, key);
     key.castShadow = true; key.shadow.mapSize.set(1024,1024); Object.assign(key.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 0.1, far: 80 }); key.shadow.bias = -0.0001;
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: initial.floor, roughness: 1 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.005; scene.add(floor);
     floor.receiveShadow = true;
     const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
+    const editorTarget = new THREE.Vector3(0, 0.95, 0);
     let state = initial, objects = new Map<string, THREE.Group>(), selected: string | null = null, mode: "camera" | "scene" = "camera", disposed = false, pending = 0, syncing = false, capturing = false;
     let width = 1, height = 1, pointerStart: [number, number] | null = null;
     const liveCamera = () => mode === "camera" ? shot : editor;
@@ -76,34 +81,43 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         if (disposed || capturing || renderer.getContext().isContextLost()) return;
         renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height); renderer.clear();
         cameraHelper.visible = mode === "scene"; grid.visible = state.grid;
+        selection.visible = !!selected && objects.get(selected)?.visible === true;
+        if (selection.visible) selection.box.setFromObject(objects.get(selected!)!);
         const rect = mode === "camera" ? viewRect() : { x: 0, y: 0, width, height };
         Object.assign(surface.style, { left: `${rect.x}px`, top: `${height - rect.y - rect.height}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+        guide.style.display = mode === "camera" ? "block" : "none";
         renderer.setViewport(rect.x, rect.y, rect.width, rect.height); renderer.setScissor(rect.x, rect.y, rect.width, rect.height); renderer.setScissorTest(true); renderer.render(scene, liveCamera());
         if (mode === "scene") {
             helpers.visible = false;
-            const w = Math.min(width * 0.32, 260), h = w / shot.aspect;
+            const w = Math.min(width * 0.32, 260, height * 0.32 * shot.aspect), h = w / shot.aspect;
             renderer.setViewport(width - w - 12, 12, w, h); renderer.setScissor(width - w - 12, 12, w, h); renderer.render(scene, shot); helpers.visible = true;
         }
         renderer.setScissorTest(false);
     }
     const render = () => { if (!pending && !disposed) pending = requestAnimationFrame(() => { pending = 0; draw(); }); };
-    const commitCamera = () => { if (!syncing && mode === "camera") callbacks.camera({ position: shot.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens }); };
+    const commitCamera = () => { if (syncing) return; if (mode === "camera") callbacks.camera({ position: shot.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens }); else editorTarget.copy(controls.target); };
     controls.addEventListener("change", render); controls.addEventListener("end", commitCamera);
     transform.addEventListener("dragging-changed", event => { controls.enabled = !event.value; });
     transform.addEventListener("change", render);
     transform.addEventListener("mouseUp", () => {
         const object = transform.object;
-        if (object && selected) callbacks.object(selected, { position: object.position.toArray(), rotation: [object.rotation.x, object.rotation.y, object.rotation.z].map(THREE.MathUtils.radToDeg) as DirectorVector, scale: object.scale.toArray() });
+        const saved = state.objects.find(item => item.id === selected);
+        if (object && selected && saved && !saved.locked) {
+            // Scene scales are positive. Reject a collapsed or mirrored gizmo
+            // edit instead of persisting invalid geometry or changing its size.
+            if (object.scale.toArray().some(value => value <= 0)) object.scale.fromArray(saved.scale);
+            callbacks.object(selected, { position: object.position.toArray(), rotation: [object.rotation.x, object.rotation.y, object.rotation.z].map(THREE.MathUtils.radToDeg) as DirectorVector, scale: object.scale.toArray() });
+        }
     });
-    const down = (event: PointerEvent) => { pointerStart = [event.clientX, event.clientY]; };
+    const down = (event: PointerEvent) => { pointerStart = event.button === 0 ? [event.clientX, event.clientY] : null; };
     const up = (event: PointerEvent) => {
         if (event.button !== 0 || !pointerStart || Math.hypot(event.clientX - pointerStart[0], event.clientY - pointerStart[1]) > 4 || transform.axis) return;
         const bounds = renderer.domElement.getBoundingClientRect(), x = event.clientX - bounds.left, y = bounds.height - (event.clientY - bounds.top);
-        if (mode === "scene") { const w = Math.min(width * 0.32, 260); if (x >= width - w - 12 && x <= width - 12 && y >= 12 && y <= 12 + w / shot.aspect) return; }
+        if (mode === "scene") { const w = Math.min(width * 0.32, 260, height * 0.32 * shot.aspect); if (x >= width - w - 12 && x <= width - 12 && y >= 12 && y <= 12 + w / shot.aspect) return; }
         const rect = mode === "camera" ? viewRect() : { x: 0, y: 0, width, height };
         if (x < rect.x || x > rect.x + rect.width || y < rect.y || y > rect.y + rect.height) return;
         pointer.set((x - rect.x) / rect.width * 2 - 1, (y - rect.y) / rect.height * 2 - 1); raycaster.setFromCamera(pointer, liveCamera());
-        let hit: THREE.Object3D | null | undefined = raycaster.intersectObjects(subjects.children, true)[0]?.object;
+        let hit: THREE.Object3D | null | undefined = raycaster.intersectObjects([...objects.values()].filter(object => object.visible), true)[0]?.object;
         while (hit && !hit.userData.directorId) hit = hit.parent;
         callbacks.select(hit?.userData.directorId || null);
     };
@@ -114,21 +128,44 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         state = next; selected = selection; syncing = true;
         try {
             const attached = transform.object?.userData.directorId;
-            for (const [id, object] of objects) if (!next.objects.some(item => item.id === id && JSON.stringify(item) === object.userData.source)) { if (attached === id) transform.detach(); subjects.remove(object); disposeObject(object); objects.delete(id); }
-            for (const item of next.objects) if (!objects.has(item.id)) { const object = buildObject(item); object.userData.source = JSON.stringify(item); objects.set(item.id, object); subjects.add(object); }
-            const target = selected && objects.get(selected); if (target) { if (transform.object !== target) transform.attach(target); } else transform.detach();
+            for (const [id, object] of objects) if (!next.objects.some(item => item.id === id && `${item.kind}:${item.pose}` === object.userData.shape)) { if (attached === id) transform.detach(); subjects.remove(object); disposeObject(object); objects.delete(id); }
+            for (const item of next.objects) {
+                let object = objects.get(item.id);
+                if (!object) { object = buildObject(item); object.userData.shape = `${item.kind}:${item.pose}`; objects.set(item.id, object); subjects.add(object); }
+                object.position.fromArray(item.position); object.rotation.set(...item.rotation.map(THREE.MathUtils.degToRad) as DirectorVector); object.scale.fromArray(item.scale); object.visible = item.visible !== false;
+                object.traverse(child => { if (child instanceof THREE.Mesh) (child.material as THREE.MeshStandardMaterial).color.set(item.color); });
+            }
+            const target = selected && objects.get(selected), editable = next.objects.find(item => item.id === selected);
+            if (target && editable?.visible !== false && !editable?.locked) { if (transform.object !== target) transform.attach(target); } else transform.detach();
             shot.aspect = next.width / next.height; shot.setFocalLength(next.camera.lens); shot.position.fromArray(next.camera.position); shot.lookAt(new THREE.Vector3(...next.camera.target)); shot.updateProjectionMatrix();
+            editor.fov = shot.fov; editor.updateProjectionMatrix();
             if (mode === "camera") { controls.target.fromArray(next.camera.target); controls.update(); }
             const azimuth = THREE.MathUtils.degToRad(next.light.azimuth), elevation = THREE.MathUtils.degToRad(next.light.elevation);
             key.position.set(Math.sin(azimuth) * Math.cos(elevation) * 10, Math.sin(elevation) * 10, Math.cos(azimuth) * Math.cos(elevation) * 10); key.intensity = next.light.intensity;
             scene.background = new THREE.Color(next.background); floor.material.color.set(next.floor); cameraHelper.update(); render();
+            guide.replaceChildren();
+            const divisions = next.guide === "thirds" ? [1 / 3, 2 / 3] : next.guide === "center" ? [0.5] : [];
+            for (const fraction of divisions) for (const vertical of [true, false]) { const line = document.createElement("div"); line.style.cssText = vertical ? `position:absolute;left:${fraction * 100}%;top:0;height:100%;border-left:1px solid rgba(255,255,255,.6);box-shadow:1px 0 rgba(0,0,0,.25)` : `position:absolute;top:${fraction * 100}%;left:0;width:100%;border-top:1px solid rgba(255,255,255,.6);box-shadow:0 1px rgba(0,0,0,.25)`; guide.appendChild(line); }
         } finally { syncing = false; }
+    }
+    function frame(direction?: THREE.Vector3, id?: string | null) {
+        const bounds = new THREE.Box3();
+        for (const [key, object] of objects) if (object.visible && (!id || key === id)) bounds.expandByObject(object);
+        if (bounds.isEmpty()) return;
+        const center = bounds.getCenter(new THREE.Vector3()), camera = liveCamera();
+        const angle = Math.min(THREE.MathUtils.degToRad(camera.fov), 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
+        const distance = bounds.getBoundingSphere(new THREE.Sphere()).radius / Math.sin(angle / 2) * 1.15;
+        const axis = direction || camera.position.clone().sub(controls.target).normalize();
+        camera.position.copy(center).addScaledVector(axis, distance); controls.target.copy(center); controls.update(); commitCamera(); render();
     }
     update(initial, null);
     return {
         update,
-        mode(value: "camera" | "scene") { mode = value; controls.object = liveCamera(); transform.camera = liveCamera(); syncing = true; if (mode === "camera") controls.target.fromArray(state.camera.target); controls.update(); syncing = false; render(); },
+        mode(value: "camera" | "scene") { if (mode === "scene") editorTarget.copy(controls.target); mode = value; controls.object = liveCamera(); transform.camera = liveCamera(); syncing = true; controls.target.copy(mode === "camera" ? new THREE.Vector3(...state.camera.target) : editorTarget); controls.update(); syncing = false; render(); },
         transform(value: "translate" | "rotate" | "scale") { transform.setMode(value); render(); },
+        focus(id?: string | null) { frame(undefined, id); },
+        view(value: "front" | "back" | "left" | "right" | "top" | "perspective") { const axes = { front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0], top: [0, 1, 0.001], perspective: [1, 0.6, 1] }; frame(new THREE.Vector3(...axes[value]).normalize(), selected); },
+        ground(id: string) { const object = objects.get(id); if (!object || state.objects.find(item => item.id === id)?.locked) return; const bounds = new THREE.Box3().setFromObject(object); callbacks.object(id, { position: [object.position.x, object.position.y - bounds.min.y, object.position.z] }); },
         adoptView() { callbacks.camera({ position: editor.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens }); },
         async capture() {
             if (disposed || capturing || renderer.getContext().isContextLost()) throw new Error("三维渲染尚未就绪，请重新打开导演台");
