@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Input, InputNumber, Select, Segmented, Slider } from "antd";
-import { BookOpen, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown, Plus, Trash2 } from "lucide-react";
+import { BookOpen, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown, Plus, Trash2, GitBranch } from "lucide-react";
 import { nanoid } from "nanoid";
 import { readFileAsDataUrl } from "@/lib/image-utils";
 import { saveAs } from "file-saver";
 import { studioTools, studioSources, studioAccepts, readShots, shotsToBatchText, batchPrompts, subtitleSrt } from "@/lib/canvas/studio";
 import { SourceSummary } from "./source-summary";
+import { jevQuestion, jevSummary, requestJevDecision } from "@/services/api/jev";
+import { modelOptionLabel, resolveModelForCapability, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { creatorSourceBlob, processNativeVideo } from "@/services/creator-media";
 import { exportStudioSources } from "@/services/studio-export";
 import { uploadImage, deleteStoredImages } from "@/services/image-storage";
@@ -17,7 +19,7 @@ import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import type { StudioTool, StudioSettings } from "@/types/studio";
 import type { CreatorArtifact } from "@/types/creator-tools";
 
-const icons = { storyboard: BookOpen, reference: Users, batch: Rows3, compare: Columns2, subtitles: Captions, ocr: ScanText, export: Download };
+const icons = { storyboard: BookOpen, reference: Users, batch: Rows3, compare: Columns2, subtitles: Captions, ocr: ScanText, export: Download, decision: GitBranch };
 const referenceText = (node: CanvasNodeData) => {
     const s = node.metadata?.studio;
     return [s?.role && `角色：${s.role}`, s?.outfit && `服装与场景：${s.outfit}`, s?.style && `风格：${s.style}`].filter(Boolean).join("\n");
@@ -77,7 +79,7 @@ function Content({ ctx }: { ctx: CanvasNodeContext }) {
                 {busy
                     ? "正在处理…"
                     : ctx.node.metadata?.errorDetails ||
-                      (s?.items ? `已完成 ${s.items.filter((i) => i.state === "done").length} / ${s.items.length} 项` : s?.shots ? `${s.shots.length} 个镜头` : s?.cues ? `${s.cues.length} 条字幕` : "连接素材，打开设置开始")}
+                      (s?.decision ? jevSummary(s.decision) : s?.items ? `已完成 ${s.items.filter((i) => i.state === "done").length} / ${s.items.length} 项` : s?.shots ? `${s.shots.length} 个镜头` : s?.cues ? `${s.cues.length} 条字幕` : "连接素材，打开设置开始")}
             </p>
             <Button type="text" size="small" className="self-start" icon={<Settings2 size={14} />} onPointerDown={(e) => e.stopPropagation()} onClick={ctx.openPanel}>
                 打开{tool === "compare" ? "对比" : "设置"}
@@ -95,13 +97,14 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
         [busy, setBusy] = useState(false),
         [zoom, setZoom] = useState(1);
     const { modal } = App.useApp();
+    const config = useConfigStore(state => state.config);
     useEffect(
         () => () => {
             active.current?.abort();
         },
         [ctx.projectId, ctx.node.id],
     );
-    const patch = (value: Partial<StudioSettings>) => ctx.updateMetadata({ studio: { ...s, ...value }, errorDetails: undefined });
+    const patch = (value: Partial<StudioSettings>) => ctx.updateMetadata({ studio: { ...s, ...(tool === "decision" ? { decision: undefined, decisionInput: undefined } : {}), ...value }, errorDetails: undefined });
     let sources: CanvasNodeData[] = [],
         sourceError = "";
     try {
@@ -183,7 +186,14 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
     const action = () =>
         void run(async (signal, check) => {
             if (sourceError) throw Error(sourceError);
-            if (tool === "storyboard") {
+            if (tool === "decision") {
+                const state = [s.text, ...sources.map(n => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n");
+                const question = jevQuestion(s.questionType || "noul", s.question || "", s.criteria);
+                const model = resolveModelForCapability(config, s.model, "decision");
+                const decision = await requestJevDecision(config, model, state, question, signal);
+                check();
+                patch({ decision, decisionInput: state });
+            } else if (tool === "storyboard") {
                 const story = [s.text, ...sources.filter((n) => n.type === "text").map((n) => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n");
                 if (!story.trim()) throw Error("请填写故事或连接文本节点");
                 const result = await ctx.ai.generateText(story, {
@@ -239,7 +249,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
         });
     const smallButton = "!px-2";
     const requestAction = () => {
-        const replacing = tool === "storyboard" && s.shots?.length ? "分镜" : tool === "subtitles" && s.cues?.length ? "字幕" : "";
+        const replacing = tool === "decision" && s.decision ? "决策" : tool === "storyboard" && s.shots?.length ? "分镜" : tool === "subtitles" && s.cues?.length ? "字幕" : "";
         if (replacing) modal.confirm({ title: `重新生成${replacing}？`, content: `这会调用模型并替换当前${replacing}，已输出的节点保持不变。`, okText: "重新生成", cancelText: "保留当前内容", onOk: action });
         else action();
     };
@@ -296,6 +306,33 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     ))}
                 </div>
             )}
+            {tool === "decision" && <>
+                <label className="block space-y-1 text-xs">决策模型
+                    <Select className="w-full" aria-label="决策模型" value={resolveModelForCapability(config, s.model, "decision") || undefined} disabled={disabled}
+                        options={selectableModelsByCapability(config, "decision").map(value => ({ value, label: modelOptionLabel(config, value) }))}
+                        placeholder="先接入 TypeSafe / Jev 的 JEV 分组" onChange={model => patch({ model })} />
+                </label>
+                {!selectableModelsByCapability(config, "decision").length && <Button type="text" size="small" onClick={() => useConfigStore.getState().openConfigDialog(false, "channels")}>配置 JEV 分组</Button>}
+                <label className="block space-y-1 text-xs">待判断内容
+                    <Input.TextArea aria-label="待判断内容" rows={3} value={s.text} disabled={disabled} placeholder="填写内容，或连接上游文本节点" onChange={e => patch({ text: e.target.value })} />
+                </label>
+                <Segmented aria-label="决策类型" block disabled={disabled} value={s.questionType || "noul"} options={[{ label: "是非判断", value: "noul" }, { label: "选择方案", value: "choice" }, { label: "标准评分", value: "score" }]} onChange={questionType => patch({ questionType: questionType as StudioSettings["questionType"] })} />
+                <label className="block space-y-1 text-xs">判断问题
+                    <Input.TextArea aria-label="判断问题" rows={2} value={s.question} disabled={disabled} placeholder="例如：这个创意是否符合品牌要求？" onChange={e => patch({ question: e.target.value })} />
+                </label>
+                {s.questionType && s.questionType !== "noul" && <label className="block space-y-1 text-xs">{s.questionType === "choice" ? "候选方案（每行一个）" : "评分等级（由低到高，每行一个，从 0 起计）"}
+                    <Input.TextArea aria-label="决策标准" rows={3} value={s.criteria} disabled={disabled} onChange={e => patch({ criteria: e.target.value })} />
+                </label>}
+                {s.decision && <div className="space-y-2 border-t pt-3 text-xs" style={{ borderColor: ctx.theme.toolbar.border }} aria-label="决策结果">
+                    <div className="font-medium" role="status">{jevSummary(s.decision)}</div>
+                    {s.decision.answer.type !== "noul" && <>
+                        <div style={{ color: ctx.theme.node.muted }}>置信度 {(s.decision.answer.confidence * 100).toFixed(1)}%</div>
+                        {Object.entries(s.decision.answer.probabilities).map(([key, value]) => <div key={key} className="flex justify-between gap-4"><span className="min-w-0 break-words">{s.decision!.answer.type === "score" ? `${key} · ${s.decision!.answer.legend[key]}` : key}</span><span className="shrink-0 tabular-nums">{(value * 100).toFixed(1)}%</span></div>)}
+                    </>}
+                    <p className="m-0" style={{ color: ctx.theme.node.muted }}>模型 {s.decision.model}{s.decision.usage ? ` · 输入 ${s.decision.usage.input_tokens} / 输出 ${s.decision.usage.output_tokens} tokens` : ""}。概率为模型判断，供人工复核。</p>
+                    {s.decisionInput !== [s.text, ...sources.map(n => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n") ? <p role="alert">上游内容已改变，请重新运行决策。</p> : <Button type="text" size="small" disabled={disabled} onClick={() => ctx.applyOps(add("text", "JEV 决策结果", { content: `${jevSummary(s.decision!)}\n${JSON.stringify(s.decision, null, 2)}`, status: "success" }))}>输出结果文本</Button>}
+                </div>}
+            </>}
             {["storyboard", "batch", "ocr", "subtitles"].includes(tool) && (
                 <label className="block space-y-1 text-xs">
                     {tool === "subtitles" ? "语音识别模型（需支持时间戳）" : "模型"}
@@ -535,7 +572,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
             )}
             <footer className="flex items-center justify-between border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
                 <span className="text-[11px]" style={{ color: ctx.theme.node.muted }}>
-                    {["storyboard", "ocr", "subtitles", "batch"].includes(tool) ? "模型调用按站点计费" : "本机处理 · 保留原素材"}
+                    {["storyboard", "ocr", "subtitles", "batch", "decision"].includes(tool) ? "模型调用按站点计费" : "本机处理 · 保留原素材"}
                 </span>
                 {batchBusy ? (
                     <Button type="text" size="small" onClick={() => ctx.batch?.pause(ctx.node.id)}>
@@ -558,7 +595,7 @@ export const studioPlugin: CanvasPlugin = {
     id: "studio",
     name: "创作工作流",
     version: "1.0.0",
-    description: "分镜、角色参考、批量生成、对比精选、字幕、OCR 和原始素材导出",
+    description: "分镜、角色参考、批量生成、对比精选、字幕、OCR、JEV 决策和原始素材导出",
     nodes: (Object.keys(studioTools) as StudioTool[]).map((tool) => {
         const Icon = icons[tool];
         return {

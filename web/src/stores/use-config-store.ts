@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ModelCapability = "image" | "video" | "text" | "audio" | "decision";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ChannelModel = {
@@ -22,7 +22,7 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
-    oneYes?: { platform: "openai" | "deepseek" | "grok" | "minimax"; groupId: number; groupName: string; keyId: number; accountId: number };
+    oneYes?: { platform: "openai" | "deepseek" | "grok" | "minimax" | "typesafe"; groupId: number; groupName: string; keyId: number; accountId: number };
 };
 
 export type AiConfig = {
@@ -179,6 +179,7 @@ const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "im
 /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
 export function guessCapability(name: string): ModelCapability {
     const value = name.toLowerCase();
+    if (/^jev(?:-|$)/.test(value)) return "decision";
     if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword)) || /^sd[\s_-]*\d+(?:\.\d+)?$/.test(value)) return "video";
     if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
     if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
@@ -203,6 +204,7 @@ export function modelMatchesCapability(config: AiConfig, value: string, capabili
 }
 
 export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
+    if (capability === "decision") return currentModel || selectableModelsByCapability(config, "decision")[0] || "";
     const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
     const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     for (const model of [currentModel, defaultModel]) {
@@ -326,7 +328,7 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         const name = (typeof item === "string" ? item : item?.name || "").trim();
         if (!name || seen.has(name)) continue;
         seen.add(name);
-        const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
+        const capability = guessCapability(name) === "decision" ? "decision" : typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
         result.push({ name, capability, script });
     }
@@ -452,7 +454,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 /** Keep the built-in provider fixed across edits, imports, and stored settings. */
 export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConfig = defaultConfig): AiConfig {
     const config = { ...defaultConfig, ...input };
-    const source = (Array.isArray(input.channels) ? input.channels : []).find((channel) => channel && !["oneyes-deepseek", GROK_VIDEO_CHANNEL_ID].includes(channel.id) && normalizedBaseUrlKey(channel.baseUrl || "") === OPENAI_BASE_URL);
+    const source = (Array.isArray(input.channels) ? input.channels : []).find((channel) => channel && !["oneyes-deepseek", GROK_VIDEO_CHANNEL_ID, "oneyes-typesafe"].includes(channel.id) && normalizedBaseUrlKey(channel.baseUrl || "") === OPENAI_BASE_URL);
     const channel = createModelChannel({
         ...(source || fallback.channels[0]),
         name: "OneYes",
@@ -462,10 +464,10 @@ export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConf
     });
     const channels = [channel];
     // Fixed OneYes routing slots, never additional provider endpoints.
-    for (const platform of ["deepseek", "grok"] as const) {
+    for (const platform of ["deepseek", "grok", "typesafe"] as const) {
         const id = platform === "grok" ? GROK_VIDEO_CHANNEL_ID : `oneyes-${platform}`;
         const slot = (input.channels || []).find(item => item.id === id && normalizedBaseUrlKey(item.baseUrl || "") === OPENAI_BASE_URL);
-        if (slot) channels.push(createModelChannel({ ...slot, name: `OneYes ${platform === "deepseek" ? "DeepSeek" : "Grok"}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai" }));
+        if (slot) channels.push(createModelChannel({ ...slot, name: `OneYes ${platform === "deepseek" ? "DeepSeek" : platform === "typesafe" ? "JEV" : "Grok"}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai" }));
     }
     if (channel.oneYes?.platform === "openai") channel.name = "OneYes OpenAI";
     return {

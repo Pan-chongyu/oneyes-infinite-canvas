@@ -225,6 +225,7 @@ export type PluginTemplate = { label: string; script: string };
 
 export function getPluginTemplates(): Record<ModelCapability, PluginTemplate[]> {
     return {
+    decision: [],
     image: [
         {
             label: i18n.t("modelPlugin.templates.openai"),

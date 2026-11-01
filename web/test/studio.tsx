@@ -23,6 +23,7 @@ import { exportStudioSources } from "@/services/studio-export";
 import { unzipSync, strFromU8 } from "fflate";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getAntThemeConfig } from "@/lib/app-theme";
+import { defaultConfig, useConfigStore } from "@/stores/use-config-store";
 import type { CanvasNodeData, CanvasConnection } from "@/types/canvas";
 import type { CanvasPluginHost, CanvasPluginAi } from "@/types/canvas-plugin";
 registerBuiltinNodes();
@@ -114,6 +115,12 @@ function Fixture() {
         Content = definition?.Content;
     Object.assign(window, {
         studioTest: {
+            configureJev: () => {
+                window.oneYesDesktop = {} as NonNullable<Window["oneYesDesktop"]>;
+                useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [...defaultConfig.channels, { id: "oneyes-typesafe", name: "JEV", baseUrl: "https://oneyes.ai", apiKey: "fixture-jev-key", apiFormat: "openai", models: [{ name: "jev-latest", capability: "decision" }] }] });
+            },
+            saveJev: () => localforage.setItem("jev-result", ref.current.nodes.find(n => n.id === "tool")),
+            restoredJev: () => localforage.getItem("jev-result"),
             state: () => ref.current,
             calls: () => calls.current,
             requests: () => requests.current,

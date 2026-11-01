@@ -2,6 +2,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { StoryShot, SubtitleCue, StudioTool } from "@/types/studio";
 
 export const studioTools = {
+    decision: { title: "JEV 决策", description: "判断文本、选择方案或按标准评分，查看概率与置信度", action: "运行决策" },
     storyboard: { title: "分镜脚本", description: "将故事拆成可编辑镜头，再连接生图与视频", action: "生成分镜" },
     reference: { title: "角色与风格参考", description: "统一角色、服装、场景与参考图片", action: "输出参考组" },
     batch: { title: "批量任务", description: "逐项生成图片，失败暂停，保留已有任务", action: "开始批量生成" },
@@ -11,7 +12,7 @@ export const studioTools = {
     export: { title: "批量导出", description: "按顺序打包原始素材、提示词和参数", action: "导出 ZIP" },
 };
 export function studioAccepts(tool: StudioTool, type: string) {
-    if (tool === "storyboard") return type === "text";
+    if (tool === "storyboard" || tool === "decision") return type === "text";
     if (tool === "batch") return ["image", "text", "studio:reference"].includes(type);
     if (tool === "subtitles") return ["audio", "video"].includes(type);
     if (tool === "export") return ["image", "video", "audio", "text"].includes(type);

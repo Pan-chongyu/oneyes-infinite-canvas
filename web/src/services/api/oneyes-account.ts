@@ -8,7 +8,8 @@ type Key = { id: number; name: string; key?: string; status: string; group_id: n
 export type Diagnosis = { id: string; name: string; status: "ok" | "error" | "warning"; code: string; detail?: string };
 type AccountCall = <T>(operation: string, args?: Record<string, unknown>) => Promise<T>;
 export const CANVAS_KEY_NAME = "Canvas_无限画布";
-export const platforms = ["openai", "deepseek", "grok"] as const;
+export const platforms = ["openai", "deepseek", "grok", "typesafe"] as const;
+const platformNames = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", typesafe: "JEV" };
 export type Platform = typeof platforms[number];
 export function channelIdForPlatform(platform: Platform, openAiChannelId = "default") {
     if (platform === "openai") return openAiChannelId;
@@ -21,7 +22,7 @@ export async function accountCall<T>(operation: string, args?: Record<string, un
     return result.data as T;
 }
 export function selectGroup(groups: Group[], platform: Platform) {
-    const names = platform === "openai" ? ["svip", "vip"] : [platform === "grok" ? "video" : "deepseek"];
+    const names = platform === "openai" ? ["svip", "vip"] : [platform === "grok" ? "video" : platform === "typesafe" ? "jev" : "deepseek"];
     for (const name of names) {
         const matches = groups.filter(group => group.platform?.trim().toLowerCase() === platform && group.name.trim().toLowerCase() === name);
         if (matches.length > 1) throw new Error(`${platform} / ${name} 存在多个同名分组，请在官网确认`);
@@ -46,16 +47,16 @@ function usable(key: Key) {
     return key.status === "active" && !(key.expires_at && Date.parse(key.expires_at) <= Date.now()) && !(Number(key.quota) > 0 && Number(key.quota_used) >= Number(key.quota));
 }
 function platformModels(names: string[], platform: Platform) {
-    return names.map(name => ({ name, capability: guessCapability(name) })).filter(model => platform === "openai" ? ["image", "text", "video"].includes(model.capability) : model.capability === (platform === "deepseek" ? "text" : "video"));
+    return names.map(name => ({ name, capability: guessCapability(name) })).filter(model => platform === "openai" ? ["image", "text", "video"].includes(model.capability) : model.capability === (platform === "deepseek" ? "text" : platform === "typesafe" ? "decision" : "video"));
 }
-export async function configureManual(config: AiConfig, credentials: Record<Platform, string>, fetchModels = fetchChannelModels) {
+export async function configureManual(config: AiConfig, credentials: Partial<Record<Platform, string>>, fetchModels = fetchChannelModels) {
     const channels: ModelChannel[] = [];
     for (const platform of platforms) {
         const id = channelIdForPlatform(platform, config.channels[0].id);
         const old = config.channels.find(channel => channel.id === id);
-        const apiKey = credentials[platform].trim();
+        const apiKey = credentials[platform]?.trim() || "";
         if (!apiKey && !old) continue;
-        const channel: ModelChannel = { id, name: platform === "openai" ? "OneYes" : `OneYes ${platform === "deepseek" ? "DeepSeek" : "Grok"}`, apiKey, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", models: old?.models || [], ...(apiKey === old?.apiKey ? { oneYes: old.oneYes } : {}) };
+        const channel: ModelChannel = { id, name: platform === "openai" ? "OneYes" : `OneYes ${platformNames[platform]}`, apiKey, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", models: old?.models || [], ...(apiKey === old?.apiKey ? { oneYes: old.oneYes } : {}) };
         if (apiKey && apiKey !== old?.apiKey) {
             channel.models = platformModels(await fetchModels(channel), platform);
             if (!channel.models.length) throw new Error(`${channel.name} 未返回匹配的模型，请检查 Key 分组或在下方编辑模型`);
@@ -91,7 +92,7 @@ export async function configureOneYes(config: AiConfig, user: OneYesUser, call: 
                 ? await call<Key>("key", { account_id: user.id, id: existing.id })
                 : await call<Key>("create_key", { account_id: user.id, group_id: group.id });
             if (!Number.isSafeInteger(key.id) || key.id <= 0 || key.name !== CANVAS_KEY_NAME || !usable(key) || key.group_id !== group.id || !key.key || (key.group?.platform && key.group.platform.toLowerCase() !== platform)) throw new Error("Key 的状态或所属分组已变化，请重新操作");
-            const channel: ModelChannel = { id, name: `OneYes ${platform === "openai" ? "OpenAI" : platform === "deepseek" ? "DeepSeek" : "Grok"}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", apiKey: key.key,
+            const channel: ModelChannel = { id, name: `OneYes ${platformNames[platform]}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", apiKey: key.key,
                 models: [], oneYes: { platform, groupId: group.id, groupName: group.name, keyId: key.id, accountId: user.id } };
             const available = await fetchModels(channel);
             channel.models = platformModels(available, platform);

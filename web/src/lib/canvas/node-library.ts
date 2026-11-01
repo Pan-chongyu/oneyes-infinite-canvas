@@ -14,6 +14,7 @@ const entries: Record<string, [Category, string, string?]> = {
     config: ["基础", "统一生成参数"],
     group: ["基础", "整理画布素材"],
     "studio:storyboard": ["策划", "故事文本 → 分镜脚本", "故事 脚本 镜头 storyboard"],
+    "studio:decision": ["策划", "文本／标准 → 选择、评分与判断", "jev typesafe 决策 分类 概率 判断 score choice noul"],
     "studio:reference": ["策划", "图片／角色说明 → 生成参考", "角色 一致性 风格 reference"],
     "studio:batch": ["策划", "多条提示词／参考图 → 图片", "批处理 队列 batch"],
     "studio:compare": ["图片", "多张原图 → 精选图片", "对照 滑动 compare"],

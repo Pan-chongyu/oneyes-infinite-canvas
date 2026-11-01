@@ -1,6 +1,8 @@
 const { app, BrowserWindow, protocol, net } = require("electron");
 const assert = require("node:assert/strict");
 const {writeFile}=require('node:fs/promises');
+const { createServer } = require('node:http');
+const { createNetwork } = require('../../desktop/network.cjs');
 const { route } = require("../../desktop/protocol.cjs");
 protocol.registerSchemesAsPrivileged([
   {
@@ -17,9 +19,37 @@ app.setPath("userData", process.env.CANVAS_STUDIO_TEST_PROFILE);
 app
   .whenReady()
   .then(async () => {
-    protocol.handle("oneyes-canvas", (request) =>
-      net.fetch(route(request.url, process.env.CANVAS_STUDIO_TEST_ROOT).file),
-    );
+    const decisions = [];
+    let releaseDecision;
+    const upstream = createServer(async (req, res) => {
+      try {
+        assert.equal(req.url, '/v1/systemone');
+        assert.equal(req.method, 'POST');
+        assert.equal(req.headers.authorization, 'Bearer fixture-jev-key');
+        assert.equal(req.headers['typesafe-danger-zone-images'], undefined);
+        const parts = []; for await (const part of req) parts.push(part);
+        const body = JSON.parse(Buffer.concat(parts).toString()); decisions.push(body);
+        assert.equal(body.model, 'jev-latest');
+        const q = body.questions.decision;
+        if (body.state === 'hold') await new Promise(resolve => { releaseDecision = resolve; });
+        if (body.state === 'auth-failure') { res.writeHead(403); res.end('private upstream details'); return; }
+        const keys = q.type === 'score' ? q.criteria.map((_, i) => String(i)) : q.type === 'choice' ? Object.keys(q.criteria) : [];
+        const probabilities = Object.fromEntries(keys.map((key, i) => [key, i === 0 ? 0.8 : 0.2 / (keys.length - 1)]));
+        const answer = q.type === 'noul' ? { type: 'noul', noul: 0.9 } : q.type === 'choice' ? { type: 'choice', choice: keys[0], confidence: 0.8, probabilities } : { type: 'score', score: 0.2, confidence: 0.8, probabilities, legend: Object.fromEntries(keys.map(key => [key, q.criteria[Number(key)]])) };
+        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ model: 'jev-fixture', answers: { decision: answer }, usage: { input_tokens: 10, output_tokens: 2 } }));
+      } catch (error) { console.error(error); res.writeHead(500); res.end('fixture failed'); }
+    });
+    await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+    const network = await createNetwork((url, init) => {
+      assert.equal(url, 'https://oneyes.ai/v1/systemone');
+      return net.fetch(`http://127.0.0.1:${upstream.address().port}/v1/systemone`, init);
+    });
+    protocol.handle("oneyes-canvas", async request => {
+      const target = route(request.url, process.env.CANVAS_STUDIO_TEST_ROOT);
+      if (target.file) return net.fetch(target.file);
+      assert.deepEqual(target.apis, ['https://oneyes.ai/v1/systemone', 'https://api.oneyes.ai/v1/systemone']);
+      return network.fetch(target.apis[0], { method: request.method, headers: Object.fromEntries(request.headers), body: await request.arrayBuffer(), signal: request.signal, redirect: 'manual' });
+    });
     const win = new BrowserWindow({
         show: false,
         width: 1100,
@@ -55,6 +85,10 @@ app
       await win.loadURL(process.argv[2]);
       await wait("Boolean(window.studioTest)");
       if (process.env.CANVAS_STUDIO_TEST_PHASE === "restore") {
+        const saved = await js('studioTest.restoredJev()');
+        assert.equal(saved.metadata.studio.decision.answer.choice, '保留');
+        assert.equal(saved.metadata.status, 'success');
+        assert.equal(decisions.length, 0, 'restart must not replay a decision');
         assert.equal(
           await js("studioTest.calls().length"),
           0,
@@ -78,6 +112,43 @@ app
         app.exit(0);
         return;
       }
+      await js('studioTest.configureJev();studioTest.tool("decision",[],{text:"创意方案",question:"选择处理方式",questionType:"choice",criteria:"保留\\n修改"})');
+      await wait('document.querySelector("[data-studio-panel=decision]")');
+      await click('运行决策');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="success"');
+      assert.equal(decisions.length, 1);
+      assert.deepEqual(decisions[0].questions.decision, { type: 'choice', instructions: '选择处理方式', criteria: { 保留: '保留', 修改: '修改' } });
+      await wait('document.body.textContent.includes("置信度 80.0%")');
+      await screenshot('-jev-light');
+      await js('studioTest.theme(true)');
+      await screenshot('-jev-dark');
+      await js('studioTest.theme(false);studioTest.saveJev()');
+      await click('输出结果文本');
+      assert.match(await js('studioTest.state().nodes.find(n=>n.type==="text").metadata.content'), /选择：保留/);
+      assert.ok(!JSON.stringify(await js('studioTest.state()')).includes('fixture-jev-key'));
+      await js('studioTest.tool("decision",[],{text:"评分",question:"质量",questionType:"score",criteria:"低\\n高"})');
+      await click('运行决策');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="success"');
+      assert.match(await js('document.body.textContent'), /评分：0.2 \/ 1/);
+      await js('studioTest.tool("decision",[],{text:"auth-failure",question:"是吗"})');
+      await click('运行决策');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.match(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.errorDetails'), /诊断 Key 和 JEV 分组权限/);
+      assert.equal(decisions.length, 3, 'HTTP failure is not retried');
+      await js('studioTest.tool("decision",[],{text:"hold",question:"是吗"})');
+      await click('运行决策');
+      await wait('document.body.textContent.includes("停止等待")');
+      const deadline = Date.now() + 20000;
+      while (!releaseDecision) { if (Date.now() > deadline) throw Error('JEV fixture did not receive the request'); await new Promise(resolve=>setTimeout(resolve,25)); }
+      await click('停止等待');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      releaseDecision();
+      assert.equal(decisions.length, 4, 'cancel never replays the paid request');
+      await js('studioTest.tool("decision",[],{text:"判断文本",question:"选择",questionType:"choice",criteria:"重复\\n重复"})');
+      await click('运行决策');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.equal(decisions.length, 4, 'invalid criteria never reaches the model');
+      console.log('JEV_NATIVE_OK: typed decisions through native protocol and HTTP, own key, error and cancellation without replay, persistence, both themes');
       await js('studioTest.library()');
       await wait('document.querySelector("[aria-label=搜索节点或流程]")===document.activeElement');
       await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');

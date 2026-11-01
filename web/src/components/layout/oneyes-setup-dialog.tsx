@@ -1,5 +1,5 @@
 import { Alert, Button, Modal, Steps, theme } from "antd";
-import { CheckCircle2, CircleAlert, CircleDashed, Image, MessageSquare, Video, WandSparkles } from "lucide-react";
+import { CheckCircle2, CircleAlert, CircleDashed, GitBranch, Image, MessageSquare, Video, WandSparkles } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -40,6 +40,7 @@ function SetupContent() {
         { id: config.channels[0].id, name: "OpenAI", purpose: "imageText", group: "SVIP / VIP", icon: Image },
         { id: "oneyes-deepseek", name: "DeepSeek", purpose: "text", group: "DeepSeek", icon: MessageSquare },
         { id: GROK_VIDEO_CHANNEL_ID, name: "Grok", purpose: "video", group: "Video", icon: Video },
+        { id: "oneyes-typesafe", name: "TypeSafe / Jev", purpose: "decision", group: "JEV", icon: GitBranch },
     ];
     const close = () => { if (!busy) useConfigStore.getState().closeSetup(); };
     const configure = async () => {
@@ -50,7 +51,7 @@ function SetupContent() {
         <div className="mb-6 mt-5"><Steps size="small" responsive={false} current={step} items={["login", "configure", "done"].map(key => ({ title: t(`config.onboarding.steps.${key}`) }))} /></div>
         <motion.div key={`${step}-${manual}`} initial={reduceMotion ? false : { opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.18 }}>
             <h2 className="mb-2 text-xl font-semibold tracking-tight">{t(`config.onboarding.${step === 0 ? "loginTitle" : result ? (verified.length ? "doneTitle" : "failedTitle") : "configureTitle"}`)}</h2>
-            <p className="mb-5 text-sm leading-relaxed text-muted-foreground">{t(`config.onboarding.${step === 0 ? "loginHint" : result ? (verified.length ? (verified.length === 3 ? "doneHint" : "partialHint") : "failedHint") : manual ? "manualHint" : "configureHint"}`)}</p>
+            <p className="mb-5 text-sm leading-relaxed text-muted-foreground">{t(`config.onboarding.${step === 0 ? "loginHint" : result ? (verified.length ? (verified.length === services.length ? "doneHint" : "partialHint") : "failedHint") : manual ? "manualHint" : "configureHint"}`)}</p>
             {step === 0 ? <>
                 <OneYesLoginForm />
                 <div className="mt-4 flex flex-wrap justify-between gap-2 border-t border-border pt-3">
@@ -78,9 +79,9 @@ function SetupContent() {
                 {account.error && <Alert className="mt-4" type="error" showIcon title={account.error} />}
                 <p className="mb-4 mt-3 text-xs leading-relaxed text-muted-foreground">{t(manual ? "config.onboarding.manualChecked" : "config.onboarding.keyHint")}</p>
                 {result && verified.length > 0 ? <Button block type="primary" disabled={busy} icon={<CheckCircle2 className="size-4" />} onClick={() => { useConfigStore.getState().closeSetup("completed"); navigate("/"); }}>{t("config.onboarding.start")}</Button> : <Button block type="primary" loading={busy} icon={<WandSparkles className="size-4" />} onClick={() => account.user ? void configure() : (setResult(false), setManual(true))}>{t(result ? (account.user ? "config.onboarding.retry" : "config.account.manual") : "config.onboarding.configure")}</Button>}
-                {result && verified.length > 0 && verified.length < 3 && account.user && <Button block type="text" className="mt-2" loading={busy} onClick={() => void configure()}>{t("config.onboarding.retry")}</Button>}
+                {result && verified.length > 0 && verified.length < services.length && account.user && <Button block type="text" className="mt-2" loading={busy} onClick={() => void configure()}>{t("config.onboarding.retry")}</Button>}
             </>}
-            {desktop && step !== 0 && (!result || verified.length < 3) && <Button block type="text" className="mt-2" disabled={busy} onClick={() => { setResult(false); setManual(!manual); }}>{t(manual ? "config.onboarding.useAccount" : "config.account.manual")}</Button>}
+            {desktop && step !== 0 && (!result || verified.length < services.length) && <Button block type="text" className="mt-2" disabled={busy} onClick={() => { setResult(false); setManual(!manual); }}>{t(manual ? "config.onboarding.useAccount" : "config.account.manual")}</Button>}
         </motion.div>
         {(!result || !verified.length) && <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-3"><span className="text-xs text-muted-foreground">{t("config.onboarding.laterHint")}</span><Button type="text" size="small" disabled={busy} onClick={close}>{t("config.onboarding.later")}</Button></div>}
     </Modal>;

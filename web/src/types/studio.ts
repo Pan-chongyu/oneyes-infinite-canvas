@@ -1,4 +1,5 @@
-export type StudioTool = "storyboard" | "reference" | "batch" | "compare" | "subtitles" | "ocr" | "export";
+import type { JevQuestion, JevResult } from "@/services/api/jev";
+export type StudioTool = "storyboard" | "reference" | "batch" | "compare" | "subtitles" | "ocr" | "export" | "decision";
 export type StoryShot = { title: string; picture: string; dialogue: string; seconds: number; camera: string };
 export type SubtitleCue = { start: number; end: number; text: string };
 export type BatchItem = { id: string; prompt: string; state: "pending" | "started" | "done" };
@@ -15,4 +16,9 @@ export type StudioSettings = {
     role?: string;
     outfit?: string;
     style?: string;
+    questionType?: JevQuestion["type"];
+    question?: string;
+    criteria?: string;
+    decision?: JevResult;
+    decisionInput?: string;
 };

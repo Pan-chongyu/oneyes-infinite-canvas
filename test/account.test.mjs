@@ -89,6 +89,9 @@ test('Canvas key creation accepts only the Grok Video group for video access', a
         if (url.endsWith('/groups/available')) return ok([
             { id: 4, name: 'Video', platform: 'Grok' },
             { id: 5, name: 'Video', platform: 'MiniMax' },
+            { id: 18, name: 'JEV', platform: 'TypeSafe' },
+            { id: 19, name: 'JEV', platform: 'OpenAI' },
+            { id: 20, name: 'JEV-test', platform: 'TypeSafe' },
         ]);
         if (url.endsWith('/keys') && options.method === 'POST') {
             const payload = JSON.parse(options.body);
@@ -104,6 +107,10 @@ test('Canvas key creation accepts only the Grok Video group for video access', a
     assert.deepEqual(created, [{ name: 'Canvas_无限画布', group_id: 4 }]);
     await assert.rejects(account.call('create_key', { account_id: 7, group_id: 5 }), /不能用于 Canvas/);
     assert.equal(created.length, 1);
+    assert.equal((await account.call('create_key', { account_id: 7, group_id: 18 })).group_id, 18);
+    await assert.rejects(account.call('create_key', { account_id: 7, group_id: 19 }), /不能用于 Canvas/);
+    await assert.rejects(account.call('create_key', { account_id: 7, group_id: 20 }), /不能用于 Canvas/);
+    assert.equal(created.length, 2);
 });
 test('native broker uses OS-local IPC and a capability instead of passing credentials in URLs', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-broker-'));

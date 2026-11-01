@@ -31,7 +31,7 @@ export function OneYesManualForm({ onSaved, onBusyChange }: { onSaved: () => voi
     const [error, setError] = useState("");
     const channels = useConfigStore.getState().config.channels;
     const grokChannel = channels.find(channel => channel.id === GROK_VIDEO_CHANNEL_ID);
-    return <Form layout="vertical" requiredMark={false} initialValues={{ openai: channels[0].apiKey, deepseek: channels.find(channel => channel.id === "oneyes-deepseek")?.apiKey || "", grok: grokChannel?.oneYes?.platform === "minimax" ? "" : grokChannel?.apiKey || "" }} onFinish={async (values: Record<Platform, string>) => {
+    return <Form layout="vertical" requiredMark={false} initialValues={{ openai: channels[0].apiKey, deepseek: channels.find(channel => channel.id === "oneyes-deepseek")?.apiKey || "", typesafe: channels.find(channel => channel.id === "oneyes-typesafe")?.apiKey || "", grok: grokChannel?.oneYes?.platform === "minimax" ? "" : grokChannel?.apiKey || "" }} onFinish={async (values: Record<Platform, string>) => {
         if (!Object.values(values).some(value => value?.trim())) { setError(t("config.onboarding.needKey")); return; }
         setBusy(true); onBusyChange(true); setError("");
         try {
@@ -45,6 +45,7 @@ export function OneYesManualForm({ onSaved, onBusyChange }: { onSaved: () => voi
         <Form.Item name="openai" label="OpenAI · SVIP / VIP"><Input.Password disabled={busy} autoComplete="off" placeholder="sk-..." /></Form.Item>
         <Form.Item name="deepseek" label="DeepSeek · DeepSeek"><Input.Password disabled={busy} autoComplete="off" placeholder="sk-..." /></Form.Item>
         <Form.Item name="grok" label="Grok · Video"><Input.Password disabled={busy} autoComplete="off" placeholder="sk-..." /></Form.Item>
+        <Form.Item name="typesafe" label="TypeSafe / Jev · JEV"><Input.Password disabled={busy} autoComplete="off" placeholder="JEV 分组的 Key" /></Form.Item>
         {error && <Alert className="mb-4" type="error" showIcon title={error} />}
         <Button htmlType="submit" type="primary" block loading={busy}>{t("config.account.saveManual")}</Button>
     </Form>;

@@ -23,7 +23,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const [manualConfigured, setManualConfigured] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
     const request = useRef(0);
-    const capabilities = ["image", "text", "video", "audio"] as const;
+    const capabilities = ["image", "text", "video", "audio", "decision"] as const;
     const capabilityOptions = capabilities.map(value => ({ label: t(`config.channelEditor.capabilities.${value}`), value }));
 
     const loadModels = async (target: ModelChannel) => {
@@ -48,8 +48,8 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     if (!draft) return null;
 
-    const platform = draft.id === GROK_VIDEO_CHANNEL_ID ? "grok" : draft.oneYes?.platform || (draft.id === "oneyes-deepseek" ? "deepseek" : "openai");
-    const name = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", minimax: "MiniMax" }[platform];
+    const platform = draft.id === GROK_VIDEO_CHANNEL_ID ? "grok" : draft.oneYes?.platform || (draft.id === "oneyes-deepseek" ? "deepseek" : draft.id === "oneyes-typesafe" ? "typesafe" : "openai");
+    const name = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", minimax: "MiniMax", typesafe: "TypeSafe / Jev" }[platform];
     const selected = new Set(draft.models.map(model => model.name));
     const missing = available === null ? [] : draft.models.filter(model => !available.includes(model.name));
     const keyword = search.trim().toLowerCase();
@@ -112,7 +112,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         <Collapse key={`${draft.id}:${open}`} ghost className="mt-4" expandIcon={({ isActive }) => <ChevronRight className={`size-3.5 motion-safe:transition-transform motion-safe:duration-200 ${isActive ? "rotate-90" : ""}`} />} items={[{ key: "advanced", label: <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><Settings2 className="size-3.5" />{t("config.channelEditor.advanced")}</span>, children: <div>
             <p className="mb-3 mt-0 text-xs text-muted-foreground">{t("config.channelEditor.advancedHint")}</p>
             <div className="mb-4 flex gap-2"><Input aria-label={t("config.modelSelect.modelName")} value={manual} placeholder={t("config.modelSelect.modelName")} onChange={event => setManual(event.target.value)} onPressEnter={addManual} /><Button onClick={addManual}>{t("config.modelSelect.add")}</Button></div>
-            <div className="space-y-3">{draft.models.map(model => <div key={model.name} className="flex flex-wrap items-center gap-2"><span className="min-w-0 flex-1 break-all text-xs">{model.name}</span><Select aria-label={t("config.channelEditor.modelCapability", { name: model.name })} size="small" value={model.capability} options={capabilityOptions} onChange={capability => updateModel(model.name, { capability })} /><Button size="small" onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>{t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}</Button></div>)}</div>
+            <div className="space-y-3">{draft.models.map(model => <div key={model.name} className="flex flex-wrap items-center gap-2"><span className="min-w-0 flex-1 break-all text-xs">{model.name}</span><Select disabled={model.capability === "decision"} aria-label={t("config.channelEditor.modelCapability", { name: model.name })} size="small" value={model.capability} options={capabilityOptions} onChange={capability => updateModel(model.name, { capability })} /><Button disabled={model.capability === "decision"} size="small" onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>{t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}</Button></div>)}</div>
         </div> }]} />
         <ModelScriptEditor open={Boolean(scriptTarget)} capability={scriptTarget?.capability || "text"} modelName={scriptTarget?.name || ""} value={scriptTarget?.value || ""} onSave={script => scriptTarget && updateModel(scriptTarget.name, { script: script || undefined })} onClose={() => setScriptTarget(null)} />
     </Drawer>;
