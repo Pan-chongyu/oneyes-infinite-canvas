@@ -62,8 +62,8 @@ app.whenReady().then(async()=>{
   await js('document.querySelector("button[aria-label^=解锁]").click()');await wait('!document.querySelector("input[aria-label=物体名称]").disabled');
   await js('document.querySelector("button[aria-label^=隐藏]").click()');await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].visible===false');
   await click('撤销');await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].visible!==false');
-  await settings('camera');await click('保存当前机位');await wait('directorTest.state().nodes[0].metadata.directorScene.shots.length===1');
-  const saved=await js('directorTest.state().nodes[0].metadata.directorScene.shots[0]');
+  await settings('camera');const shotCount=await js('directorTest.state().nodes[0].metadata.directorScene.shots?.length||0');await click('保存当前机位');await wait(`directorTest.state().nodes[0].metadata.directorScene.shots.length===${shotCount+1}`);
+  const saved=await js('directorTest.state().nodes[0].metadata.directorScene.shots.at(-1)');
   await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
   await click('恢复此机位');await wait(`directorTest.state().nodes[0].metadata.directorScene.camera.lens===${saved.camera.lens}`);
   const restored=await js('directorTest.state().nodes[0].metadata.directorScene');assert.deepEqual(restored.camera,saved.camera);assert.equal(restored.width,saved.width);assert.equal(restored.height,saved.height);
@@ -75,7 +75,7 @@ app.whenReady().then(async()=>{
    assert.ok(process.env.CI && process.platform==='darwin' && process.arch==='x64','real WebGL is required outside the known GPU-less Intel Mac runner');
    assert.match(app.getGPUFeatureStatus().webgl,/disabled|unavailable/,'runner must explicitly report unavailable graphics');
    if(process.env.CANVAS_DIRECTOR_TEST_PHASE==='restore'){
-    const state=await js('directorTest.state()');assert.equal(state.nodes[0].metadata.directorScene.camera.lens,85);assert.equal(state.nodes.filter(n=>n.type==='image').length,0);
+    const state=await js('directorTest.state()');assert.equal(state.nodes[0].metadata.directorScene.camera.lens,85);assert.equal(state.nodes[0].metadata.directorScene.shots.length,1);assert.equal(state.nodes.filter(n=>n.type==='image').length,0);
    }else{
     assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});await js('directorTest.configure()');
    }
@@ -91,6 +91,7 @@ app.whenReady().then(async()=>{
    const state=await js('directorTest.state()');assert.equal(state.nodes.find(n=>n.id==='director').metadata.directorScene.camera.lens,85);assert.equal(state.nodes.filter(n=>n.type==='image').length,2);
    const image=await js('directorTest.image()');assert.equal(image.width,321);assert.equal(image.height,197);assert.ok(image.colors>30);
    await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas")');await settings('camera');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');assert.equal(state.nodes[0].metadata.directorScene.shots.length,1);await verifyDismissal();
+   await verifyEditing();assert.equal(await js('directorTest.state().nodes[0].metadata.directorScene.shots.length'),2,'adding a shot after restart preserves the saved shot');
    await js('directorTest.switch()');await wait('!document.querySelector("[data-director-editor]")');assert.equal((await js('directorTest.state()')).projectId,'B');
    console.log('DIRECTOR_RESTART_OK: scene/lens, original PNG storage, project isolation');
   }else{
