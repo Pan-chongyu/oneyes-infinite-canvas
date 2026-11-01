@@ -4,20 +4,38 @@ const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const run = promisify(execFile);
 
-async function launch(command, args) {
-    const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
-    await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+async function launch(command, args, { cwd, ready = false } = {}) {
+    // A normal PowerShell bootstrap starts the independent Windows worker.
+    // DETACHED_PROCESS can exit 0 without executing PowerShell at all.
+    const child = spawn(command, args, { cwd, detached: !ready, stdio: ready ? ['ignore', 'pipe', 'ignore'] : 'ignore', windowsHide: true });
+    await new Promise((resolve, reject) => {
+        const failed = () => reject(new Error('无法启动 Windows 更新助手，请检查安全软件或系统权限后重试；当前应用未关闭'));
+        child.once('error', ready ? failed : reject);
+        if (!ready) { child.once('spawn', resolve); return; }
+        child.once('exit', failed);
+        let output = '';
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', chunk => {
+            output += chunk;
+            if (/^ONEYES_UPDATE_READY\r?\n/.test(output)) {
+                child.removeListener('exit', failed);
+                child.stdout.unref();
+                resolve();
+            }
+        });
+    });
     child.unref();
 }
 async function prepareInstall(plan, { parentPid = process.pid, command = run, start = launch } = {}) {
-    const { platform, format, destination, executable, file, folder, root, version } = plan;
+    const { platform, format, destination, executable, file, folder, root, version, sha256 } = plan;
     const errorFile = path.join(root, 'install-error.txt');
     await fs.rm(path.join(root, `installed-${version}.ok`), { force: true });
     if (platform === 'win32') {
         const config = path.join(folder, 'install-plan.json'), helper = path.join(folder, 'install.ps1');
-        await fs.writeFile(config, JSON.stringify({ parentPid, destination, executable, file, errorFile }), { mode: 0o600 });
+        await fs.rm(path.join(folder, 'install-ready'), { force: true });
+        await fs.writeFile(config, JSON.stringify({ parentPid, destination, executable, file, errorFile, version, sha256 }), { mode: 0o600 });
         await fs.copyFile(path.join(__dirname, 'update-windows.ps1'), helper);
-        return () => start('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-PlanPath', config]);
+        return () => start(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', helper, '-PlanPath', config], { cwd: root, ready: true });
     }
     const helper = path.join(folder, 'install.sh');
     await fs.copyFile(path.join(__dirname, 'update-unix.sh'), helper);

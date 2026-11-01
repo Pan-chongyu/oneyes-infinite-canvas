@@ -215,7 +215,7 @@ test('corrupt/truncated downloads and network failures are retryable and never i
     await assert.rejects(access(join(f.directory, 'ota/0.21.0')));
     await writeFile(join(f.directory, 'ota/install-error.txt'), 'cancelled');
     const restarted = createUpdater(f.options); t.after(() => restarted.close()); await restarted.start();
-    assert.equal(restarted.state().status, 'error'); assert.match(restarted.state().error, /当前版本已保留/);
+    assert.equal(restarted.state().status, 'error'); assert.match(restarted.state().error, /上次更新未完成/);
     await restarted.check(); assert.equal(restarted.state().status, 'ready');
 });
 test('checks are serialized and stop after shutdown; unknown formats never install', async t => {
@@ -238,13 +238,24 @@ test('native hardware selection handles Windows emulation and Rosetta independen
 });
 test('installer plans use quoted argument arrays, verify macOS identity and retain original until successful startup', async t => {
     const root = await mkdtemp(join(tmpdir(), 'canvas-plan-')); t.after(() => rm(root, { recursive: true, force: true }));
-    const plan = { ...target, root, folder: root, file: join(root, 'setup.exe'), version: '0.21.0' }, starts = [];
+    const plan = { ...target, root, folder: root, file: join(root, 'setup.exe'), version: '0.21.0', sha256: 'a'.repeat(64) }, starts = [];
     const apply = await prepareInstall(plan, { parentPid: 123, start: async (...args) => starts.push(args) });
-    await apply(); assert.equal(starts[0][0], 'powershell.exe');
+    await apply(); assert.ok(starts[0][0].endsWith('\\WindowsPowerShell\\v1.0\\powershell.exe'));assert.deepEqual(starts[0][2],{cwd:root,ready:true});
     assert.deepEqual(JSON.parse(await readFile(join(root, 'install-plan.json'), 'utf8')).destination, target.destination);
+    assert.equal(JSON.parse(await readFile(join(root, 'install-plan.json'), 'utf8')).sha256,plan.sha256);
     const mac = { ...plan, platform: 'darwin', format: 'zip', destination: join(root, 'OneYes Canvas.app'), executable: join(root, 'OneYes Canvas.app/Contents/MacOS/OneYes Canvas') };
     await assert.rejects(prepareInstall(mac, { command: async () => ({ stdout: 'other.app' }) }), /身份/);
     const script = await readFile('desktop/update-unix.sh', 'utf8'); assert.match(script, /while \[ ! -f "\$ack" \]/); assert.match(script, /mv "\$backup" "\$destination"/);
+});
+
+test('Windows installer failure markers explain the failed stage without raw helper output and permit retry', async t => {
+    for (const [stage, message] of [['prepare', '更新助手'], ['integrity', '校验失败'], ['installer', '系统授权'], ['version', '未替换为新版本'], ['launch', '未能重新打开']]) {
+        const f = await fixture(t), errorFile = join(f.directory, 'ota/install-error.txt');
+        await mkdir(join(f.directory, 'ota')); await writeFile(errorFile, '\ufeffwindows-' + stage + '\r\n');
+        await f.updater.start(); assert.equal(f.updater.state().status, 'error'); assert.ok(f.updater.state().error.includes(message));
+        assert.equal(f.requests.length, 0); await assert.rejects(access(errorFile));
+        await f.updater.check(); assert.equal(f.updater.state().status, 'ready');
+    }
 });
 test('Linux AppImage helper replaces and reopens, rolls back a failed launch without deleting the installed version', { skip: process.platform !== 'linux' }, async t => {
     const root = await mkdtemp(join(tmpdir(), 'canvas-install-')); t.after(() => rm(root, { recursive: true, force: true }));

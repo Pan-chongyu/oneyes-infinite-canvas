@@ -97,8 +97,12 @@ app.whenReady().then(async () => {
         await js('updateTest.agentBusy(true);Array.from(document.querySelectorAll("section button")).find(x=>x.textContent === "更新并重启").click()');
         await js('new Promise(resolve => setTimeout(resolve, 100))');
         assert.ok(!(await js('updateTest.state().operations')).includes('install'));
-        await js('updateTest.agentBusy(false);Array.from(document.querySelectorAll("section button")).find(x=>x.textContent === "更新并重启").click()');
+        await js('updateTest.agentBusy(false);updateTest.pauseSave();Array.from(document.querySelectorAll("section button")).find(x=>x.textContent === "更新并重启").click()');
+        await wait('document.querySelector("section > button").disabled && document.querySelector("section > button").textContent.includes("正在保存画布")');
+        await js('document.querySelector("section > button").click()');assert.ok(!(await js('updateTest.state().operations')).includes('install'),'saving must complete before installation');
+        await js('updateTest.resumeSave()');
         await wait('updateTest.state().operations.includes("install")');
+        assert.equal((await js('updateTest.state().operations')).filter(op=>op==='install').length,1,'duplicate clicks share one installation');
         assert.equal(await js('updateTest.saved()'), 'OTA 未落盘画布');
         await js('updateTest.status("downloading")');
         await wait('document.querySelector("[role=progressbar]")');

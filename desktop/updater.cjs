@@ -211,7 +211,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                 const file = path.join(ready.folder, verified.file);
                 await validateFile(file, verified);
                 if (closed) return;
-                try { await install({ ...selected, file, version: verified.version, folder: ready.folder, root }); }
+                try { await install({ ...selected, file, version: verified.version, sha256: verified.sha256, folder: ready.folder, root }); }
                 catch (error) { error.userMessage = error.message; throw error; }
             })().catch(error => { if (!closed) failure(error); }).finally(() => { installation = null; });
             return installation;
@@ -222,7 +222,16 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             try {
                 const error = await fs.readFile(path.join(root, 'install-error.txt'), 'utf8');
                 await fs.rm(path.join(root, 'install-error.txt'), { force: true });
-                if (error) emit({ status: 'error', error: '上次更新未完成，当前版本已保留。请点击重试；macOS 请确认应用位于“应用程序”，Linux 请完成系统授权' });
+                if (error) {
+                    const detail = {
+                        'windows-prepare': 'Windows 更新助手未能读取更新文件，请检查安全软件和文件权限后重试',
+                        'windows-integrity': '更新包校验失败，已停止安装，请重新检查更新',
+                        'windows-installer': 'Windows 安装未完成，请完成系统授权，并检查安全软件及安装目录权限后重试',
+                        'windows-version': 'Windows 安装程序未替换为新版本，请检查安装目录权限后重试',
+                        'windows-launch': '更新已安装但未能重新打开，请重新启动 OneYes Canvas',
+                    }[error.trim()];
+                    emit({ status: 'error', error: detail || '上次更新未完成，请点击重试；Windows 请检查系统授权或安全软件，macOS 请确认应用位于“应用程序”，Linux 请完成系统授权' });
+                }
             } catch {}
             if (state.status !== 'error') await this.check();
             timer = setInterval(() => void this.check(), CHECK_INTERVAL); timer.unref?.();

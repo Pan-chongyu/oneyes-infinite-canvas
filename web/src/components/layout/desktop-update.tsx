@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, RefreshCw, RotateCw, X } from "lucide-react";
 import { App } from "antd";
 import { desktopUpdate, useDesktopUpdateStore } from "@/stores/use-desktop-update-store";
@@ -8,6 +8,7 @@ import { flushCanvasStorage } from "@/stores/canvas/use-canvas-store";
 export function DesktopUpdate() {
     const state = useDesktopUpdateStore();
     const [open, setOpen] = useState(false);
+    const [saving, setSaving] = useState(false), installing = useRef(false);
     const { message } = App.useApp();
     useEffect(() => {
         const api = window.oneYesDesktop?.updates;
@@ -17,16 +18,21 @@ export function DesktopUpdate() {
         return unsubscribe;
     }, []);
     if (!window.oneYesDesktop?.updates) return null;
-    const busy = ['checking', 'downloading', 'installing'].includes(state.status);
+    const busy = saving || ['checking', 'downloading', 'installing'].includes(state.status);
     const ready = state.status === 'ready';
     const Icon = busy ? RotateCw : ready ? Download : RefreshCw;
-    const label = ready ? `v${state.version} 已就绪` : state.status === 'downloading' ? `下载更新 ${state.progress}%` : state.status === 'checking' ? '检查更新中' : state.status === 'installing' ? '正在安装更新' : state.status === 'error' ? '更新遇到问题' : `v${state.currentVersion}`;
+    const label = saving ? '正在保存画布…' : ready ? `v${state.version} 已就绪` : state.status === 'downloading' ? `下载更新 ${state.progress}%` : state.status === 'checking' ? '检查更新中' : state.status === 'installing' ? '正在安装更新' : state.status === 'error' ? '更新遇到问题' : `v${state.currentVersion}`;
     const install = async () => {
+        if (installing.current) return;
         const agent = useAgentStore.getState();
         if (agent.sending || agent.waiting) { message.info('请等待当前对话任务结束后再更新'); return; }
-        try { await flushCanvasStorage(); }
-        catch { message.error('画布尚未保存成功，请重试后再更新'); return; }
-        await desktopUpdate('install');
+        installing.current = true; setSaving(true);
+        try {
+            try { await flushCanvasStorage(); }
+            catch { message.error('画布尚未保存成功，请重试后再更新'); return; }
+            setSaving(false);
+            await desktopUpdate('install');
+        } finally { installing.current = false; setSaving(false); }
     };
     return <div className="fixed bottom-3 left-3 z-[1300] max-w-[calc(100vw-24px)] text-foreground" data-canvas-no-zoom>
         {open ? <section aria-label="软件更新" className="mb-2 w-[280px] max-w-full rounded-xl border border-border bg-popover p-3 shadow-lg">
@@ -38,7 +44,7 @@ export function DesktopUpdate() {
             {state.error ? <p role="alert" className="mb-0 mt-3 text-xs leading-5 text-muted-foreground">{state.error}</p> : null}
             {state.status === 'downloading' ? <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={state.progress} aria-valuemin={0} aria-valuemax={100} aria-label="更新下载进度"><div className="h-full bg-foreground transition-[width] motion-reduce:transition-none" style={{ width: `${state.progress}%` }} /></div> : null}
             {ready ? <p className="mb-0 mt-3 text-xs text-muted-foreground">点击后安装并重新打开应用；请先结束正在运行的生成任务。</p> : null}
-            <button type="button" disabled={busy || !state.supported} aria-busy={busy || undefined} onClick={() => ready ? void install() : void desktopUpdate('check')} style={{ color: 'var(--primary-foreground)' }} className="mt-3 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium disabled:cursor-default disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Icon className={`size-3 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} />{ready ? '更新并重启' : state.status === 'error' ? '重试更新' : busy ? label : '检查更新'}</button>
+            <button type="button" disabled={busy || !state.supported} aria-busy={busy || undefined} onClick={() => ready ? void install() : void desktopUpdate('check')} style={{ color: 'var(--primary-foreground)' }} className="mt-3 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium disabled:cursor-default disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Icon className={`size-3 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} />{busy ? label : ready ? '更新并重启' : state.status === 'error' ? '重试更新' : '检查更新'}</button>
         </section> : null}
         <button onClick={() => setOpen(!open)} aria-expanded={open} title={ready ? `v${state.version} 已就绪，点击更新` : '软件更新'} className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${ready ? 'bg-popover text-foreground shadow-sm' : 'text-muted-foreground'}`}>
             <Icon className={`size-3 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /><span aria-live="polite">{label}</span>{ready ? <span className="size-1.5 rounded-full bg-emerald-500" /> : null}
