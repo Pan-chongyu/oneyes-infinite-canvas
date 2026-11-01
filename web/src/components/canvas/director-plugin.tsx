@@ -42,7 +42,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
             {error && <p role="alert" className="max-h-16 overflow-auto text-xs">{error}</p>}
             <Button type="text" className="self-start" size="small" icon={<Camera size={14} />} onPointerDown={event => event.stopPropagation()} onClick={start}>打开导演台</Button>
         </div>
-        <Modal title="3D 导演台" open={open} width="min(1180px, calc(100vw - 32px))" centered footer={null} destroyOnHidden onCancel={() => { controller.current?.abort(); setOpen(false); }} styles={{ body: { paddingTop: 8 } }}>
+        <Modal title="3D 导演台" open={open} width="min(1180px, calc(100vw - 32px))" centered footer={null} destroyOnHidden data-canvas-shortcuts-ignore data-canvas-no-zoom onCancel={() => { controller.current?.abort(); setOpen(false); }} styles={{ body: { paddingTop: 8 } }}>
             {open && scene && <Suspense fallback={<div className="flex min-h-80 items-center justify-center gap-2 text-sm" role="status"><LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" />正在准备导演台…</div>}><Editor scene={scene} theme={ctx.theme} onChange={change} onCapture={capture} /></Suspense>}
         </Modal>
     </>;

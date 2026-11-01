@@ -14,6 +14,34 @@ app.whenReady().then(async()=>{
  const external=[];win.webContents.session.webRequest.onBeforeRequest((details,callback)=>{const blocked=/^https?:/.test(details.url);if(blocked)external.push(details.url);callback({cancel:blocked});});
  const wait=async(code)=>{const until=Date.now()+20000;while(!await js(code)){if(Date.now()>until)throw Error('Timed out: '+code);await new Promise(resolve=>setTimeout(resolve,25));}};
  const click=async(text)=>{await js(`Array.from(document.querySelectorAll('button')).find(item=>item.textContent.trim()===${JSON.stringify(text)}).click()`);};
+ const pointerClick=async(selector,edge=false,button='left')=>{
+  await js('Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{})))');
+  const point=await js(`(()=>{const rect=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(rect.x+${edge==='end'?'rect.width-12':edge?'4':'rect.width/2'}),y:Math.round(rect.y+${edge==='end'?'rect.height-12':edge?'4':'rect.height/2'})};})()`);
+  win.webContents.sendInputEvent({type:'mouseMove',...point});win.webContents.sendInputEvent({type:'mouseDown',button,clickCount:1,...point});win.webContents.sendInputEvent({type:'mouseUp',button,clickCount:1,...point});
+ };
+ const verifyDismissal=async()=>{
+  const clean={selection:0,drag:0,background:0,context:0,viewport:0};
+  assert.equal(await js('Boolean(document.querySelector("[data-canvas-shortcuts-ignore] .ant-modal"))'),true);
+  for(const method of ['pointer','escape','space','mask']){
+   await js('directorTest.resetEvents()');
+   if(method==='pointer')await pointerClick('button[aria-label=Close]');
+   else if(method==='mask')await pointerClick('.ant-modal-wrap',true);
+   else{
+    await js(`document.querySelector(${JSON.stringify(method==='space'?'button[aria-label=Close]':'.ant-modal')}).focus()`);
+    const keyCode=method==='space'?'Space':'Escape';win.webContents.sendInputEvent({type:'keyDown',keyCode});win.webContents.sendInputEvent({type:'keyUp',keyCode});
+   }
+   await wait('!document.querySelector("[data-director-editor]")');
+   await wait('!document.querySelector(".ant-modal-wrap")');
+   assert.deepEqual(await js('directorTest.events()'),clean,`${method} dismissal must not select, drag, zoom or capture behind the dialog`);
+   if(method==='mask'){
+    await pointerClick('[data-canvas-surface]','end');await wait('directorTest.events().background===1');
+   }
+   await click('打开导演台');await wait('document.querySelector("[data-director-editor]")');
+   assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85','closing retains scene edits');
+  }
+  await js('directorTest.resetEvents()');await pointerClick('.ant-modal-title',false,'right');
+  assert.deepEqual(await js('directorTest.events()'),clean,'dialog context menu must not reach the node or canvas');
+ };
  try{
   await win.loadURL(process.argv[2]);await wait('window.directorTest && document.querySelector("button")');
   const webgl=await js('(()=>{const gl=document.createElement("canvas").getContext("webgl2");if(gl)gl.getExtension("WEBGL_lose_context")?.loseContext();return Boolean(gl);})()');
@@ -28,7 +56,7 @@ app.whenReady().then(async()=>{
    await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');
    assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出取景图").disabled'),true);
    await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
-   await js('directorTest.save()');await js('document.querySelector("button[aria-label=Close]").click()');await wait('!document.querySelector("[data-director-editor]")');
+   await js('directorTest.save()');await verifyDismissal();await js('document.querySelector("button[aria-label=Close]").click()');await wait('!document.querySelector("[data-director-editor]")');
    await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');
    await js('directorTest.switch()');await wait('!document.querySelector("[data-director-editor]")');
    assert.deepEqual(external,[]);console.log('DIRECTOR_NO_GPU_OK: Intel CI VM explicitly lacks WebGL; local bundle, actionable notice, disabled export, scene/lens persistence, native-process restart and project isolation verified. Real rendering remains covered on the other five runners.');app.exit(0);return;
@@ -36,7 +64,7 @@ app.whenReady().then(async()=>{
   if(process.env.CANVAS_DIRECTOR_TEST_PHASE==='restore'){
    const state=await js('directorTest.state()');assert.equal(state.nodes.find(n=>n.id==='director').metadata.directorScene.camera.lens,85);assert.equal(state.nodes.filter(n=>n.type==='image').length,2);
    const image=await js('directorTest.image()');assert.equal(image.width,321);assert.equal(image.height,197);assert.ok(image.colors>30);
-   await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas")');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');
+   await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas")');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');await verifyDismissal();
    await js('directorTest.switch()');await wait('!document.querySelector("[data-director-editor]")');assert.equal((await js('directorTest.state()')).projectId,'B');
    console.log('DIRECTOR_RESTART_OK: scene/lens, original PNG storage, project isolation');
   }else{
@@ -51,9 +79,9 @@ app.whenReady().then(async()=>{
    const second=await js('directorTest.image(1)');assert.notEqual(first.hash,second.hash);assert.equal((await js('directorTest.state()')).connections.length,2);
    await js('directorTest.theme(true)');await wait('document.documentElement.classList.contains("dark")');
    await screenshot('oneyes-director-dark.png');
-   await js('document.querySelector("button[aria-label=Close]").click()');await wait('!document.querySelector("[data-director-editor]")');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas")');
+   await verifyDismissal();
    await js('directorTest.save()');
-   console.log('DIRECTOR_3D_OK: native scheme offline bundle, real WebGL, pose/lens changes, precise PNG, GPU limit refusal, cleanup, light/dark, scene persistence, linked image results');
+   console.log('DIRECTOR_3D_OK: real scaled canvas, native close/Esc/Space/mask input without portal capture or drag, scene retained, WebGL, precise PNG, cleanup, light/dark, linked results');
   }
   assert.deepEqual(external,[],'director must load fully offline');
   app.exit(0);

@@ -315,9 +315,11 @@ export const CanvasNode = React.memo(function CanvasNode({
                 onHoverEnd(data.id);
             }}
             onMouseDownCapture={(event) => {
+                if (!event.currentTarget.contains(event.target as Node)) return;
                 if (!referenceSelectionState) onSelectCapture?.(event, data.id);
             }}
             onContextMenu={(event) => {
+                if (!event.currentTarget.contains(event.target as Node)) return;
                 if (referenceSelectionState) event.preventDefault();
                 else onContextMenu(event, data.id);
             }}
@@ -367,6 +369,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     boxShadow: isGroupDropTarget ? `0 0 0 2px ${selectionBlue}66, inset 0 0 0 999px ${selectionBlue}10` : isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
                 }}
                 onMouseDown={(event) => {
+                    if (!event.currentTarget.contains(event.target as Node)) return;
                     if (!referenceSelectionState) onMouseDown(event, data.id);
                     else if (event.button === 0 && referenceSelectionState === "available") {
                         event.stopPropagation();
@@ -374,6 +377,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     }
                 }}
                 onDoubleClick={(event) => {
+                    if (!event.currentTarget.contains(event.target as Node)) return;
                     if (referenceSelectionState) {
                         event.stopPropagation();
                         return;

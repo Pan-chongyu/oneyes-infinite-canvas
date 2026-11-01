@@ -52,7 +52,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             if (event.key === "Control") setIsControlPressed(true);
             if (event.code !== "Space") return;
             const target = event.target instanceof Element ? event.target : null;
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']")) return;
+            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-shortcuts-ignore]")) return;
             event.preventDefault();
             setIsSpacePressed(true);
         };
@@ -60,7 +60,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         const handleKeyUp = (event: KeyboardEvent) => {
             if (event.code === "Space") {
                 const target = event.target instanceof Element ? event.target : null;
-                if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']"))) event.preventDefault();
+                if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-shortcuts-ignore]"))) event.preventDefault();
                 setIsSpacePressed(false);
             }
             if (event.key === "Control") setIsControlPressed(false);
@@ -85,6 +85,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     }, []);
 
     const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+        if (!event.currentTarget.contains(event.target as Node)) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
 
@@ -107,6 +108,8 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     };
 
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+        // React portals bubble through the canvas tree despite living outside its DOM.
+        if (!event.currentTarget.contains(event.target as Node)) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom]")) return;
         if (target?.closest("[data-connection-create-menu]")) return;
@@ -140,6 +143,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     };
 
     const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+        if (!event.currentTarget.contains(event.target as Node)) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom],[data-node-id],[data-connection-id]")) return;
         onCanvasDoubleClick?.(event);
@@ -216,7 +220,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             onPointerDown={handlePointerDown}
             onDoubleClick={handleDoubleClick}
             onWheel={handleWheel}
-            onContextMenu={onContextMenu}
+            onContextMenu={event => { if (event.currentTarget.contains(event.target as Node)) onContextMenu?.(event); }}
             onDragOver={(event) => event.preventDefault()}
             onDrop={onDrop}
         >
