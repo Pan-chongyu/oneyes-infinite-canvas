@@ -18,7 +18,7 @@ const videos = process.argv.includes('--videos');
 const creators = process.argv.includes('--creators');
 const director = process.argv.includes('--director');
 const fixture = director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
-const server = director ? await directorFixture({ build, react, builtinPlugins }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
+const server = director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {
@@ -34,6 +34,7 @@ try {
     const args = [resolve(`test/fixtures/${fixture}.cjs`), server.url || `http://127.0.0.1:${server.httpServer.address().port}/__agent-chat`];
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
     if (director) env.CANVAS_DIRECTOR_TEST_ROOT = server.root;
+    if (creators) env.CANVAS_CREATOR_TEST_ROOT = server.root;
     const pluginProfile = plugins || director ? await mkdtemp(join(tmpdir(), 'canvas-plugin-restart-')) : null;
     if (pluginProfile) env[director ? 'CANVAS_DIRECTOR_TEST_PROFILE' : 'CANVAS_PLUGIN_TEST_PROFILE'] = pluginProfile;
     const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env, stdio: 'inherit' }) : spawn(electron, args, { env, stdio: 'inherit', windowsHide: true });

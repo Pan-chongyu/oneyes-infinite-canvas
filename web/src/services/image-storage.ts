@@ -69,7 +69,7 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
     }
 }
 
-async function fetchImageBlob(url: string, options?: ImageReadOptions) {
+export async function fetchImageBlob(url: string, options?: ImageReadOptions) {
     const controller = new AbortController();
     let timedOut = false;
     const abort = () => controller.abort();
@@ -83,8 +83,8 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
         const target = window.oneYesDesktop && /^https:\/\//i.test(url)
             ? `oneyes-canvas://app/image-download?url=${encodeURIComponent(url)}`
             : withLocalProxy(url);
-        const response = await fetch(target, { signal: controller.signal });
-        if (!response.ok) throw namedError(IMAGE_RESPONSE_ERROR);
+        const response = await fetch(target, { signal: controller.signal, credentials: "omit" });
+        if (!response.ok) throw Object.assign(namedError(IMAGE_RESPONSE_ERROR), { status: response.status });
         return await response.blob();
     } catch (error) {
         if (timedOut) throw namedError(IMAGE_TIMEOUT_ERROR);

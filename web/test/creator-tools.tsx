@@ -42,6 +42,12 @@ function Fixture(){
   remove:()=>flushSync(()=>setNodes(prev=>prev.filter(n=>n.id!=='tool'))),
   theme:(value:boolean)=>flushSync(()=>{setDark(value);document.documentElement.classList.toggle('dark',value);}),
   original:async()=>Array.from(new Uint8Array(await (await getImageBlob(original.storageKey!))!.arrayBuffer())),
+  outputPixels:async()=>{const output=nodes.find(n=>n.id!=='source'&&n.id!=='tool')!;const read=async(key:string)=>{const image=await createImageBitmap((await getImageBlob(key))!);const canvas=new OffscreenCanvas(image.width,image.height),context=canvas.getContext('2d')!;context.drawImage(image,0,0);image.close();return Array.from(context.getImageData(0,0,canvas.width,canvas.height).data);};return JSON.stringify(await read(original.storageKey!))===JSON.stringify(await read(output.metadata!.storageKey!));},
+  input:(kind:string,url:string)=>flushSync(()=>{
+   const image={id:'chosen',status:'success' as const,...imageMetadata(original),content:original.url,storageKey:original.storageKey,naturalWidth:9,naturalHeight:7,bytes:original.bytes,mimeType:original.mimeType};
+   const metadata=kind==='remote'?{content:url}:kind==='batch'?{images:[{...image,id:'other',content:'',storageKey:undefined},image],primaryImageId:'chosen'}:kind==='missing-index'?{content:original.url,storageKey:'image:missing-index'}:{content:''};
+   setNodes([{...source,metadata},tool('compose')]);setConnections([]);
+  }),
   clear:async()=>deleteStoredImages(nodes.filter(n=>n.id!=='source').map(n=>n.metadata?.storageKey).filter((v):v is string=>!!v)),
  }});
  return <ConfigProvider theme={getAntThemeConfig(dark)}><App><main style={{background:theme.canvas.background,color:theme.node.text,minHeight:'100vh',padding:20}}><div style={{width:320,height:190,background:theme.node.panel,borderRadius:16}}>{ctx&&definition?.Content&&<definition.Content ctx={ctx}/>}</div><div style={{maxWidth:600,marginTop:16}}>{ctx&&definition?.Panel&&<definition.Panel ctx={ctx} onClose={()=>{}}/>}</div></main></App></ConfigProvider>;

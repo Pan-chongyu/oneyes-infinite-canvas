@@ -59,6 +59,7 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
             const settings = structuredClone(node.metadata?.creatorSettings || {});
             const imageKeys: string[] = [], mediaKeys: string[] = [];
             let committed = false;
+            let stage = "request";
             const active = () => mounted.current && jobs.current.get(id) === task && current.current.projectId === snapshot.projectId && current.current.nodes.some(item => item.id === id && item.type === node.type);
             const check = () => { signal.throwIfAborted(); if (!active()) throw new DOMException("画布已切换或节点已删除", "AbortError"); };
             const update = (patch: CanvasNodeMetadata) => { if (active()) current.current.updateMetadata(id, patch); };
@@ -75,6 +76,7 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
                         : tool === "analyze" || tool === "concat" ? await processNativeVideo(tool, sources, settings, signal, progress)
                         : await processLocalAi(tool, await creatorSourceBlob(sources[0], signal), signal, progress);
                     check();
+                    stage = "save";
                     progress({ stage: "正在保存处理结果" });
                     const ops: CanvasAgentOp[] = [];
                     let y = node.position.y;
@@ -106,7 +108,7 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
                     update({ status: "success", creatorSettings: { ...settings, resultCount: results.length } });
                 } catch (error) {
                     update({ status: signal.aborted ? "idle" : "error", errorDetails: signal.aborted ? undefined : error instanceof Error ? error.message : "本地处理失败，请重试" });
-                    if (!signal.aborted) { reportError(tool === "concat" || tool === "analyze" ? "video" : "image", "save", error); throw error; }
+                    if (!signal.aborted) { reportError(tool === "concat" || tool === "analyze" ? "video" : "image", stage, error); throw error; }
                 } finally {
                     if (!committed) await Promise.allSettled([deleteStoredImages(imageKeys), deleteStoredMedia(mediaKeys)]);
                     if (jobs.current.get(id) === task) {
