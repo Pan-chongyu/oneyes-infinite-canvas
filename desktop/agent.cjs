@@ -87,7 +87,7 @@ function createAgent({ directory, runtime, onError = () => {}, executable = proc
         try { await fs.access(join(runtime, 'dist/index.js')); } catch (error) { throw startupError(error); }
         await new Promise((resolve, reject) => {
             try {
-                child = fork(join(runtime, 'dist/index.js'), [], { execPath: executable, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
+                child = fork(join(runtime, 'dist/index.js'), [], { cwd: agentHome, execPath: executable, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
                     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ONEYES_DESKTOP_AGENT: '1', ONEYES_CANVAS_AGENT_HOME: agentHome, CODEX_HOME: codexHome, PORT: new URL(value.url).port || '80' } });
             } catch (error) { reject(startupError(error)); return; }
             const owned = child;

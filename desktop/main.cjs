@@ -195,6 +195,9 @@ app.whenReady().then(async () => {
                 if (!connection.configured || !(await agent.status()).configured) throw new Error('Persistent Codex setup failed');
                 const migrated = JSON.parse(await require('node:fs/promises').readFile(join(app.getPath('userData'), 'agent/canvas-agent.json'), 'utf8'));
                 if (migrated.token !== connection.token || migrated.origins?.length !== 0) throw new Error('Legacy desktop Agent origin migration failed');
+                const bridgeState = await fetch(`${connection.url}/health`).then(r => r.json());
+                const workspace = join(app.getPath('userData'), 'agent/codex-workspaces/site');
+                if (bridgeState.conversation.status !== 'idle' || require('node:fs').existsSync(workspace)) throw new Error('Background bridge accessed the workspace before explicit Agent use');
                 const mcp = await fetch(`${connection.url}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'x-canvas-agent-token': connection.token }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'desktop-smoke', version: '1' } } }) }).then(r => r.json());
                 if (!mcp.result?.serverInfo) throw new Error('Packaged MCP handshake failed');
                 const runtime = app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent');
@@ -202,6 +205,7 @@ app.whenReady().then(async () => {
                 const result = await require('node:util').promisify(require('node:child_process').execFile)(process.execPath, [cli, 'mcp', 'get', 'infinite-canvas', '--json'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CODEX_HOME: join(app.getPath('userData'), 'codex') }, windowsHide: true });
                 if (JSON.parse(result.stdout).transport.url !== `${connection.url}/mcp`) throw new Error('Packaged Codex config validation failed');
                 const moduleUrl = require('node:url').pathToFileURL(join(runtime, 'dist/agent/codex-client.js')).href;
+                await require('node:fs/promises').mkdir(workspace, { recursive: true });
                 const initialize = `const {CodexAppClient}=await import(${JSON.stringify(moduleUrl)});const events=[];const c=await CodexAppClient.start((type,value)=>{if(type==='agent_bootstrap')events.push(value)},()=>{});const thread=await c.startThread(${JSON.stringify(join(app.getPath('userData'), 'agent/codex-workspaces/site'))},'request',true);const status=await c.request('mcpServerStatus/list',{threadId:thread.id,limit:100,detail:'toolsAndAuthOnly'});if(events.some(e=>e.name==='infinite-canvas'&&e.status==='failed')||!status.data.find(s=>s.name==='infinite-canvas')?.tools?.canvas_get_state)throw Error('Packaged Canvas MCP handshake/tools failed');console.log('APP_SERVER_READY');process.exit(0);`;
                 const proxy = 'http://127.0.0.1:1';
                 const initialized = await require('node:util').promisify(require('node:child_process').execFile)(process.execPath, ['--input-type=module', '-e', initialize], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ONEYES_DESKTOP_AGENT: '1', ONEYES_CANVAS_AGENT_HOME: join(app.getPath('userData'), 'agent'), CODEX_HOME: join(app.getPath('userData'), 'codex'), HTTP_PROXY: proxy, HTTPS_PROXY: proxy, ALL_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, all_proxy: proxy, NO_PROXY: '', no_proxy: '' }, windowsHide: true, timeout: 20_000 });

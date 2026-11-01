@@ -39,7 +39,14 @@ app.whenReady().then(async () => {
     };
     try {
         await win.loadURL(process.argv[2]);
+        await wait('window.chatTest && chatTest.state().connected');
+        await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        assert.equal((await state()).status, 'idle');
+        assert.deepEqual((await state()).requests.filter(path => path.startsWith('/agent/codex/')), [], 'hidden panel must not inspect workspace/models/skills or start permission-seeking MCPs');
+        await js('chatTest.open()');
         await wait('window.chatTest && chatTest.state().status === "ready" && !chatTest.state().loadingThreads && document.querySelector("[role=textbox]")');
+        assert.equal((await state()).initRequests.filter(path => path === '/agent/codex/initialize').length, 1, 'explicit first use initializes once');
+        await js('chatTest.state().initRequests.splice(0)');
         await wait('chatTest.state().modelsStatus === "error"');
         await type('初始化期间的草稿'); await enter();
         assert.equal((await state()).turns.length, 0, 'failed model discovery must not submit with a silent default');

@@ -57,12 +57,12 @@ export class CanvasSession {
     private conversationInventoryComplete = false;
     private preparedConversationThreadId = "";
 
-    constructor(activeThreadId = "") {
+    constructor(activeThreadId = "", deferred = false) {
         this.conversationState = {
             revision: 1,
             conversationId: activeThreadId || crypto.randomUUID(),
             threadId: activeThreadId,
-            status: activeThreadId ? "ready" : "idle",
+            status: activeThreadId && !deferred ? "ready" : "idle",
             mcpStatuses: {},
         };
     }

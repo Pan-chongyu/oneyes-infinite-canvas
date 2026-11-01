@@ -24,8 +24,10 @@ export function startHttpServer() {
     config.url = `http://127.0.0.1:${port}`;
     saveConfig(config);
 
-    const initialWorkspace = ensureSiteWorkspace(config);
-    const session = new CanvasSession(initialWorkspace.activeThreadId || "");
+    // The bridge also serves external Codex. Starting it must not read a user
+    // workspace or preheat global MCPs (some request macOS TCC permissions).
+    const initialWorkspace = ensureSiteWorkspace(config, false);
+    const session = new CanvasSession(initialWorkspace.activeThreadId || "", true);
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
     let claudeRun: { controller: AbortController; threadId: string; turnId: string } | undefined;
     /** 将 Agent 事件广播到所属线程或全部网页。 */
@@ -44,7 +46,7 @@ export function startHttpServer() {
             if (value.type === "mcp.complete" && value.phase === "preheat") session.completeConversationMcpInventory(mcpInventory(value.services));
         }
         const scope = session.codexBusy ? session.codexEventScope : { threadId: "", turnId: "", sourceClientId: "" };
-        const threadId = String(value.threadId || value.thread_id || scope.threadId || ensureSiteWorkspace(config).activeThreadId || "");
+        const threadId = String(value.threadId || value.thread_id || scope.threadId || ensureSiteWorkspace(config, false).activeThreadId || "");
         const turnId = String(value.turnId || value.turn_id || scope.turnId || "");
         const sourceClientId = String(value.sourceClientId || scope.sourceClientId || "");
         const data = {
@@ -97,9 +99,9 @@ export function startHttpServer() {
     };
     /** 恢复已有线程并等待完整 MCP 清单，供启动恢复和手动切换共用。 */
     const prepareExistingThread = async (threadId: string, clientId = "", permission: AgentPermissionMode = "request") => {
-        const workspace = ensureSiteWorkspace(config);
         session.beginConversation({ conversationId: threadId, threadId, sourceClientId: clientId || undefined });
         emit("agent_bootstrap", { type: "codex.preparing", threadId, sourceClientId: clientId || undefined });
+        const workspace = ensureSiteWorkspace(config);
         const result = await resumeCodexThread(emit, threadId, workspace.workspacePath, permission, true);
         session.completeConversationPreparation(threadId);
         return result;
@@ -146,7 +148,7 @@ export function startHttpServer() {
     app.get("/mcp", (_req, res) => res.sendStatus(405));
     app.delete("/mcp", (_req, res) => res.sendStatus(405));
     app.get("/events", (req, res) => {
-        session.openEvents(requestUrl(req, config), res, ensureSiteWorkspace(config).activeThreadId || "");
+        session.openEvents(requestUrl(req, config), res, ensureSiteWorkspace(config, false).activeThreadId || "");
     });
     app.post("/canvas/state", (req, res) => {
         session.updateState(req.body, String(req.query.clientId || "") || undefined);
@@ -192,9 +194,30 @@ export function startHttpServer() {
     }));
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
     app.get("/agent/codex/workspace", (_req, res) => {
-        const workspace = ensureSiteWorkspace(config);
+        const workspace = ensureSiteWorkspace(config, false);
         res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot });
     });
+    app.post("/agent/codex/initialize", codexMutation(async (req, res) => {
+        if (session.conversationStateSnapshot.status === "idle") {
+            const clientId = String(req.body?.clientId || "");
+            const activeThreadId = ensureSiteWorkspace(config, false).activeThreadId || "";
+            try {
+                let restored = false;
+                if (activeThreadId) {
+                    try { await prepareExistingThread(activeThreadId, clientId, permissionMode(req.body?.permissionMode)); restored = true; }
+                    catch (error) { if (!isRecoverableThreadError(error)) throw error; }
+                }
+                if (!restored) {
+                    // A missing archived thread may be replaced; real permission
+                    // or configuration errors must preserve the existing thread.
+                    session.beginConversation({ sourceClientId: clientId });
+                    setActiveThread("", { emptyThread: true, draftThread: true, sourceClientId: clientId }, true);
+                    await prepareDraftThread(clientId, permissionMode(req.body?.permissionMode));
+                }
+            } catch (error) { failPreparedConversation(error, activeThreadId, clientId); throw error; }
+        }
+        res.json({ ok: true, workspace: ensureSiteWorkspace(config, false), conversation: session.conversationStateSnapshot });
+    }));
     app.get("/agent/codex/models", route(async (_req, res) => res.json({ ok: true, ...(await listCodexModels(emit)) })));
     app.get("/agent/codex/skills", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
@@ -495,16 +518,7 @@ export function startHttpServer() {
         console.log("Remove manually added MCP: codex mcp remove infinite-canvas");
         if (logger.enabled) console.log(`Debug log: ${logger.filePath}`);
         }
-        logger.info("Canvas Agent started", { url: config.url, workspace: ensureSiteWorkspace(config).workspacePath, debugLog: logger.filePath });
-        const activeThreadId = initialWorkspace.activeThreadId || "";
-        if (activeThreadId && session.beginCodexMutation()) {
-            void prepareExistingThread(activeThreadId).catch(async (error) => {
-                if (!isRecoverableThreadError(error)) return failPreparedConversation(error, activeThreadId);
-                session.beginConversation();
-                setActiveThread("", { emptyThread: true, draftThread: true }, true);
-                await prepareDraftThread("", "request");
-            }).finally(() => session.endCodexMutation()).catch(() => undefined);
-        }
+        logger.info("Canvas Agent started", { url: config.url, workspace: initialWorkspace.workspacePath, debugLog: logger.filePath });
     });
     return server;
 }

@@ -29,7 +29,7 @@ test('persistent Codex setup preserves account/models/other MCP, backs up once, 
         await writeFile(file, '[broken');
         await assert.rejects(configureCodex(file, settings), /原文件未修改/);
         assert.equal(await readFile(file, 'utf8'), '[broken');
-    } finally { await rm(dir, { recursive: true, force: true }); }
+    } finally { await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('corrupt Agent config and an occupied port never replace Codex settings', async () => {
@@ -52,7 +52,7 @@ test('corrupt Agent config and an occupied port never replace Codex settings', a
         assert.equal(await readFile(file, 'utf8'), original);
         assert.deepEqual(await agent.status(), { configured: false });
         assert.deepEqual(errors, []); // The rejected startup is reported once by its caller, not again as a runtime exit.
-    } finally { agent.stop(); await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); }
+    } finally { agent.stop(); await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('one click starts an authenticated MCP, persists across restart, and restores only after opt-in', async () => {
@@ -103,7 +103,7 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         const proxy = 'http://127.0.0.1:1';
         const started = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, CODEX_HOME: options.codexHome, ONEYES_CANVAS_AGENT_HOME: options.agentHome, ONEYES_DESKTOP_AGENT: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy, ALL_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, all_proxy: proxy, NO_PROXY: '', no_proxy: '' }, timeout: 20_000 });
         assert.ok(started.stdout.includes('CODEX_APP_SERVER_READY'));
-    } finally { agent.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true }); }
+    } finally { agent.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('startup config and module errors retain their cause, preserve originals and allow retry', async () => {
@@ -134,5 +134,5 @@ test('startup config and module errors retain their cause, preserve originals an
         assert.equal(toml.parse(await readFile(codexFile, 'utf8')).model, 'preserved');
         assert.deepEqual(JSON.parse(await readFile(agentFile, 'utf8')).origins, []);
         assert.deepEqual(errors, []);
-    } finally { agent.stop(); broken?.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true }); }
+    } finally { agent.stop(); broken?.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { codexEnvironment, createAgentLogWriter, redactAgentLog } from "../utils/agent-runtime.js";
-import { VERSION, loadConfig } from "../config.js";
+import { CONFIG_DIR, VERSION, loadConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { field, type JsonRecord } from "../utils/value.js";
 import { codexEventHistory, type CodexEventHistory } from "./codex-event-history.js";
@@ -71,7 +71,7 @@ export class CodexAppClient {
     /** 启动并初始化 Codex app-server。 */
     static async start(emit: AgentEmit, onExit: () => void) {
         logger.info("Starting Codex app-server", { executable: process.execPath, codex: codexBin() });
-        const child = spawn(codexBin(), ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: codexEnvironment() });
+        const child = spawn(codexBin(), ["app-server", "--stdio"], { ...(process.env.ONEYES_DESKTOP_AGENT === "1" ? { cwd: CONFIG_DIR } : {}), stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: codexEnvironment() });
         const stopOnExit = () => child.kill();
         if (process.env.ONEYES_DESKTOP_AGENT === "1") process.once("exit", stopOnExit);
         const client = new CodexAppClient(child, emit);

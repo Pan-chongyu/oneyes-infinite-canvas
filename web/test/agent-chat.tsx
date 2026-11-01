@@ -8,6 +8,9 @@ import { LocalAgentPanel } from "@/components/agent/local-agent-panel";
 import { useAgentStore } from "@/stores/use-agent-store";
 
 let source: FixtureEvents;
+let initialized = false;
+const requests: string[] = [];
+Object.defineProperty(window, "oneYesDesktop", { value: { agent: { call: async () => ({ data: { configured: true, url: "http://fixture.test", token: "fixture-token" } }) } } });
 let revision = 1;
 let holdHistory = false;
 let failTurn: (() => void) | undefined;
@@ -31,7 +34,7 @@ class FixtureEvents extends EventTarget {
     constructor() {
         super();
         source = this;
-        setTimeout(() => this.emit("hello", { protocolVersion: 6, conversation: conversation(), codex: { busy: false, threadId: "thread-1" } }), 0);
+        setTimeout(() => this.emit("hello", { protocolVersion: 6, conversation: conversation(initialized ? "ready" : "idle"), codex: { busy: false, threadId: "thread-1" } }), 0);
     }
     emit(type: string, data: unknown) { this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) })); }
     close() {}
@@ -40,6 +43,7 @@ Object.assign(window, { EventSource: FixtureEvents, __infiniteCanvasAgentClientI
 window.fetch = async (input, init) => {
     const url = new URL(String(input), location.href);
     const path = url.pathname;
+    requests.push(path);
     if (path === "/agent/codex/threads") {
         const cursor = url.searchParams.get("cursor");
         if (cursor) {
@@ -51,7 +55,8 @@ window.fetch = async (input, init) => {
         if (holdHistory) await new Promise<void>((resolve) => pendingHistory.push(resolve));
         return json(snapshot);
     }
-    if (path.endsWith("/resume") || path === "/agent/codex/threads/reset") {
+    if (path.endsWith("/resume") || path === "/agent/codex/threads/reset" || path === "/agent/codex/initialize") {
+        initialized = true;
         initRequests.push(path);
         const next = conversation();
         source.emit("conversation_changed", next);
@@ -85,8 +90,9 @@ Object.assign(window, { chatTest: {
     state: () => {
         const { prompt, sending, waiting, loadingThreads, conversation, modelsStatus, model, reasoningEffort } = useAgentStore.getState();
         const { threads, loadingMoreThreads, nextThreadCursor } = useAgentStore.getState();
-        return { prompt, sending, waiting, loadingThreads, loadingMoreThreads, nextThreadCursor, threadIds: threads.map((item) => item.id), pageRequests, modelsStatus, model, reasoningEffort, modelRequests, modelIds: useAgentStore.getState().models.map((item) => item.model), pendingModels: pendingModels.length, initRequests, status: conversation.status, threadId: conversation.threadId, turns, pendingHistory: pendingHistory.length };
+        return { connected: useAgentStore.getState().connected, requests, prompt, sending, waiting, loadingThreads, loadingMoreThreads, nextThreadCursor, threadIds: threads.map((item) => item.id), pageRequests, modelsStatus, model, reasoningEffort, modelRequests, modelIds: useAgentStore.getState().models.map((item) => item.model), pendingModels: pendingModels.length, initRequests, status: conversation.status, threadId: conversation.threadId, turns, pendingHistory: pendingHistory.length };
     },
+    open: () => useAgentStore.getState().openPanel(),
     historyTab: () => useAgentStore.setState({ activeTab: "history" }),
     holdPage: () => { holdPage = true; },
     releasePage: () => { holdPage = false; releasePage?.(); },

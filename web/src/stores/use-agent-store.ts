@@ -51,6 +51,7 @@ type AgentStore = {
     panelOpen: boolean;
     panelMounted: boolean;
     panelClosing: boolean;
+    codexActive: boolean;
     canvasContext: AgentCanvasContext | null;
     url: string;
     token: string;
@@ -109,6 +110,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     panelOpen: false,
     panelMounted: true,
     panelClosing: false,
+    codexActive: false,
     canvasContext: null,
     url: typeof window === "undefined" ? "http://127.0.0.1:17371" : localStorage.getItem("canvas-agent-url") || "http://127.0.0.1:17371",
     token: typeof window === "undefined" ? "" : localStorage.getItem("canvas-agent-token") || "",
@@ -162,7 +164,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     pendingTool: null,
     pendingApprovals: [],
     setAgentState: (patch) => set(patch),
-    openPanel: () => set({ panelOpen: true, panelMounted: true, panelClosing: false }),
+    openPanel: () => set({ panelOpen: true, panelMounted: true, panelClosing: false, codexActive: true }),
     closePanel: () => {
         if (!get().panelMounted || get().panelClosing) return;
         set({ panelOpen: false, panelClosing: true });

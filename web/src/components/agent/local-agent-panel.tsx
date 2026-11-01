@@ -166,6 +166,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         })),
     );
     const setAgentState = useAgentStore((state) => state.setAgentState);
+    const requestedCodex = useAgentStore((state) => state.codexActive);
+    const codexActive = !window.oneYesDesktop?.agent || requestedCodex;
     const [modelsRevision, reloadModels] = useState(0);
     const conversationReady = conversation.status === "ready" || conversation.status === "warning";
     const conversationBusy = conversation.status === "preparing" || conversation.status === "running";
@@ -299,6 +301,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         return true;
     }, [applyWorkspaceChange, setAgentState]);
     const loadThreads = useCallback(async (skipHistory = false, expectedTurnId = "") => {
+        if (window.oneYesDesktop?.agent && !useAgentStore.getState().codexActive) return;
         if (!connectedRef.current && !useAgentStore.getState().connected) return;
         const request = ++loadThreadsRequestRef.current;
         let sequence = ++loadThreadsSequenceRef.current;
@@ -438,16 +441,6 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             if (!headless) message.success(rt("localAgentConnected"));
             void postState(endpoint, token, clientId, canvasContextRef.current?.snapshot || null);
             if (document.visibilityState === "visible" && document.hasFocus()) void activateAgentClient(endpoint, token, clientId);
-            if (!busy && !nextThreadId && (!hello?.conversation || hello.conversation.status === "idle")) {
-                void fetchAgentJson<AgentWorkspaceResponse>(endpoint, token, "/agent/codex/threads/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, permissionMode }) })
-                    .then((result) => isCurrentConnection() && result.conversation && applyConversationState(result.conversation))
-                    .catch((error) => {
-                        if (!isCurrentConnection()) return;
-                        const state = agentErrorState(error);
-                        if (state) applyConversationState(state);
-                        addEventLog(rt("conversationInitFailed"), error);
-                    });
-            }
         });
         source.addEventListener("codex_state", (event) => {
             const data = parseEventData<AgentCodexState>(event);
@@ -568,6 +561,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             addEventLog(rt("log"), text, text);
         });
         source.addEventListener("skills_changed", (event) => {
+            if (window.oneYesDesktop?.agent && !useAgentStore.getState().codexActive) return;
             if (!isCurrentConnection()) return;
             const data = parseEventData<{ forceReload?: boolean }>(event);
             void loadSkills(endpoint, token, Boolean(data?.forceReload));
@@ -622,15 +616,30 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     }, [applyConversationState, applyWorkspaceChange, clientReady, enabled, endpoint, loadSkills, loadThreads, message, setAgentState, token]);
 
     useEffect(() => {
-        if (connected) void loadThreads();
-    }, [connected, loadThreads]);
+        if (!connected || !codexActive || useAgentStore.getState().conversation.status !== "idle") return;
+        let disposed = false;
+        const state = useAgentStore.getState();
+        void fetchAgentJson<AgentWorkspaceResponse>(endpoint, token, "/agent/codex/initialize", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId: clientIdRef.current, permissionMode: state.permissionMode }) })
+            .then((result) => !disposed && result.conversation && applyConversationState(result.conversation))
+            .catch((error) => {
+                if (disposed) return;
+                const next = agentErrorState(error);
+                if (next) applyConversationState(next);
+                addEventLog(rt("conversationInitFailed"), error);
+            });
+        return () => { disposed = true; };
+    }, [applyConversationState, codexActive, connected, endpoint, token]);
 
     useEffect(() => {
-        if (connected) void loadSkills(endpoint, token);
-    }, [connected, endpoint, loadSkills, token]);
+        if (connected && codexActive) void loadThreads();
+    }, [codexActive, connected, loadThreads]);
 
     useEffect(() => {
-        if (!connected) {
+        if (connected && codexActive) void loadSkills(endpoint, token);
+    }, [codexActive, connected, endpoint, loadSkills, token]);
+
+    useEffect(() => {
+        if (!connected || !codexActive) {
             setAgentState({ models: [], modelsStatus: "idle" });
             return;
         }
@@ -654,7 +663,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             addEventLog(rt("modelListFailed"), error);
         });
         return () => controller.abort();
-    }, [connected, endpoint, modelsRevision, setAgentState, token]);
+    }, [codexActive, connected, endpoint, modelsRevision, setAgentState, token]);
 
     useEffect(() => {
         if (!connected) return;

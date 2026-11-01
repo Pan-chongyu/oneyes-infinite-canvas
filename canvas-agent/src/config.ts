@@ -78,16 +78,16 @@ function validOrigin(value: unknown) {
 }
 
 /** 确保站点级 Codex 工作空间存在并已初始化。 */
-export function ensureSiteWorkspace(config: CanvasAgentConfig) {
+export function ensureSiteWorkspace(config: CanvasAgentConfig, initialize = true) {
     const current = config.workspace;
     if (current?.workspacePath) {
         const workspacePath = resolveWorkspacePath(current.workspacePath);
-        initializeWorkspace(workspacePath);
+        if (initialize) initializeWorkspace(workspacePath);
         return { ...current, workspacePath };
     }
     const workspacePath = path.join(CONFIG_DIR, "codex-workspaces", "site");
     config.workspace = { workspacePath };
-    initializeWorkspace(workspacePath);
+    if (initialize) initializeWorkspace(workspacePath);
     saveConfig(config);
     return { workspacePath };
 }
