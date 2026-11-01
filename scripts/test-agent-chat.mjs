@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { builtinPlugins } from '../web/build/builtin-plugins.mjs';
 import { imageFixtureServer } from './image-fixture-server.mjs';
+import { directorFixture } from './director-fixture.mjs';
 const webRequire = createRequire(resolve('web/package.json'));
 const { createServer, build, preview } = await import(pathToFileURL(webRequire.resolve('vite')).href);
 const { default: react } = await import(pathToFileURL(webRequire.resolve('@vitejs/plugin-react')).href);
@@ -15,8 +16,9 @@ const webdav = process.argv.includes('--webdav');
 const plugins = process.argv.includes('--plugins');
 const videos = process.argv.includes('--videos');
 const creators = process.argv.includes('--creators');
-const fixture = creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
-const server = (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
+const director = process.argv.includes('--director');
+const fixture = director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const server = director ? await directorFixture({ build, react, builtinPlugins }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {
@@ -29,16 +31,17 @@ const server = (images || videos) ? await imageFixtureServer({ build, preview, r
 try {
     await server.listen();
     const require = createRequire(import.meta.url), electron = require('electron');
-    const args = [resolve(`test/fixtures/${fixture}.cjs`), `http://127.0.0.1:${server.httpServer.address().port}/__agent-chat`];
+    const args = [resolve(`test/fixtures/${fixture}.cjs`), server.url || `http://127.0.0.1:${server.httpServer.address().port}/__agent-chat`];
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
-    const pluginProfile = plugins ? await mkdtemp(join(tmpdir(), 'canvas-plugin-restart-')) : null;
-    if (pluginProfile) env.CANVAS_PLUGIN_TEST_PROFILE = pluginProfile;
+    if (director) env.CANVAS_DIRECTOR_TEST_ROOT = server.root;
+    const pluginProfile = plugins || director ? await mkdtemp(join(tmpdir(), 'canvas-plugin-restart-')) : null;
+    if (pluginProfile) env[director ? 'CANVAS_DIRECTOR_TEST_PROFILE' : 'CANVAS_PLUGIN_TEST_PROFILE'] = pluginProfile;
     const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env, stdio: 'inherit' }) : spawn(electron, args, { env, stdio: 'inherit', windowsHide: true });
     process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
-    if (plugins) {
+    if (plugins || director) {
         try {
             if (!process.exitCode) {
-                const restartEnv = { ...env, CANVAS_PLUGIN_TEST_PHASE: 'restore' };
+                const restartEnv = { ...env, [director ? 'CANVAS_DIRECTOR_TEST_PHASE' : 'CANVAS_PLUGIN_TEST_PHASE']: 'restore' };
                 const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env: restartEnv, stdio: 'inherit' }) : spawn(electron, args, { env: restartEnv, stdio: 'inherit', windowsHide: true });
                 process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
             }

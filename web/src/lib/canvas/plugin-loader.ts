@@ -5,8 +5,9 @@ import type { CanvasPlugin } from "@/types/canvas-plugin";
 import i18n from "@/i18n";
 import bundledPlugins from "virtual:canvas-builtin-plugins";
 import { creatorToolsPlugin } from "@/components/canvas/creator-tools-plugin";
+import { directorPlugin } from "@/components/canvas/director-plugin";
 
-const builtinPlugins = [...bundledPlugins, creatorToolsPlugin];
+const builtinPlugins = [...bundledPlugins, creatorToolsPlugin, directorPlugin];
 
 export { builtinPlugins };
 export const isBuiltinPlugin = (id: string) => builtinPlugins.some(plugin => plugin.id === id);

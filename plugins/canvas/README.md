@@ -1,4 +1,6 @@
-> OneYes 桌面分支：Markdown、SVG、HTML、3D 全景、便利贴及本地创作工具（拉片、拼接、抠图、图层合成、AI 超分）已随客户端内置，默认启用，依赖离线可用。无需按下文单独安装官方插件；以下 SDK 与独立插件发布流程供第三方开发使用。独立插件构建入口为 `web/build/builtin-plugins.mjs`，本地创作节点在 `web/src/components/canvas/creator-tools-plugin.tsx`，都与客户端一起发布。
+> OneYes 桌面分支：Markdown、SVG、HTML、3D 全景、便利贴、本地创作工具（拉片、拼接、抠图、图层合成、AI 超分）及 3D 导演台已随客户端内置，默认启用，依赖离线可用。无需按下文单独安装官方插件；以下 SDK 与独立插件发布流程供第三方开发使用。独立插件构建入口为 `web/build/builtin-plugins.mjs`，本地创作节点在 `web/src/components/canvas/creator-tools-plugin.tsx`，导演台在 `web/src/components/canvas/director-plugin.tsx`，都与客户端一起发布。
+
+节点上下文 `ctx.projectId`（可选）标识当前画布；异步保存结果时应核对项目和节点归属，避免切换画布后写入另一个同 ID 节点。导演台提供相应实现示例。
 
 # Infinite Canvas 画布节点插件
 

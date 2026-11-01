@@ -40,6 +40,7 @@ export type CanvasNodeToolbarItem = {
 
 // Context injected while rendering each node; the primary interface between plugins and the canvas.
 export type CanvasNodeContext = {
+    projectId?: string;
     processing?: import("./creator-tools").CreatorProcessor;
     node: CanvasNodeData;
     theme: CanvasTheme;
@@ -76,6 +77,7 @@ export type PluginStorage = {
 
 // Node-independent host capabilities constructed by the canvas page and injected into the render chain.
 export type CanvasPluginHost = {
+    projectId?: string;
     processing?: import("./creator-tools").CreatorProcessor;
     getNode: (id: string) => CanvasNodeData | null;
     getNodes: () => CanvasNodeData[];

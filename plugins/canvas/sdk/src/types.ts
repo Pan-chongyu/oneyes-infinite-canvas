@@ -210,6 +210,8 @@ export type PluginStorage = {
 };
 
 export type CanvasNodeContext = {
+    /** 当前画布标识；异步保存必须检查画布未切换。 */
+    projectId?: string;
     processing?: { start(nodeId: string): Promise<void>; cancel(nodeId: string): void; state(nodeId: string): { stage: string; progress?: number } | undefined };
     // 自身数据
     node: CanvasNodeData;

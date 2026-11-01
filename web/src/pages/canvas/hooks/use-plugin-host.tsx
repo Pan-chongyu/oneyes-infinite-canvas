@@ -95,6 +95,7 @@ export function usePluginHost(params: PluginHostParams) {
 
     const pluginHost = useMemo<CanvasPluginHost>(
         () => ({
+            projectId: params.projectId,
             getNode: (id) => nodes.find((node) => node.id === id) || null,
             getNodes: () => nodes,
             getConnections: () => connections,
@@ -116,7 +117,7 @@ export function usePluginHost(params: PluginHostParams) {
             openPanel: (nodeId) => setDialogNodeId(nodeId),
             closePanel: () => setDialogNodeId(null),
         }),
-        [applyAgentOps, pluginAi, nodes, connections, processing],
+        [params.projectId, applyAgentOps, pluginAi, nodes, connections, processing],
     );
 
     const renderPluginPanel = useCallback(

@@ -90,6 +90,7 @@ jobs:
       - run: npm run test:plugins
       - run: npm run test:webdav
       - run: npm run test:creators
+      - run: npm run test:director
       - run: npm --prefix web run typecheck
       - run: npm run build
       - run: npm run test:codec
