@@ -5,6 +5,7 @@ const { mkdir, rm, readdir, writeFile, stat, copyFile } = require('node:fs/promi
 const { createWriteStream, createReadStream } = require('node:fs');
 const { Readable } = require('node:stream');
 const { pipeline, finished } = require('node:stream/promises');
+const { validateSmartEdit, processSmartEdit } = require('./smart-edit.cjs');
 
 // Structured commands and opaque job IDs only. Renderer input never becomes a path or shell command.
 function createMediaTools({ directory, binaries, changed = () => {} }) {
@@ -17,7 +18,7 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
     const get = id => { const job = jobs.get(id); if (!job) throw new Error('处理任务已结束，请重新开始'); return job; };
     const run = (job, name, args, line = () => {}) => new Promise((resolve, reject) => {
         job.controller.signal.throwIfAborted();
-        const formats = ['-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpeg,mpegts,ogg,flv,asf,rm,wav,mp3,flac,aac'];
+        const formats = ['-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpeg,mpegts,ogg,flv,asf,rm,wav,mp3,flac,aac' + (job.operation.startsWith('edit') ? ',png_pipe,jpeg_pipe,webp_pipe,image2' : '')];
         // Uploaded media must be self-contained, never a playlist reading paths or network URLs.
         if (name === 'ffprobe') args = [...formats, ...args];
         else if (!args.includes('concat')) { args = args.flatMap(arg=>arg==='-i'?[...formats,arg]:[arg]); }
@@ -55,6 +56,7 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
     async function processJob(job) {
         await Promise.all(job.uploads.values());
         if (job.received.size !== job.count) throw new Error('请等待全部素材上传完成');
+        if (job.operation.startsWith('edit')) return processSmartEdit(job, { run, input, output, notify, binaries });
         if(['extract','mix','subtitles'].includes(job.operation))return processStudioMedia(job);
         const metadata = [];
         for (let index = 0; index < job.count; index++) metadata.push(await probe(job, input(job, index)));
@@ -148,7 +150,8 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
     }
     return {
         async create(operation, count, options = {}) {
-            if (!['analyze', 'concat','extract','mix','subtitles'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (['analyze','extract','subtitles'].includes(operation) && count !== 1)) throw new Error('无效的媒体处理任务');
+            if (!['analyze', 'concat','extract','mix','subtitles','editAnalyze','editRender'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (['analyze','extract','subtitles'].includes(operation) && count !== 1)) throw new Error('无效的媒体处理任务');
+            if (operation.startsWith('edit')) validateSmartEdit(operation, count, options);
             if(operation==='mix'&&(count<2||['volume','originalVolume','fadeIn','fadeOut'].some(key=>!Number.isFinite(options[key])||options[key]<0)))throw Error('请填写有效的混音音量和淡入淡出时间');
             if(operation==='subtitles'&&(typeof options.srt!=='string'||!/^\d+\r?\n\d\d:\d\d:\d\d,\d{3} --> /m.test(options.srt)))throw Error('字幕内容无效');
             if (operation === 'analyze' && (!Number.isFinite(options.threshold) || options.threshold < 0 || options.threshold > 1)) throw new Error('请设置有效的镜头检测灵敏度');

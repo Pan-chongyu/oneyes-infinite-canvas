@@ -7,8 +7,9 @@ import bundledPlugins from "virtual:canvas-builtin-plugins";
 import { creatorToolsPlugin } from "@/components/canvas/creator-tools-plugin";
 import { directorPlugin } from "@/components/canvas/director-plugin";
 import { studioPlugin } from '@/components/canvas/studio-plugin';
+import { smartEditPlugin } from '@/components/canvas/smart-edit-plugin';
 
-const builtinPlugins = [...bundledPlugins, creatorToolsPlugin, directorPlugin,studioPlugin];
+const builtinPlugins = [...bundledPlugins, creatorToolsPlugin, directorPlugin,studioPlugin, smartEditPlugin];
 
 export { builtinPlugins };
 export const isBuiltinPlugin = (id: string) => builtinPlugins.some(plugin => plugin.id === id);

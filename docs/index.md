@@ -10,6 +10,8 @@
 
 ## Canvas Guide
 
+- [智能剪辑节点（仓库说明）](SMART_EDIT.zh-CN.md)
+
 - [Canvas Node Guide](/docs/canvas/canvas-node-manual)
 - [Canvas Shortcuts](/docs/canvas/canvas-shortcuts)
 

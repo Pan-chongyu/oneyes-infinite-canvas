@@ -20,6 +20,7 @@ const entries: Record<string, [Category, string, string?]> = {
     "studio:compare": ["图片", "多张原图 → 精选图片", "对照 滑动 compare"],
     "studio:ocr": ["图片", "图片 → 文字", "识字 ocr"],
     "studio:subtitles": ["音视频", "视频／音频 → SRT／字幕视频", "字幕 转写 captions srt"],
+    "smart-edit:editor": ["音视频", "素材／字幕／脚本 → 智能剪辑成片", "自动剪辑 口播 去静音 选片 集锦 混剪 smart edit"],
     "studio:export": ["交付", "原始素材／参数 → ZIP", "打包 下载 export"],
     "creator-tools:board": ["图片", "多张原图 → 拼图 PNG", "分镜 排版 contact sheet"],
     "creator-tools:color": ["图片", "图片／参考色调 → 原尺寸图片", "曝光 对比度 色温 color"],
@@ -45,6 +46,12 @@ export function filterLibraryNodes(defs: CanvasNodeDefinition[], query: string, 
 }
 
 export const workflowTemplates = [
+    {
+        id: "smart-edit", title: "智能剪辑", description: "连接视频、脚本与配乐，分析后编辑片段并输出成片",
+        types: ["video", "text", "audio", "smart-edit:editor"],
+        positions: [[0, 0], [0, 300], [0, 500], [430, 0]],
+        links: [[0, 3], [1, 3], [2, 3]],
+    },
     {
         id: "reference",
         title: "角色参考生图",

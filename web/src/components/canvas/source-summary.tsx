@@ -22,7 +22,7 @@ export function SourceSummary({ node }: { node: CanvasNodeData }) {
                     {node.title}
                 </span>
                 <span className="block text-[11px] opacity-70">
-                    {width && height ? `${width} × ${height}` : node.type === "text" ? "文本" : node.type === "studio:reference" ? "角色与风格" : node.type === "audio" ? "音频" : node.type === "video" ? "视频" : "图片"}
+                    {width && height ? `${width} × ${height}` : node.type === "text" ? "文本" : node.type === "studio:subtitles" ? "字幕" : node.type === "studio:storyboard" ? "分镜脚本" : node.type === "studio:reference" ? "角色与风格" : node.type === "audio" ? "音频" : node.type === "video" ? "视频" : "图片"}
                 </span>
             </span>
         </span>

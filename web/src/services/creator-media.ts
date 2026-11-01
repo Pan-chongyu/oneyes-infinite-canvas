@@ -31,10 +31,10 @@ export async function creatorSourceBlob(node: CanvasNodeData, signal: AbortSigna
     return blob;
 }
 
-export async function processNativeVideo(operation: "analyze" | "concat" | "mix" | "extract" | "subtitles", sources: CanvasNodeData[], settings: CreatorSettings & { srt?: string }, signal: AbortSignal, progress: (state: CreatorProgress) => void): Promise<CreatorArtifact[]> {
+export async function processNativeVideo(operation: "analyze" | "concat" | "mix" | "extract" | "subtitles" | "editAnalyze" | "editRender", sources: CanvasNodeData[], settings: CreatorSettings & { srt?: string; edit?: Record<string, unknown> }, signal: AbortSignal, progress: (state: CreatorProgress) => void): Promise<CreatorArtifact[]> {
     const media = window.oneYesDesktop?.media;
-    if (!media) throw new Error("视频拉片与拼接需要桌面版内置的媒体组件，请在 OneYes Canvas 桌面版中使用");
-    const id = await media.create(operation, sources.length, operation === "analyze" ? { threshold: settings.threshold ?? 0.3, clips: Boolean(settings.clips), audio: Boolean(settings.audio) } : operation==='mix' ? {volume:settings.volume??1,originalVolume:settings.originalVolume??1,fadeIn:settings.fadeIn??0,fadeOut:settings.fadeOut??0} : operation==='subtitles' ? {srt:settings.srt} : { trims: sources.map(node => settings.trims?.[node.id] || {}) });
+    if (!media) throw new Error("本地音视频处理需要桌面版内置的媒体组件，请在 OneYes Canvas 桌面版中使用");
+    const id = await media.create(operation, sources.length, operation.startsWith("edit") ? settings.edit : operation === "analyze" ? { threshold: settings.threshold ?? 0.3, clips: Boolean(settings.clips), audio: Boolean(settings.audio) } : operation==='mix' ? {volume:settings.volume??1,originalVolume:settings.originalVolume??1,fadeIn:settings.fadeIn??0,fadeOut:settings.fadeOut??0} : operation==='subtitles' ? {srt:settings.srt} : { trims: sources.map(node => settings.trims?.[node.id] || {}) });
     const stop = media.subscribe(state => { if (state.id === id) progress(state); });
     const abort = () => { void media.release(id).catch(() => {}); };
     signal.addEventListener("abort", abort, { once: true });

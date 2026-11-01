@@ -22,5 +22,5 @@ export async function transcribeAudio(config: AiConfig, blob: Blob, model: strin
         );
     const value = await response.json().catch(() => null);
     if (!Array.isArray(value?.segments) || value.segments.some((item: unknown) => !item || typeof item !== "object")) throw Error("模型未返回字幕时间戳，请选择支持 verbose_json 和 segment 时间戳的识别模型");
-    return validateCues(value.segments.map((item: { start: number; end: number; text: string }) => ({ start: item.start, end: item.end, text: item.text })));
+    return validateCues(value.segments.map((item: { start: number; end: number; text: string; speaker?: unknown }) => ({ start: item.start, end: item.end, text: item.text, ...(typeof item.speaker === "string" ? { speaker: item.speaker } : {}) })));
 }

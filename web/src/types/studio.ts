@@ -1,7 +1,7 @@
 import type { JevQuestion, JevResult } from "@/services/api/jev";
 export type StudioTool = "storyboard" | "reference" | "batch" | "compare" | "subtitles" | "ocr" | "export" | "decision";
 export type StoryShot = { title: string; picture: string; dialogue: string; seconds: number; camera: string };
-export type SubtitleCue = { start: number; end: number; text: string };
+export type SubtitleCue = { start: number; end: number; text: string; speaker?: string };
 export type BatchItem = { id: string; prompt: string; state: "pending" | "started" | "done" };
 export type StudioSettings = {
     sourceIds?: string[];
