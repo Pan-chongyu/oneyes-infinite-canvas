@@ -45,7 +45,7 @@ app.whenReady().then(async()=>{
   await js('directorTest.resetEvents()');await pointerClick('.ant-modal-title',false,'right');
   assert.deepEqual(await js('directorTest.events()'),clean,'dialog context menu must not reach the node or canvas');
  };
- const shortcut=async(keyCode,modifiers=[])=>{await js('document.querySelector("[data-director-viewport]").focus()');win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});};
+ const shortcut=async(keyCode,modifiers=[])=>{await js('window.directorKeyUp=false;window.addEventListener("keyup",()=>requestAnimationFrame(()=>{window.directorKeyUp=true}),{once:true,capture:true});document.querySelector("[data-director-viewport]").focus()');win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});await wait('window.directorKeyUp');};
  const verifyEditing=async()=>{
   await settings('object');
   const count=await js('directorTest.state().nodes[0].metadata.directorScene.objects.length');
