@@ -150,6 +150,30 @@ export function removeEditRange(clips: EditClip[], sourceId: string, start: numb
         return [c.start < start ? { ...c, end: start } : null, c.end > end ? { ...c, id: c.start < start ? nanoid() : c.id, start: end } : null].filter((c): c is EditClip => Boolean(c));
     });
 }
+// Selection keys use original cue indices, so filtering never changes their identity.
+export function editTranscript(analysis: EditAnalysis) {
+    return analysis.sources.flatMap((source) => (source.cues || []).map((cue, index) => ({ ...cue, id: `${source.id}:${index}`, sourceId: source.id, title: source.title })));
+}
+export function editTranscriptPlan(clips: EditClip[], analysis: EditAnalysis, ids: string[], action: "append" | "keep" | "remove") {
+    const selected = new Set(ids),
+        entries = editTranscript(analysis).filter((cue) => selected.has(cue.id));
+    if (!entries.length || entries.length !== selected.size) throw Error("字幕选择已失效，请重新选择");
+    for (const cue of entries) {
+        const source = analysis.sources.find((source) => source.id === cue.sourceId)!;
+        if (!Number.isFinite(cue.start) || !Number.isFinite(cue.end) || cue.start < 0 || cue.end <= cue.start || cue.end > source.duration) throw Error("字幕起止时间无效，请检查后再剪辑");
+    }
+    if (action === "remove") return entries.reduce((next, cue) => removeEditRange(next, cue.sourceId, cue.start, cue.end), clips);
+    const next: EditClip[] = [];
+    for (const cue of entries) {
+        const previous = next.at(-1);
+        // Adjacent/overlapping selected sentences play once without artificial cuts.
+        if (previous?.sourceId === cue.sourceId && cue.start <= previous.end) {
+            previous.end = Math.max(previous.end, cue.end);
+            previous.label += " " + cue.text;
+        } else next.push({ id: nanoid(), sourceId: cue.sourceId, start: cue.start, end: cue.end, enabled: true, label: cue.text });
+    }
+    return action === "append" ? [...clips, ...next] : next;
+}
 export function applyEditDraft(settings: SmartEditSettings, fingerprint: string) {
     const draft = settings.draft;
     if (!draft || !settings.analysis || draft.fingerprint !== fingerprint || draft.baseClips !== JSON.stringify(settings.clips || [])) throw Error("素材或当前清单已改变，请重新生成 AI 草稿，避免覆盖手动编辑");

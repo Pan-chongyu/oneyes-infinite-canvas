@@ -17,6 +17,7 @@ export function SmartEditPreview({
     controls,
     seekTarget,
     onCursor,
+    readOnly = false,
 }: {
     source?: CanvasNodeData;
     detail?: EditSource;
@@ -27,6 +28,7 @@ export function SmartEditPreview({
     controls?: Ref<EditPreviewHandle>;
     seekTarget?: { id: string; time: number; serial: number };
     onCursor?: (time: number) => void;
+    readOnly?: boolean;
 }) {
     const [url, setUrl] = useState(""),
         [error, setError] = useState(""),
@@ -81,7 +83,7 @@ export function SmartEditPreview({
         onCursor?.(time);
     };
     const trim = (start: number, end: number) => {
-        if (!clip || !detail) return;
+        if (!clip || !detail || readOnly) return;
         try {
             const next = trimEditClip(clip, start, end, detail);
             setError("");
@@ -114,7 +116,7 @@ export function SmartEditPreview({
             if (!unavailable && clip && cursor > clip.start) trim(clip.start, cursor);
         },
         split: () => {
-            if (!unavailable && clip && cursor > clip.start && cursor < clip.end) {
+            if (!unavailable && !readOnly && clip && cursor > clip.start && cursor < clip.end) {
                 video.current?.pause();
                 onSplit(cursor);
             }
@@ -181,7 +183,7 @@ export function SmartEditPreview({
             <Slider aria-label="素材播放头" ariaLabelForHandle="素材播放头" className="!my-2" min={0} max={detail.duration} step={step} value={cursor} disabled={disabled || !loaded} onChange={seek} tooltip={{ formatter: (v) => `${v?.toFixed(3)} 秒` }} />
             <div className="flex items-center justify-between text-[11px] opacity-70">
                 <span>
-                    保留 {clip.start.toFixed(2)}–{clip.end.toFixed(2)} 秒
+                    {readOnly ? "选段" : "保留"} {clip.start.toFixed(2)}–{clip.end.toFixed(2)} 秒
                 </span>
                 <span>原片 {detail.duration.toFixed(2)} 秒</span>
             </div>
@@ -194,7 +196,7 @@ export function SmartEditPreview({
                 max={detail.duration}
                 step={step}
                 value={range}
-                disabled={disabled}
+                disabled={disabled || readOnly}
                 onChange={(value) => {
                     setRange(value);
                     seek(value[0] !== range[0] ? value[0] : value[1]);
@@ -202,35 +204,37 @@ export function SmartEditPreview({
                 onChangeComplete={(value) => trim(value[0], value[1])}
                 tooltip={{ formatter: (v) => `${v?.toFixed(3)} 秒` }}
             />
-            <div className="flex flex-wrap items-center gap-1">
-                <Button type="text" size="small" disabled={unavailable || cursor >= clip.end} onClick={() => trim(cursor, clip.end)}>
-                    设为入点
-                </Button>
-                <Button type="text" size="small" disabled={unavailable || cursor <= clip.start} onClick={() => trim(clip.start, cursor)}>
-                    设为出点
-                </Button>
-                <Button
-                    type="text"
-                    size="small"
-                    icon={<Scissors size={12} />}
-                    disabled={unavailable || cursor <= clip.start || cursor >= clip.end}
-                    onClick={() => {
-                        video.current?.pause();
-                        onSplit(cursor);
-                    }}
-                >
-                    在此切分
-                </Button>
-                <Button type="text" size="small" disabled={disabled || (clip.start === 0 && clip.end === detail.duration)} onClick={() => trim(0, detail.duration)}>
-                    恢复整段
-                </Button>
-            </div>
+            {!readOnly && (
+                <div className="flex flex-wrap items-center gap-1">
+                    <Button type="text" size="small" disabled={unavailable || cursor >= clip.end} onClick={() => trim(cursor, clip.end)}>
+                        设为入点
+                    </Button>
+                    <Button type="text" size="small" disabled={unavailable || cursor <= clip.start} onClick={() => trim(clip.start, cursor)}>
+                        设为出点
+                    </Button>
+                    <Button
+                        type="text"
+                        size="small"
+                        icon={<Scissors size={12} />}
+                        disabled={unavailable || cursor <= clip.start || cursor >= clip.end}
+                        onClick={() => {
+                            video.current?.pause();
+                            onSplit(cursor);
+                        }}
+                    >
+                        在此切分
+                    </Button>
+                    <Button type="text" size="small" disabled={disabled || (clip.start === 0 && clip.end === detail.duration)} onClick={() => trim(0, detail.duration)}>
+                        恢复整段
+                    </Button>
+                </div>
+            )}
             {error && (
                 <p className="m-0 text-xs" role="alert">
                     {error}
                 </p>
             )}
-            <p className="m-0 text-[11px] leading-5 opacity-70">拖动上方播放头定位，下方两端控制保留范围。预览为原素材，转场、字幕与配乐在输出时合成。</p>
+            <p className="m-0 text-[11px] leading-5 opacity-70">{readOnly ? "这里只预览选段，不修改时间线；点击播放试听，返回时间线后继续精修。" : "拖动上方播放头定位，下方两端控制保留范围。预览为原素材，转场、字幕与配乐在输出时合成。"}</p>
         </div>
     );
 }

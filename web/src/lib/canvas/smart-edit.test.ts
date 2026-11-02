@@ -18,6 +18,8 @@ import {
     moveEditClip,
     removeEditRange,
     applyEditDraft,
+    editTranscript,
+    editTranscriptPlan,
 } from "./smart-edit";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { EditAnalysis } from "@/types/smart-edit";
@@ -47,6 +49,64 @@ const analysis: EditAnalysis = {
         },
     ],
 };
+test("transcript selection keeps source order and identity through filters, merges adjacent sentences and never changes originals", () => {
+    const multi: EditAnalysis = {
+        ...analysis,
+        sources: [
+            ...analysis.sources,
+            {
+                ...analysis.sources[0],
+                id: "second",
+                cues: [
+                    { start: 0, end: 1, text: "另一原片" },
+                    { start: 1, end: 2, text: "相邻句" },
+                ],
+            },
+        ],
+    };
+    const original = structuredClone(multi),
+        entries = editTranscript(multi);
+    const selected = [entries[4].id, entries[1].id, entries[3].id, entries[3].id];
+    const next = editTranscriptPlan([], multi, selected, "keep");
+    assert.deepEqual(
+        next.map((clip) => [clip.sourceId, clip.start, clip.end]),
+        [
+            ["v", 4, 7],
+            ["second", 0, 2],
+        ],
+    );
+    assert.equal(next[1].label, "另一原片 相邻句");
+    assert.equal(new Set(next.map((clip) => clip.id)).size, 2);
+    assert.deepEqual(multi, original);
+    const existing = localEditPlan(multi, "manual", 0);
+    const appended = editTranscriptPlan(existing, multi, selected, "append");
+    assert.deepEqual(appended.slice(0, 2), existing);
+    assert.equal(appended.length, 4);
+    assert.throws(() => editTranscriptPlan(existing, multi, ["missing:0"], "keep"), /失效/);
+    assert.throws(() => editTranscriptPlan(existing, multi, [], "remove"), /失效/);
+    assert.equal(entries.filter((cue) => cue.text.includes("产品"))[0].id, "v:1");
+});
+test("batch transcript deletion removes all repeated occurrences in one plan and permits an empty undoable edit", () => {
+    const original = localEditPlan(analysis, "manual", 0),
+        repeated = [...original, { ...original[0], id: "repeat", enabled: false }];
+    const before = structuredClone(repeated),
+        entries = editTranscript(analysis);
+    const next = editTranscriptPlan(repeated, analysis, [entries[0].id, entries[1].id], "remove");
+    assert.deepEqual(
+        next.map((clip) => [clip.start, clip.end, clip.enabled]),
+        [
+            [2, 4, true],
+            [7, 10, true],
+            [2, 4, false],
+            [7, 10, false],
+        ],
+    );
+    assert.equal(new Set(next.map((clip) => clip.id)).size, next.length);
+    assert.deepEqual(repeated, before);
+    const all = { ...analysis, sources: [{ ...analysis.sources[0], cues: [{ start: 0, end: 10, text: "整片" }] }] };
+    assert.deepEqual(editTranscriptPlan(original, all, ["v:0"], "remove"), []);
+    assert.throws(() => editTranscriptPlan(original, { ...all, sources: [{ ...all.sources[0], cues: [{ start: 0, end: 11, text: "越界" }] }] }, ["v:0"], "keep"), /起止时间无效/);
+});
 test("silence, scene and text plans retain exact source timing and reject mute-video silence editing", () => {
     assert.deepEqual(
         localEditPlan(analysis, "silence", 0.1).map((c) => [c.start, c.end]),

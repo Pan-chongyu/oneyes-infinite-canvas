@@ -74,7 +74,7 @@ function Fixture() {
         },
         transcribe: async () => {
             transcriptions.current++;
-            return [{ start: 0, end: 1, text: "产品介绍" }];
+            return [{ start: 0, end: 1, text: "产品介绍", speaker: "主讲" }, { start: 1, end: 2, text: "使用方法", speaker: "演示" }];
         },
         generateImage: async () => ({ images: [] }),
         generateVideo: async () => ({ url: "", mimeType: "" }),

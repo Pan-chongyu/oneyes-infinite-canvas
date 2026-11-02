@@ -20,7 +20,6 @@ import {
     resolveEditTextModel,
     editTimeline,
     editAtTime,
-    removeEditRange,
     applyEditDraft,
 } from "@/lib/canvas/smart-edit";
 import { validateCues } from "@/lib/canvas/studio";
@@ -31,6 +30,7 @@ import { videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { SourceSummary } from "./source-summary";
 import { SmartEditPreview, type EditPreviewHandle } from "./smart-edit-preview";
 import { SmartEditTimeline, editTimecode } from "./smart-edit-timeline";
+import { SmartEditTranscript } from "./smart-edit-transcript";
 import styles from "./smart-edit-workbench.module.css";
 import { useConfigStore } from "@/stores/use-config-store";
 
@@ -38,11 +38,11 @@ const running = new Set<string>();
 const taskKey = (ctx: CanvasNodeContext) => `${ctx.projectId}:${ctx.node.id}`;
 const readSources = (ctx: CanvasNodeContext) => editSources(ctx.getNode(ctx.node.id) || ctx.node, ctx.getNodes(), ctx.getConnections());
 const modes = [
-    { label: "手动剪辑", value: "manual" },
-    { label: "口播精剪", value: "silence" },
-    { label: "分镜选片", value: "scenes" },
-    { label: "文字剪辑", value: "text" },
-    { label: "AI 编排", value: "ai" },
+    { label: "手动剪辑", value: "manual", hint: "整段导入，自由修剪" },
+    { label: "口播精剪", value: "silence", hint: "本机去停顿，保留语气" },
+    { label: "分镜选片", value: "scenes", hint: "按镜头拆开，再挑选" },
+    { label: "文字剪辑", value: "text", hint: "勾选字幕，按句剪辑" },
+    { label: "AI 编排", value: "ai", hint: "说出要求，先审稿再应用" },
 ];
 function Content({ ctx }: { ctx: CanvasNodeContext }) {
     const settings = ctx.node.metadata?.smartEdit,
@@ -88,6 +88,8 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
         program = useRef<HTMLVideoElement>(null);
     const [cursor, setCursor] = useState(0),
         [seekTarget, setSeekTarget] = useState<{ id: string; time: number; serial: number }>();
+    const [audition, setAudition] = useState<EditClip>(),
+        [libraryTab, setLibraryTab] = useState("clips");
     const [rendered, setRendered] = useState<{ url: string; blob: Blob; signature: string }>(),
         [showRendered, setShowRendered] = useState(false);
     const renderedRef = useRef(rendered);
@@ -96,6 +98,12 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
     const [history, setHistory] = useState<{ past: EditClip[][]; future: EditClip[][] }>({ past: [], future: [] });
     const s = ctx.node.metadata?.smartEdit || {},
         mode = s.mode || "silence";
+    useEffect(() => {
+        setLibraryTab(mode === "text" ? "transcript" : "clips");
+    }, [mode]);
+    useEffect(() => {
+        setAudition(undefined);
+    }, [ctx.projectId, ctx.node.id, s.analysis, s.clips]);
     let sources: CanvasNodeData[] = [],
         sourceError = "";
     try {
@@ -334,6 +342,23 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
             planError = (error as Error).message;
         }
     const chosen = clips.find((c) => c.id === previewId) || clips[0];
+    const monitored = audition || chosen;
+    const visuals = sources.filter((n) => ["video", "image"].includes(n.type)),
+        needsTranscript = current && mode === "text" && s.analysis?.sources.some((source) => source.kind === "video" && !source.cues?.length),
+        step = !current ? 0 : needsTranscript ? 1 : enabled.length ? 2 : 1,
+        nextHint = !visuals.length
+            ? "先在左侧选择视频或图片，也可从画布连线导入素材。"
+            : !current
+              ? "素材已选好，点击分析；这一步在本机完成，不调用模型。"
+              : needsTranscript
+                ? "还缺字幕：连接字幕节点，或选择语音模型后识别。"
+                : s.draft
+                  ? "AI 草稿已就绪。先对比，再应用到时间线；应用后仍可手调。"
+                  : enabled.length
+                    ? "在时间线修剪，或切到文字选句。满意后先预览成片，再输出。"
+                    : mode === "ai"
+                      ? "填写剪辑要求，生成草稿后审阅应用；也可切到手动整段导入。"
+                      : "按当前方式生成清单，再进入精修。";
     let textModel,
         modelError = "";
     try {
@@ -375,6 +400,7 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
         }
     };
     const choose = (id: string) => {
+        setAudition(undefined);
         setPreviewId(id);
         setShowRendered(false);
     };
@@ -456,7 +482,7 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
         } else if (!showRendered && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
             event.preventDefault();
             previewControl.current?.step(event.key === "ArrowLeft" ? -1 : 1);
-        } else if (["Delete", "Backspace"].includes(event.key) && chosen) {
+        } else if (!audition && ["Delete", "Backspace"].includes(event.key) && chosen) {
             event.preventDefault();
             editClips(clips.filter((c) => c.id !== chosen.id));
         }
@@ -506,6 +532,19 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                         <Button type="text" size="small" aria-label="关闭剪辑" icon={<X size={16} />} onClick={onClose} />
                     </div>
                 </header>
+                <div className={styles.guide} aria-label="剪辑流程">
+                    <ol className={styles.steps}>
+                        {["准备素材", "生成初剪", "精修与输出"].map((label, index) => (
+                            <li key={label} aria-current={step === index ? "step" : undefined}>
+                                <span>{index + 1}</span>
+                                {label}
+                            </li>
+                        ))}
+                    </ol>
+                    <p className="m-0 min-w-0 text-xs leading-5 opacity-65" role="status">
+                        {nextHint}
+                    </p>
+                </div>
                 <div className={styles.layout}>
                     <aside className={styles.library + " thin-scrollbar space-y-3"} aria-label="素材与智能助手">
                         <h3 className="m-0 text-xs font-medium">素材与智能助手</h3>
@@ -555,12 +594,18 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                             </Button>
                         </details>
 
-                        <Select className="w-full" size="small" aria-label="剪辑方式" options={modes} value={mode} disabled={busy} onChange={(mode) => patch({ mode: mode as SmartEditSettings["mode"] })} />
-                        {mode === "manual" && (
-                            <p className="m-0 text-xs leading-5" style={{ color: ctx.theme.node.muted }}>
-                                读取素材后，直接定位、裁剪和拼接；无需配置模型。自动剪辑的结果也能在这里继续调整。
-                            </p>
-                        )}
+                        <details open={!current} className="text-xs">
+                            <summary className="cursor-pointer py-1">剪辑方式 · {modes.find((item) => item.value === mode)?.label}</summary>
+                            <div className={styles.modes} role="group" aria-label="剪辑方式">
+                                {modes.map((item) => (
+                                    <button type="button" key={item.value} aria-pressed={mode === item.value} disabled={busy} onClick={() => patch({ mode: item.value as SmartEditSettings["mode"] })}>
+                                        <span>{item.label}</span>
+                                        <small>{item.hint}</small>
+                                    </button>
+                                ))}
+                            </div>
+                        </details>
+                        <p className="m-0 text-[11px] leading-5 opacity-65">切换方式保留清单，重新生成前会确认。</p>
                         <div className="flex flex-wrap items-center gap-1">
                             <Button
                                 type="text"
@@ -587,10 +632,10 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                                 素材或分析参数已改变，请重新分析后输出。
                             </p>
                         )}
-                        {(mode === "ai" || mode === "text") && (
-                            <details className="space-y-2 text-xs" open={mode === "text"}>
+                        {(mode === "ai" || mode === "text" || libraryTab === "transcript") && (
+                            <details className="space-y-2 text-xs" open={mode === "text" && Boolean(needsTranscript)}>
                                 <summary className="cursor-pointer py-1">
-                                    语音识别与字幕<span className="ml-2 opacity-60">可选</span>
+                                    语音识别与字幕<span className="ml-2 opacity-60">{needsTranscript ? "待准备" : "可选"}</span>
                                 </summary>
                                 <label className="block space-y-1 text-xs">
                                     语音识别模型
@@ -671,6 +716,20 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                                 <p className="m-0 leading-5 opacity-70">
                                     当前 {enabled.length} 段 → 建议 {s.draft.clips.length} 段，净素材 {editTimecode(editDuration(s.draft.clips, 0))}。应用后才会改变时间线。
                                 </p>
+                                <div className={styles.comparison} aria-label="AI 草稿时长对比">
+                                    <span>
+                                        当前素材 <strong>{editTimecode(editDuration(clips, 0))}</strong>
+                                    </span>
+                                    <span>
+                                        草稿素材 <strong>{editTimecode(editDuration(s.draft.clips, 0))}</strong>
+                                    </span>
+                                    <span className="col-span-2 opacity-65">
+                                        {(() => {
+                                            const delta = editDuration(s.draft.clips, 0) - editDuration(clips, 0);
+                                            return `${delta > 0 ? "增加" : "减少"} ${editTimecode(Math.abs(delta))} · 均为转场前时长`;
+                                        })()}
+                                    </span>
+                                </div>
                                 <p className="m-0 leading-5">{s.draft.rationale}</p>
                                 <ol className="m-0 max-h-48 space-y-2 overflow-auto pl-4">
                                     {s.draft.clips.map((c) => (
@@ -680,6 +739,18 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                                                 {editTimecode(c.start)}–{editTimecode(c.end)}
                                             </span>
                                             <p className="m-0 leading-5 opacity-75">{c.label}</p>
+                                            <Button
+                                                type="text"
+                                                size="small"
+                                                disabled={busy || Boolean(draftError)}
+                                                onClick={() => {
+                                                    setAudition(c);
+                                                    setShowRendered(false);
+                                                    setSeekTarget((previous) => ({ id: c.id, time: c.start, serial: (previous?.serial || 0) + 1 }));
+                                                }}
+                                            >
+                                                预览这段
+                                            </Button>
                                         </li>
                                     ))}
                                 </ol>
@@ -701,71 +772,74 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                         {s.rationale && <p className="m-0 text-xs leading-5 opacity-60">{s.rationale}</p>}
                         {current && s.analysis && (
                             <>
-                                <Input size="small" aria-label="搜索剪辑片段" allowClear value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索片段或字幕" />
-                                <div className="space-y-1" aria-label="片段列表">
-                                    {clips
-                                        .filter((c) => !search || c.label.includes(search))
-                                        .map((c) => (
-                                            <button
-                                                key={c.id}
-                                                type="button"
-                                                disabled={busy}
-                                                className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:opacity-70"
-                                                style={{ background: c.id === chosen?.id ? ctx.theme.toolbar.activeBg : undefined, opacity: c.enabled ? 1 : 0.5 }}
-                                                onClick={() => choose(c.id)}
-                                            >
-                                                <span className="w-5 shrink-0 tabular-nums opacity-50">{clips.indexOf(c) + 1}</span>
-                                                <span className="min-w-0 flex-1 truncate">{c.label}</span>
-                                                <span className="text-[10px] tabular-nums opacity-60">{(c.end - c.start).toFixed(2)}s</span>
-                                            </button>
-                                        ))}
+                                <div className={styles.tabs} role="group" aria-label="浏览剪辑内容">
+                                    <button type="button" aria-pressed={libraryTab === "clips"} onClick={() => setLibraryTab("clips")}>
+                                        片段清单 · {clips.length}
+                                    </button>
+                                    <button type="button" aria-pressed={libraryTab === "transcript"} onClick={() => setLibraryTab("transcript")}>
+                                        文字精剪
+                                    </button>
                                 </div>
-                                <details open={mode === "text"} className="space-y-2 text-xs">
-                                    <summary className="cursor-pointer py-1">文字精剪</summary>
-                                    <p className="m-0 leading-5 opacity-60">按整段字幕添加或删除，删除作用于当前清单中该句的全部匹配片段，不改原素材。</p>
-                                    {s.analysis.sources.flatMap((a) =>
-                                        (a.cues || [])
-                                            .filter((cue) => !search || cue.text.includes(search))
-                                            .map((cue, index) => (
-                                                <div key={a.id + ":" + index} className="space-y-1 border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }} data-edit-transcript>
-                                                    <span className="text-[10px] tabular-nums opacity-60">
-                                                        {a.title} · {editTimecode(cue.start)}
-                                                        {cue.speaker && " · " + cue.speaker}
-                                                    </span>
-                                                    <p className="m-0 leading-5">{cue.text}</p>
-                                                    <div className="flex gap-1">
-                                                        <Button
-                                                            type="text"
-                                                            size="small"
-                                                            disabled={busy}
-                                                            onClick={() => {
-                                                                const next = { id: nanoid(), sourceId: a.id, start: cue.start, end: cue.end, label: cue.text, enabled: true };
-                                                                editClips([...clips, next]);
-                                                                choose(next.id);
-                                                            }}
-                                                        >
-                                                            添加至末尾
-                                                        </Button>
-                                                        <Button
-                                                            type="text"
-                                                            size="small"
-                                                            disabled={busy || !clips.some((c) => c.sourceId === a.id && c.start < cue.end && c.end > cue.start)}
-                                                            onClick={() => editClips(removeEditRange(clips, a.id, cue.start, cue.end))}
-                                                        >
-                                                            删除这句
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            )),
-                                    )}
-                                    {!s.analysis.sources.some((a) => a.cues?.length) && <p className="m-0 opacity-60">还没有时间戳字幕，请连接字幕节点或识别缺失字幕。</p>}
-                                </details>
+                                {libraryTab === "clips" ? (
+                                    <>
+                                        <Input size="small" aria-label="搜索剪辑片段" allowClear value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索当前片段" />
+                                        <div className="space-y-1" aria-label="片段列表">
+                                            {clips
+                                                .filter((c) => !search || c.label.includes(search))
+                                                .map((c) => (
+                                                    <button
+                                                        key={c.id}
+                                                        type="button"
+                                                        disabled={busy}
+                                                        className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:opacity-70"
+                                                        style={{ background: c.id === chosen?.id ? ctx.theme.toolbar.activeBg : undefined, opacity: c.enabled ? 1 : 0.5 }}
+                                                        onClick={() => choose(c.id)}
+                                                    >
+                                                        <span className="w-5 shrink-0 tabular-nums opacity-50">{clips.indexOf(c) + 1}</span>
+                                                        <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                                                        <span className="text-[10px] tabular-nums opacity-60">{(c.end - c.start).toFixed(2)}s</span>
+                                                    </button>
+                                                ))}
+                                        </div>
+                                        {!clips.length && <p className="m-0 text-xs leading-5 opacity-65">还没有片段。按当前方式生成清单，或切到文字精剪勾选字幕。</p>}
+                                    </>
+                                ) : (
+                                    <SmartEditTranscript
+                                        analysis={s.analysis}
+                                        clips={clips}
+                                        disabled={busy}
+                                        onEdit={(next) => {
+                                            const settings = latest.current.getNode(ctx.node.id)?.metadata?.smartEdit;
+                                            if (
+                                                !alive.current ||
+                                                taskKey(latest.current) !== taskKey(ctx) ||
+                                                running.has(taskKey(ctx)) ||
+                                                !settings ||
+                                                JSON.stringify(settings.analysis) !== JSON.stringify(s.analysis) ||
+                                                JSON.stringify(settings.clips || []) !== JSON.stringify(clips)
+                                            )
+                                                throw Error("素材或清单已改变，请重新确认字幕选择");
+                                            editClips(next);
+                                            if (next[0]) choose(next[0].id);
+                                        }}
+                                        onPreview={(value) => {
+                                            setAudition(value);
+                                            setShowRendered(false);
+                                            setSeekTarget((previous) => ({ id: value.id, time: value.start, serial: (previous?.serial || 0) + 1 }));
+                                        }}
+                                    />
+                                )}
                             </>
                         )}
                     </aside>
                     <main className={styles.monitor + " thin-scrollbar"} aria-label="剪辑监视器">
                         <div className="mb-3 flex items-center justify-between text-xs">
-                            <span>{showRendered && rendered ? "成片预览" : "源素材预览"}</span>
+                            <span>{showRendered && rendered ? "成片预览" : audition ? "选段预览 · 不改变时间线" : "源素材预览"}</span>
+                            {audition && !showRendered && (
+                                <Button type="text" size="small" onClick={() => setAudition(undefined)}>
+                                    返回时间线
+                                </Button>
+                            )}
                             {showRendered && (
                                 <Button type="text" size="small" onClick={() => setShowRendered(false)}>
                                     返回源素材
@@ -784,14 +858,15 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                             <SmartEditPreview
                                 controls={previewControl}
                                 seekTarget={seekTarget}
-                                source={sources.find((n) => n.id === chosen?.sourceId)}
-                                detail={s.analysis?.sources.find((a) => a.id === chosen?.sourceId)}
-                                clip={chosen}
+                                source={sources.find((n) => n.id === monitored?.sourceId)}
+                                detail={s.analysis?.sources.find((a) => a.id === monitored?.sourceId)}
+                                clip={monitored}
+                                readOnly={Boolean(audition)}
                                 disabled={busy || !current}
                                 onChange={(value) => changeClip(value.id, value)}
                                 onSplit={split}
                                 onCursor={(time) => {
-                                    if (!chosen?.enabled) return;
+                                    if (audition || !chosen?.enabled) return;
                                     try {
                                         const item = editTimeline(clips, s.transition ?? 0).find((t) => t.clip.id === chosen.id);
                                         if (item) setCursor(item.start + Math.max(0, Math.min(chosen.end - chosen.start, time - chosen.start)));
@@ -808,7 +883,7 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                         )}
                         <p className="mt-3 text-[10px] leading-5 opacity-55">空格播放 / 暂停 · ← → 逐帧 · I / O 入出点 · S 切分 · Delete 删除 · Ctrl / ⌘ Z 撤销。点击空白处后使用快捷键。</p>
                     </main>
-                    <aside className={styles.inspector + " thin-scrollbar space-y-4"} aria-label="片段检查器">
+                    <aside className={styles.inspector + " thin-scrollbar space-y-4"} aria-label="片段检查器" inert={Boolean(audition)}>
                         <div className="flex items-center justify-between">
                             <h3 className="m-0 text-xs font-medium">{chosen ? "片段 " + (clips.indexOf(chosen) + 1) : "片段检查器"}</h3>
                             <Button
