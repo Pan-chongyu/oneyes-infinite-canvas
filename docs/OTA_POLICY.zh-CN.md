@@ -2,7 +2,7 @@
 
 Canvas 是独立 Electron 应用；本通道不修改 OneYes Desktop 的 Tauri/Sparkle 更新器和签名身份。
 
-智能剪辑使用随包迁移的 Velocut 完整编辑器。六种平台／芯片运行 test:editor 和 test:smart-edit，覆盖独立受限窗口、真实多轨命令、素材原件／同名不覆盖、模型准确渠道及先审阅后应用、撤销重做、原尺寸与音频导出、回填幂等和跨进程恢复。不调用付费模型。没有可用 WebGPU 的 CI 明确记录渲染未验证，仍须验证保存和 AI 交互；可用设备必须真实导出，不通过降低分辨率通过测试。旧的 FFmpeg editAnalyze／editRender 仍作为媒体底层回归，但不再描述为当前剪辑界面。
+智能剪辑使用随包迁移的 Velocut 完整编辑器。六种平台／芯片运行 test:editor 和 test:smart-edit，覆盖独立受限窗口、真实多轨命令、素材原件／同名不覆盖、模型准确渠道及先审阅后应用、撤销重做、原尺寸与音频导出、回填幂等和跨进程恢复。不调用付费模型。Linux 无显卡 CI 沿用上游 browser-options 的 SwiftShader Vulkan 配置进行真实输出，不因 adapter 存在就认定渲染可用；没有可用 WebGPU 的 CI 明确记录渲染未验证，仍须验证保存和 AI 交互；可用设备必须真实导出，不通过降低分辨率通过测试。旧的 FFmpeg editAnalyze／editRender 仍作为媒体底层回归，但不再描述为当前剪辑界面。
 
 底层 FFmpeg 的 editAnalyze／editRender 继续覆盖多音轨、镜头时间、图片混排、顺序、叠化、配乐、中文标题／字幕、原始尺寸、非法时间／播放列表拒绝和取消清理；这些属于媒体工具回归，不代表新剪辑界面支持字幕批量精剪。独立编辑器使用上游 WebGPU／WebCodecs 渲染，另验证关闭原画布或切换项目后 AI 请求立即结束，后续请求明确提示重新打开节点，重连不重发已完成模型请求。
 

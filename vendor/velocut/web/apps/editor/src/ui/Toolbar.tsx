@@ -140,7 +140,7 @@ export function Toolbar({
       else {const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`${doc.name || 'OneYes'}.mp4`;a.click();URL.revokeObjectURL(url);}
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError')
-        setExportError(e instanceof Error ? e.message : String(e));
+        setExportError(/external Instance|device.*lost|GPU.*(lost|unavailable)|No GPU adapter/i.test(e instanceof Error ? e.message : String(e)) ? '显卡渲染不可用，已停止导出。请重启软件并检查显卡驱动及硬件加速；项目与输出尺寸已保留。' : e instanceof Error ? e.message : String(e));
     } finally {
       setExportPct(null);
       exportAbort.current = null;

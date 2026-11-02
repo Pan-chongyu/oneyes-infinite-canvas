@@ -11,6 +11,7 @@ const {windowChromeOptions}=require('../../desktop/window-chrome.cjs');
 protocol.registerSchemesAsPrivileged([{scheme:'oneyes-canvas',privileges:{standard:true,secure:true,supportFetchAPI:true,stream:true}}]);
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 app.commandLine.appendSwitch('enable-unsafe-webgpu');
+if(process.platform==='linux')for(const [name,value] of [['ignore-gpu-blocklist',''],['use-gl','angle'],['enable-features','Vulkan'],['use-angle','vulkan'],['use-vulkan','swiftshader'],['use-webgpu-adapter','swiftshader'],['disable-vulkan-surface','']])app.commandLine.appendSwitch(name,value);
 app.setPath('userData',process.env.CANVAS_EDIT_TEST_PROFILE);
 app.whenReady().then(async()=>{
  const directory=await mkdtemp(join(tmpdir(),'canvas-editor-ui-')),run=promisify(execFile);
