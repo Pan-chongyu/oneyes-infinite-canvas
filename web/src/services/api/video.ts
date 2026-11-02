@@ -9,7 +9,7 @@ import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/medi
 import { isGrokVideoModel, isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, normalizeVideoResolutionForModel } from "@/lib/video-capabilities";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { prepareReferenceFiles } from "./image-references";
 import type { ReferenceImage } from "@/types/image";
@@ -82,6 +82,12 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
+    const channel = resolveModelChannel(config, selectedModel);
+    // Seedance served by OneYes' Grok group speaks Grok JSON too. Do not infer
+    // the protocol from a display name or apply xAI-only model limits to it.
+    if (isGrokVideoModel(selectedModel) || (/^(?:doubao-)?seedance(?:-|$)/i.test(modelOptionName(selectedModel)) && (channel.oneYes?.platform === "grok" || channel.id === GROK_VIDEO_CHANNEL_ID))) {
+        return createGrokVideoTask(requestConfig, selectedModel, prompt, references, options);
+    }
     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
 }
 
@@ -153,7 +159,6 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    if (isGrokVideoModel(model)) return createGrokVideoTask(config, model, prompt, references, options);
     const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
@@ -211,6 +216,10 @@ async function createGrokVideoTask(config: AiConfig, model: string, prompt: stri
         body.duration = Number(normalizeVideoSeconds(config.videoSeconds));
         body.aspect_ratio = videoAspectRatio(config.size);
         body.resolution = normalizeVideoResolution(config.vquality, model);
+        if (!isGrokVideoModel(model)) {
+            body.watermark = boolConfig(config.videoWatermark, false);
+            body.generate_audio = boolConfig(config.videoGenerateAudio, true);
+        }
         const images = await Promise.all((await prepareReferenceFiles(references, options?.signal)).map(readFileAsDataUrl));
         if (resolveVideoMode(config.videoMode, images.length) === "reference" || audios.length) {
             if (images.length) body.reference_images = images.map(url => ({ url }));
@@ -240,7 +249,10 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         const response = await axios.get<ApiVideoResponse>(aiApiUrl(config, taskPath), { headers: aiHeaders(config), signal: options?.signal });
         if (response.status === 202 && !response.data) return { status: "pending" };
         const video = unwrapVideoResponse(response.data);
-        if (["failed", "cancelled", "expired"].includes(video.status || "")) return { status: "failed", error: readApiErrorMessage(video.error) || apiText(video.status === "expired" ? "videoTaskExpired" : "videoGenerationFailed") };
+        if (["failed", "cancelled", "expired"].includes(video.status || "")) {
+            const message = readApiErrorMessage(video.error);
+            return { status: "failed", error: /^task not found[.!]?$/i.test(message.trim()) ? apiText("videoTaskMissing") : message || apiText(video.status === "expired" ? "videoTaskExpired" : "videoGenerationFailed") };
+        }
         if (video.video?.respect_moderation === false) return { status: "failed", error: apiText("videoModerationRejected") };
         const url = videoResultUrl(video);
         // Sub2API returns an authenticated relay URL. Rebuild it from the fixed

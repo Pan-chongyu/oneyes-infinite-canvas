@@ -55,6 +55,42 @@ test('MiniMax H accepts only 768P, 1080P and 2K without submitting unsupported r
     } finally { axios.defaults.adapter = original; }
 });
 
+test('OneYes Grok Seedance uses JSON booleans and the exact selected channel; manual keys work too', async () => {
+    const calls: AxiosRequestConfig[] = [];
+    const grok = { ...config.channels[0], id: 'oneyes-minimax', apiKey: 'seedance-fixture-key', oneYes: { platform: 'grok' as const, groupId: 2, groupName: 'Video', keyId: 3, accountId: 1 } };
+    try {
+        adapter(request => { calls.push(request); return { data: { id: 'seedance-task' } }; });
+        for (const manual of [false, true]) {
+            for (const enabled of ['false', 'true']) {
+                const selected = { ...config, channels: [...config.channels, { ...grok, ...(manual ? { oneYes: undefined } : {}) }], model: 'oneyes-minimax::seedance-2.5', size: '16:9', vquality: '1080', videoWatermark: enabled, videoGenerateAudio: enabled };
+                const task = await createVideoGenerationTask(selected, 'test');
+                const request = calls.at(-1)!;
+                assert.equal(task.id, 'seedance-task');
+                assert.equal(task.model, selected.model);
+                assert.match(request.url!, /\/v1\/videos\/generations$/);
+                assert.equal(request.headers?.Authorization, 'Bearer seedance-fixture-key');
+                assert.equal(request.headers?.['Content-Type'], 'application/json');
+                assert.deepEqual(JSON.parse(request.data), { model: 'seedance-2.5', prompt: 'test', duration: 5, aspect_ratio: '16:9', resolution: '1080p', watermark: enabled === 'true', generate_audio: enabled === 'true' });
+                assert.equal(selected.vquality, '1080');
+            }
+        }
+        await createVideoGenerationTask({ ...config, channels: [{ ...grok, id: 'other-grok-id' }], model: 'other-grok-id::doubao-seedance-2.5' }, 'alias');
+        assert.equal(JSON.parse(calls.at(-1)!.data).model, 'doubao-seedance-2.5');
+        assert.equal(calls.length, 5);
+        adapter(request => { calls.push(request); return { data: { id: 'multipart-task' } }; });
+        await createVideoGenerationTask({ ...config, model: 'default::seedance-2.5' }, 'other protocol');
+        assert.ok(calls.at(-1)!.data instanceof FormData, 'a model name alone must not change another channel protocol');
+
+        let posts = 0;
+        axios.defaults.adapter = async request => {
+            posts++;
+            throw new AxiosError('rejected', 'ERR_BAD_REQUEST', request, undefined, { data: { error: { message: '水印开关参数无效，请使用 true 或 false。' } }, status: 400, statusText: '', headers: {}, config: request });
+        };
+        await assert.rejects(createVideoGenerationTask({ ...config, channels: [grok], model: 'oneyes-minimax::seedance-2.5' }, 'test'), /水印开关参数无效/);
+        assert.equal(posts, 1, 'never retry a paid request using another protocol');
+    } finally { axios.defaults.adapter = original; }
+});
+
 test('Grok reference resolution validation never changes the chosen quality or dimensions', async () => {
     const fullHd = { ...config, vquality: '1080p', size: '1920x1080', videoMode: 'reference' };
     const references = { imageCount: 1, audioCount: 0, videoCount: 0 };
@@ -123,6 +159,10 @@ test('expired, moderated and done-without-content tasks stop without resubmittin
             await assert.rejects(waitForVideoGenerationTask(config, task));
             assert.equal(calls, 1);
         }
+        let queries = 0;
+        adapter(request => { queries++; assert.equal(request.method, 'get'); return { data: { status: 'failed', error: { code: 'video_generation_failed', message: 'task not found' } } }; });
+        await assert.rejects(waitForVideoGenerationTask(config, task), /找不到任务.*官网.*用量.*不要反复生成/);
+        assert.equal(queries, 1, 'an upstream missing task must terminate without resubmission');
         let posts = 0;
         axios.defaults.adapter = async request => { posts++; throw new AxiosError('error', 'ERR_BAD_RESPONSE', request, undefined, { data: { error: { message: 'xAI upstream returned status 415' } }, status: 400, statusText: '', headers: {}, config: request }); };
         await assert.rejects(createVideoGenerationTask(config, 'test'), /415.*客户端/);

@@ -41,6 +41,11 @@ Object.assign(window, { videoTest: async () => {
         check(blocked && fullHd.vquality === '1080' && fullHd.size === '1920x1080', 'unsupported requests must preserve resolution and never submit');
     }
     tasks.push(await createVideoGenerationTask({ ...config, videoMode: 'reference', vquality: '720' }, 'manually-selected-720p', [image]));
+    const seedance = { ...config, channels: [...config.channels, { ...config.channels[0], id: 'oneyes-minimax' }], model: 'oneyes-minimax::seedance-2.5', vquality: '720', size: 'auto' };
+    tasks.push(await createVideoGenerationTask(seedance, 'seedance-frame', [image]));
+    tasks.push(await createVideoGenerationTask({ ...seedance, videoWatermark: 'true', videoGenerateAudio: 'false' }, 'seedance-frames', [image, image]));
+    tasks.push(await createVideoGenerationTask({ ...seedance, videoMode: 'reference', vquality: '1080', size: '1920x1080' }, 'seedance-references', [image, image, image], { audios: [{ id: 'audio', name: 'ref.mp3', type: 'audio/mpeg', url: 'data:audio/mpeg;base64,YXVkaW8=' }] }));
+    check(seedance.size === 'auto' && seedance.vquality === '720', 'Seedance parameters must remain unchanged');
     const pending = await pollVideoGenerationTask(config, tasks[0]);
     check(pending.status === 'pending', 'empty HTTP 202 must remain pending');
     const completed = await pollVideoGenerationTask(config, tasks[0]);

@@ -1,5 +1,7 @@
 # OneYes Canvas OTA 发布规则
 
+Seedance 视频回归按 OneYes Grok 分组识别标准 JSON 协议，验证水印／配音的布尔类型、登录和手动 Key 的准确渠道、单图／首尾帧／多参考／音频与原始像素。不得把 xAI 模型专属的分辨率限制套给 Seedance；上游 `task not found` 必须停止等待并显示核对官网记录／用量的中文提示，不切换协议重发。CI 使用隔离模型，不把 HTTP 200 任务回执描述为已生成成片。
+
 Canvas 是独立 Electron 应用；本通道不修改 OneYes Desktop 的 Tauri/Sparkle 更新器和签名身份。
 
 Windows 从 v0.20.93 发布两份 electron-builder 原生 `.exe.blockmap`，各自的文件名、固定 Release 地址、大小与 SHA-256 写入同一 Ed25519 签名清单；汇总缺失或损坏索引时禁止发布。`SHA256SUMS-blockmaps.txt` 单独保存索引校验值，`SHA256SUMS.txt` 仍仅含 12 个完整安装包。缓存保留当前版本签名清单与经 SHA-256 核验的完整 EXE，使用固定版本 electron-updater 的块匹配逻辑复用相同数据，只对变化区间请求 Range；不需要生成耗时的全安装包 BSDIFF。旧 BSDIFF 通道保留供已有版本和其他平台使用。

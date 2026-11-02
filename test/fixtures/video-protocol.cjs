@@ -16,7 +16,7 @@ app.whenReady().then(async () => {
             if (request.method === 'POST') {
                 assert.equal(request.headers.get('content-type'), 'application/json');
                 const body = await request.json(); posts.push({ path: target.pathname, body });
-                return Response.json({ request_id: `task-${posts.length}` });
+                return Response.json(body.model === 'seedance-2.5' ? { id: `task-${posts.length}` } : { request_id: `task-${posts.length}` });
             }
             gets.push(target.pathname);
             if (target.pathname.endsWith('/content')) return new Response('video', { headers: { 'Content-Type': 'video/mp4' } });
@@ -30,8 +30,8 @@ app.whenReady().then(async () => {
         await win.loadURL('oneyes-canvas://app/');
         const end = Date.now() + 20000;
         while (!await win.webContents.executeJavaScript('!!window.videoTest')) { if (Date.now() > end) throw Error('Video fixture did not load'); await new Promise(resolve => setTimeout(resolve, 25)); }
-        assert.equal((await win.webContents.executeJavaScript('videoTest()')).length, 9);
-        assert.equal(posts.length, 9, 'invalid references and unsupported resolutions never submit a paid request');
+        assert.equal((await win.webContents.executeJavaScript('videoTest()')).length, 12);
+        assert.equal(posts.length, 12, 'invalid references and unsupported resolutions never submit a paid request');
         assert.deepEqual(posts[0], { path: '/v1/videos/generations', body: { model: 'grok-imagine-video', prompt: '服装模特', duration: 5, aspect_ratio: '1:1', resolution: '480p' } });
         assert.ok(posts[1].body.image); assert.equal(posts[1].body.reference_images, undefined);
         assert.ok(posts[2].body.image && posts[2].body.last_frame);
@@ -42,16 +42,25 @@ app.whenReady().then(async () => {
         assert.equal(posts[6].body.resolution, '1080p', 'text-to-video keeps 1080p');
         assert.equal(posts[7].body.resolution, '1080p', 'first/last frames keep 1080p');
         assert.equal(posts[8].body.resolution, '720p', 'reference resolution changes only when explicitly selected');
+        assert.equal(posts[9].path, '/v1/videos/generations');
+        assert.deepEqual(posts[9].body, { model: 'seedance-2.5', prompt: 'seedance-frame', duration: 5, aspect_ratio: '16:9', resolution: '720p', watermark: false, generate_audio: true, image: posts[9].body.image });
+        assert.ok(posts[9].body.image);
+        assert.ok(posts[10].body.image && posts[10].body.last_frame);
+        assert.equal(posts[10].body.watermark, true);
+        assert.equal(posts[10].body.generate_audio, false);
+        assert.equal(posts[11].body.reference_images.length, 3);
+        assert.equal(posts[11].body.resolution, '1080p', 'Seedance must not inherit xAI-only resolution restrictions');
+        assert.equal(posts[11].body.reference_audios[0].url, 'data:audio/mpeg;base64,YXVkaW8=');
         const { fileTypeFromBuffer } = await import('../../web/node_modules/file-type/core.js');
-        for (const image of [posts[1].body.image, posts[2].body.last_frame, ...posts[3].body.reference_images]) {
+        for (const image of [posts[1].body.image, posts[2].body.last_frame, ...posts[3].body.reference_images, posts[9].body.image, posts[10].body.last_frame, ...posts[11].body.reference_images]) {
             const bytes = Buffer.from(image.url.split(',')[1], 'base64');
             assert.equal((await fileTypeFromBuffer(bytes)).mime, 'image/webp');
             assert.ok(image.url.startsWith('data:image/webp;base64,'), 'video references must use the normalized actual MIME, not asset labels');
         }
         assert.deepEqual(gets, ['/v1/videos/task-1', '/v1/videos/task-1', '/v1/videos/task-1/content']);
         assert.equal(await win.webContents.executeJavaScript('videoSettingsTest()'), 'GROK_VIDEO_SETTINGS_OK');
-        assert.equal(posts.length, 9, 'settings changes never submit requests');
-        console.log('GROK_VIDEO_NATIVE_OK: JSON, request_id, frames, references, audio, edit, Worker MIME, 202/done, authenticated content, no duplicate POST');
+        assert.equal(posts.length, 12, 'settings changes never submit requests');
+        console.log('GROK_VIDEO_NATIVE_OK: JSON, Seedance booleans, id/request_id, frames, references, audio, edit, Worker MIME, 202/done, authenticated content, no duplicate POST');
         app.exit(0);
     } catch (error) { console.error(error); app.exit(1); }
 }).catch(error => { console.error(error); app.exit(1); });
