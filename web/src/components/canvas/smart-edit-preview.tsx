@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { Button, InputNumber, Slider } from "antd";
 import { Scissors, Play, Pause } from "lucide-react";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -6,7 +6,28 @@ import type { EditClip, EditSource } from "@/types/smart-edit";
 import { creatorSourceBlob } from "@/services/creator-media";
 import { trimEditClip } from "@/lib/canvas/smart-edit";
 
-export function SmartEditPreview({ source, detail, clip, disabled, onChange, onSplit }: { source?: CanvasNodeData; detail?: EditSource; clip?: EditClip; disabled: boolean; onChange: (clip: EditClip) => void; onSplit: (time: number) => void }) {
+export type EditPreviewHandle = { play: () => void; markIn: () => void; markOut: () => void; split: () => void; step: (direction: number) => void };
+export function SmartEditPreview({
+    source,
+    detail,
+    clip,
+    disabled,
+    onChange,
+    onSplit,
+    controls,
+    seekTarget,
+    onCursor,
+}: {
+    source?: CanvasNodeData;
+    detail?: EditSource;
+    clip?: EditClip;
+    disabled: boolean;
+    onChange: (clip: EditClip) => void;
+    onSplit: (time: number) => void;
+    controls?: Ref<EditPreviewHandle>;
+    seekTarget?: { id: string; time: number; serial: number };
+    onCursor?: (time: number) => void;
+}) {
     const [url, setUrl] = useState(""),
         [error, setError] = useState(""),
         [loaded, setLoaded] = useState(false),
@@ -50,16 +71,17 @@ export function SmartEditPreview({ source, detail, clip, disabled, onChange, onS
     useEffect(() => {
         if (disabled) video.current?.pause();
     }, [disabled]);
-    if (!source || !detail || !clip) return null;
     const unavailable = disabled || !loaded,
-        step = 1 / detail.fps;
+        step = 1 / (detail?.fps || 30);
     const seek = (time: number) => {
-        if (!Number.isFinite(time) || time < 0 || time > detail.duration) return;
+        if (!detail || !Number.isFinite(time) || time < 0 || time > detail.duration) return;
         video.current?.pause();
         if (video.current?.readyState) video.current.currentTime = time;
         setCursor(time);
+        onCursor?.(time);
     };
     const trim = (start: number, end: number) => {
+        if (!clip || !detail) return;
         try {
             const next = trimEditClip(clip, start, end, detail);
             setError("");
@@ -78,6 +100,35 @@ export function SmartEditPreview({ source, detail, clip, disabled, onChange, onS
             setError("暂时无法播放，可继续编辑时间并输出；请使用系统播放器确认原文件编码");
         }
     };
+    useEffect(() => {
+        if (loaded && seekTarget && clip && seekTarget.id === clip.id) seek(seekTarget.time);
+    }, [seekTarget, clip?.id, loaded]);
+    useImperativeHandle(controls, () => ({
+        play: () => {
+            if (!unavailable) void play();
+        },
+        markIn: () => {
+            if (!unavailable && clip && cursor < clip.end) trim(cursor, clip.end);
+        },
+        markOut: () => {
+            if (!unavailable && clip && cursor > clip.start) trim(clip.start, cursor);
+        },
+        split: () => {
+            if (!unavailable && clip && cursor > clip.start && cursor < clip.end) {
+                video.current?.pause();
+                onSplit(cursor);
+            }
+        },
+        step: (direction) => {
+            if (!unavailable && detail) seek(Math.max(0, Math.min(detail.duration, cursor + direction * step)));
+        },
+    }));
+    if (!source || !detail || !clip)
+        return (
+            <div className="grid min-h-48 place-items-center text-xs opacity-65" role="status">
+                读取素材后，在时间线上选择片段开始剪辑
+            </div>
+        );
     return (
         <div className="space-y-2" data-edit-preview>
             <div className="flex h-32 items-center justify-center overflow-hidden rounded" aria-label="原素材片段预览">
@@ -98,9 +149,11 @@ export function SmartEditPreview({ source, detail, clip, disabled, onChange, onS
                             e.currentTarget.currentTime = clip.start;
                             setCursor(clip.start);
                             setLoaded(true);
+                            onCursor?.(clip.start);
                         }}
                         onTimeUpdate={(e) => {
                             setCursor(e.currentTarget.currentTime);
+                            onCursor?.(e.currentTarget.currentTime);
                             if (e.currentTarget.currentTime >= clip.end) e.currentTarget.pause();
                         }}
                         onPlay={(e) => {

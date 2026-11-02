@@ -29,6 +29,7 @@ export type SmartEditSettings = {
     analysis?: EditAnalysis;
     clips?: EditClip[];
     rationale?: string;
+    draft?: { clips: EditClip[]; rationale: string; model: string; fingerprint: string; baseClips: string };
     planMode?: SmartEditSettings["mode"];
     planPadding?: number;
     color?: "original" | "warm" | "vivid";

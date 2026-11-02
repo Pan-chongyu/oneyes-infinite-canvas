@@ -40,7 +40,7 @@ export async function proposeEdit(ai: CanvasPluginAi, sources: CanvasNodeData[],
         .filter(Boolean)
         .join("\n");
     if (!instruction.trim()) throw Error("请填写剪辑要求，或连接脚本／文本节点");
-    const input = { instruction, sources: analysis.sources };
+    const input = { instruction, sources: analysis.sources, currentClips: settings.clips?.filter((c) => c.enabled).map(({ sourceId, start, end, label }) => ({ sourceId, start, end, label })) };
     const result = await ai.generateText(JSON.stringify(input), { signal, model, system: smartEditSystem });
     signal.throwIfAborted();
     return readEditPlan(result.text, analysis);

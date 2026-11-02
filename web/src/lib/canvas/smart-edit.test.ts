@@ -1,6 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { editSources, editFingerprint, editInputSignature, validateEditAnalysis, validateEditClips, localEditPlan, readEditPlan, editDuration, editSubtitles, splitEditClip, trimEditClip, resolveEditTextModel } from "./smart-edit";
+import {
+    editSources,
+    editFingerprint,
+    editInputSignature,
+    validateEditAnalysis,
+    validateEditClips,
+    localEditPlan,
+    readEditPlan,
+    editDuration,
+    editSubtitles,
+    splitEditClip,
+    trimEditClip,
+    resolveEditTextModel,
+    editTimeline,
+    editAtTime,
+    moveEditClip,
+    removeEditRange,
+    applyEditDraft,
+} from "./smart-edit";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { EditAnalysis } from "@/types/smart-edit";
 const source = { id: "v", type: "video", title: "原片", position: { x: 0, y: 0 }, width: 300, height: 200, metadata: { storageKey: "original.mp4" } } as CanvasNodeData;
@@ -156,4 +174,71 @@ test("AI editing resolves the exact configured text channel and blocks missing s
     assert.throws(() => resolveEditTextModel(ai, "removed::model"), /已移除/);
     assert.throws(() => resolveEditTextModel({ ...ai, defaultModel: () => "image::only" }), /默认文本模型/);
     assert.throws(() => resolveEditTextModel({ ...ai, listModels: () => [] }), /没有文本模型/);
+});
+
+test("timeline uses renderer overlap, resolves source time and reorders without dropping disabled clips", () => {
+    const clips = localEditPlan(analysis, "scenes", 0);
+    const timeline = editTimeline(clips, 0.2);
+    assert.deepEqual(
+        timeline.map(({ start, end }) => [Number(start.toFixed(6)), Number(end.toFixed(6))]),
+        [
+            [0, 3],
+            [2.8, 5.8],
+            [5.6, 9.6],
+        ],
+    );
+    assert.equal(editAtTime(clips, 0.2, 3)?.time, 3.2);
+    assert.equal(editAtTime(clips, 0.2, 100)?.time, 10);
+    assert.equal(editAtTime(clips, 0.2, -1)?.time, 0);
+    assert.equal(editAtTime([], 0, 0), undefined);
+    assert.equal(editAtTime(clips, 0, NaN), undefined);
+    const withDisabled = clips.map((c, i) => ({ ...c, enabled: i !== 1 }));
+    const reordered = moveEditClip(withDisabled, clips[2].id, clips[0].id);
+    assert.deepEqual(
+        reordered.map((c) => c.id),
+        [clips[2].id, clips[0].id, clips[1].id],
+    );
+    assert.equal(reordered[2].enabled, false);
+    assert.deepEqual(
+        moveEditClip(clips, clips[0].id, clips[1].id, true).map((c) => c.id),
+        [clips[1].id, clips[0].id, clips[2].id],
+    );
+    assert.equal(moveEditClip(clips, "missing", clips[0].id), clips);
+    assert.equal(clips[0].start, 0);
+});
+
+test("transcript deletion cuts repeated ranges with unique identities and leaves other media intact", () => {
+    const full = localEditPlan(analysis, "manual", 0)[0];
+    const clips = [full, { ...full, id: "repeat", enabled: false }, { ...full, id: "other", sourceId: "other" }];
+    const result = removeEditRange(clips, "v", 4, 7);
+    assert.deepEqual(
+        result.map((c) => [c.sourceId, c.start, c.end, c.enabled]),
+        [
+            ["v", 0, 4, true],
+            ["v", 7, 10, true],
+            ["v", 0, 4, false],
+            ["v", 7, 10, false],
+            ["other", 0, 10, true],
+        ],
+    );
+    assert.equal(new Set(result.map((c) => c.id)).size, 5);
+    assert.equal(result.at(-1), clips.at(-1));
+    assert.equal(removeEditRange([full], "v", 0, 10).length, 0);
+    assert.equal(removeEditRange([full], "v", 0, 2)[0].id, full.id);
+    assert.equal(full.end, 10);
+    assert.throws(() => removeEditRange(clips, "v", 3, 2));
+});
+
+test("AI drafts apply only to their exact source and base plan, including persisted round trips", () => {
+    const clips = localEditPlan(analysis, "manual", 0),
+        proposed = localEditPlan(analysis, "text", 0);
+    const settings = { analysis, clips, draft: { clips: proposed, rationale: "精剪", model: "claude::configured", fingerprint: "test", baseClips: JSON.stringify(clips) } };
+    const next = applyEditDraft(JSON.parse(JSON.stringify(settings)), "test");
+    assert.deepEqual(next.clips, proposed);
+    assert.equal(next.draft, undefined);
+    assert.equal(next.model, "claude::configured");
+    assert.deepEqual(settings.clips, clips);
+    assert.throws(() => applyEditDraft(settings, "changed"), /已改变/);
+    assert.throws(() => applyEditDraft({ ...settings, clips: [{ ...clips[0], end: 8 }] }, "test"), /已改变/);
+    assert.throws(() => applyEditDraft({ ...settings, draft: { ...settings.draft, clips: [{ ...clips[0], end: 20 }] } }, "test"));
 });
