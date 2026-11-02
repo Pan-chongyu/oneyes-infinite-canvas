@@ -74,6 +74,7 @@ app.whenReady().then(async () => {
             // Native mouse events exercise pointer capture, frame-snapped trim and a single undo entry.
             win.show(); win.focus();
             await wait('document.hasFocus()');
+            await wait('document.getAnimations().every(animation=>animation.effect?.getComputedTiming().iterations===Infinity||["finished","idle"].includes(animation.playState))');
             await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
             await js('window.editPointer=null;for(const type of ["pointerdown","pointermove","pointerup"])document.addEventListener(type,e=>{window.editPointer={type:e.type,id:e.pointerId,x:e.clientX,label:e.target?.getAttribute("aria-label")}},true)');
             const handle = await js('(()=>{const e=document.querySelector("[aria-label=时间线片段2出点]"),r=e.getBoundingClientRect(),t=document.querySelector("[data-edit-sequence]").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),delta:Math.round(t.width/4*.25)}})()');
