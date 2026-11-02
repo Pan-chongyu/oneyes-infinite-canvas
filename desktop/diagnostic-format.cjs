@@ -25,6 +25,7 @@ function classify(text, status, code) {
     if (/quota|indexeddb|存储|磁盘/i.test(text) || ['ENOSPC', 'EACCES'].includes(code)) return 'storage';
     if (/config|配置|模型.*不可用/i.test(text)) return 'configuration';
     if (/json|parse|format|格式/i.test(text)) return 'invalid-data';
+    if (status === 422) return 'invalid-data';
     return 'unknown';
 }
 function normalize(input = {}) {

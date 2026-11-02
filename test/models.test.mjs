@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const { createModelCatalog } = createRequire(import.meta.url)('../desktop/models.cjs');
 const { createNetwork } = createRequire(import.meta.url)('../desktop/network.cjs');
+const { normalize } = createRequire(import.meta.url)('../desktop/diagnostic-format.cjs');
 
 test('native model discovery fixes the destination, forwards the key only in headers and sorts a validated catalog', async () => {
     const list = createModelCatalog(async (url, init) => {
@@ -21,10 +22,16 @@ test('model errors provide actions without reflecting keys, raw exceptions or se
         await assert.rejects(list('secret-model-key'), error => {
             assert.match(error.message, new RegExp(`HTTP ${status}`));
             assert.match(error.message, status === 401 || status === 403 ? /Key.*重新配置/ : status === 429 ? /余额/ : /稍后重新检查/);
+            assert.equal(normalize({ error }).status, status);
             assert.doesNotMatch(error.message, /secret-model-key/); return true;
         });
     }
     await assert.rejects(createModelCatalog(async () => { throw new Error('net failure with secret-model-key'); })('secret-model-key'), /检查网络.*代理/);
+    await assert.rejects(createModelCatalog(async () => { throw Object.assign(new Error('private-key'), { code: 'ECONNRESET' }); })('secret-model-key'), error => {
+        const safe = normalize({ error });
+        assert.equal(safe.code, 'ECONNRESET'); assert.equal(safe.reason, 'network');
+        assert.doesNotMatch(JSON.stringify(safe), /private-key|secret-model-key/); return true;
+    });
     await assert.rejects(createModelCatalog(async () => { throw new Error('代理认证失败，请检查用户名和密码'); })('secret-model-key'), /代理认证失败/);
     await assert.rejects(createModelCatalog(async () => new Response('<html>secret</html>', { status: 302 }))('key'), /重定向/);
     for (const body of [{ data: [] }, { data: {} }, { data: [{ name: 'bad' }] }, { data: [{ id: '' }] }]) {

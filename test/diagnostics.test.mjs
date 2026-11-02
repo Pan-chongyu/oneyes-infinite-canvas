@@ -22,6 +22,7 @@ test('string errors, nested causes and fixed operations retain root classificati
     assert.equal(normalize({ error: outer, operation: 'PRIVATE-URL-token' }).operation, undefined);
     assert.equal(normalize({ error: new DOMException('timed out', 'TimeoutError') }).reason, 'timeout');
     assert.equal(normalize({ error: new DOMException('The operation was aborted due to timeout', 'TimeoutError') }).reason, 'timeout');
+    assert.equal(normalize({ error: { response: { status: 422 } } }).reason, 'invalid-data');
 });
 
 test('verified recovery persists exact receipts across restart, ignores unrelated failures and records recurrence anew', async () => {

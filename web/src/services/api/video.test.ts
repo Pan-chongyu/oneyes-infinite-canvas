@@ -134,3 +134,29 @@ test('expired, moderated and done-without-content tasks stop without resubmittin
         assert.equal(posts, 2, 'an upstream rejection must not trigger automatic paid resubmission');
     } finally { axios.defaults.adapter = original; }
 });
+
+test('422 validation arrays identify rejected fields and 404 explains model/group checks without replay or changing settings', async () => {
+    let posts = 0;
+    const before = structuredClone(config);
+    const reports: unknown[] = [];
+    window.oneYesDesktop = { diagnostics: { report: async input => { reports.push(input); } } } as NonNullable<Window['oneYesDesktop']>;
+    try {
+        for (const [status, data, pattern] of [
+            [422, { detail: [{ loc: ['body', 'resolution'], msg: 'unsupported resolution', input: 'private-reference' }, { loc: ['body', 'duration'], msg: 'invalid duration' }] }, /422.*resolution：unsupported resolution；duration：invalid duration/],
+            [422, { error: { message: 'invalid aspect ratio' } }, /422.*invalid aspect ratio/],
+            [422, {}, /422.*参数已保留/],
+            [404, { detail: 'Not Found' }, /404.*Key.*分组.*官网.*Not Found/],
+        ] as const) {
+            axios.defaults.adapter = async request => {
+                posts++;
+                throw new AxiosError('rejected', 'ERR_BAD_REQUEST', request, undefined, { data, status, statusText: '', headers: {}, config: request });
+            };
+            await assert.rejects(createVideoGenerationTask(config, 'test'), error => {
+                assert.match(String(error), pattern); assert.doesNotMatch(String(error), /private-reference/);
+                assert.equal((error as Error).cause instanceof AxiosError, true); return true;
+            });
+        }
+        assert.equal(posts, 4); assert.deepEqual(config, before);
+        assert.ok(reports.every(value => (value as { stage: string }).stage === 'submit'));
+    } finally { axios.defaults.adapter = original; delete window.oneYesDesktop; }
+});

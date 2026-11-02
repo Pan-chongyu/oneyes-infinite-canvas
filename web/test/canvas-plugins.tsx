@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { App, ConfigProvider } from 'antd';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -9,6 +10,9 @@ import '@/i18n';
 import '@/styles/globals.css';
 import CanvasProject from '@/pages/canvas/project';
 import { CanvasPluginManagerModal } from '@/components/canvas/canvas-plugin-manager-modal';
+import { CanvasSidePanel } from '@/components/canvas/canvas-side-panel';
+import { useCanvasSidePanelStore } from '@/stores/use-canvas-side-panel-store';
+import { CanvasNodeType, type CanvasNodeData } from '@/types/canvas';
 import { ensurePluginsLoaded, installPluginFromFile, setPluginEnabled, uninstallPlugin, builtinPlugins } from '@/lib/canvas/plugin-loader';
 import { getNodeDefinition, getNodePluginId } from '@/lib/canvas/node-registry';
 import { usePluginStore } from '@/stores/canvas/use-plugin-store';
@@ -24,6 +28,32 @@ await ensurePluginsLoaded();
 const projectId = useCanvasStore.getState().projects[0].id;
 const record = () => usePluginStore.getState().plugins.find(p => p.id === 'my-quick-note');
 Object.assign(window, { pluginTest: {
+    sidePanelMouseLeave: () => {
+        const element = document.createElement('div'); document.body.append(element);
+        const root = createRoot(element), previous = useCanvasSidePanelStore.getState(), hovered: (string | null)[] = [], errors: unknown[] = [];
+        const onError = (event: ErrorEvent) => { errors.push(event.error); event.preventDefault(); };
+        const nodes: CanvasNodeData[] = ['first', 'second'].map(id => ({ id, type: CanvasNodeType.Text, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: {} }));
+        const check = (value: unknown, message: string) => { if (!value) throw Error(message); };
+        window.addEventListener('error', onError);
+        try {
+            flushSync(() => { useCanvasSidePanelStore.setState({ panelMounted: true, panelOpen: true, panelClosing: false }); root.render(<App><CanvasSidePanel nodes={nodes} selectedNodeIds={new Set()} onFocusNode={() => {}} onPreviewNode={() => {}} onHoverNode={id => hovered.push(id)} onInsertAsset={() => {}} /></App>); });
+            for (const mode of ['list', 'grid'] as const) {
+                flushSync(() => useCanvasSidePanelStore.setState({ nodeViewMode: mode }));
+                const [first, second] = element.querySelectorAll('[data-node-item]');
+                for (const relatedTarget of [window, document, null, document.body]) {
+                    hovered.length = 0;
+                    first.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
+                    first.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget }));
+                    check(hovered[0] === 'first' && hovered.at(-1) === null, `${mode}: leaving the window must clear hover`);
+                }
+                hovered.length = 0;
+                first.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: second }));
+                check(!hovered.includes(null), `${mode}: moving to another row must retain hover`);
+                check(!errors.length, `${mode}: Window and Document are not Elements`);
+            }
+            return 'SIDE_PANEL_MOUSE_LEAVE_OK';
+        } finally { window.removeEventListener('error', onError); flushSync(() => { root.unmount(); useCanvasSidePanelStore.setState(previous); }); element.remove(); }
+    },
     sample,
     state: () => usePluginStore.getState().plugins.map(({ source: _source, ...p }) => p),
     owner: (type = 'my-quick-note:note') => getNodePluginId(type),

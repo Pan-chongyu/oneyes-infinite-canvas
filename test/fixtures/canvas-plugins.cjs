@@ -28,6 +28,7 @@ app.whenReady().then(async () => {
             assert.equal(await js('pluginTest.state().length'), 0);
             console.log('PLUGIN_RESTART_OK: cached file, actual custom node, metadata, toggle, uninstall');
         } else {
+            assert.equal(await js('pluginTest.sidePanelMouseLeave()'), 'SIDE_PANEL_MOUSE_LEAVE_OK');
             await js('pluginTest.theme(false)');
             await js('document.querySelector("[data-test-plugins]").click()');
             await wait('document.querySelector(".ant-tabs")');

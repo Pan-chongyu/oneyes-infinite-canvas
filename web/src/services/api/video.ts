@@ -440,8 +440,13 @@ function readApiErrorMessage(value: unknown): string {
             return value;
         }
     }
+    if (Array.isArray(value)) return value.map(readApiErrorMessage).filter(Boolean).join("；");
     if (typeof value !== "object") return "";
-    const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown };
+    const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown; loc?: unknown };
+    if (Array.isArray(payload.loc) && typeof payload.msg === "string") {
+        const field = payload.loc.filter(part => (typeof part === "string" || typeof part === "number") && !["body", "query", "path"].includes(String(part))).join(".");
+        return field ? `${field}：${payload.msg}` : payload.msg;
+    }
     // error may be a string or an object containing a message.
     const errorMsg =
         typeof payload.error === "string"
@@ -464,6 +469,8 @@ function readAxiosError(error: unknown, fallback: string) {
         const message = readApiErrorMessage(responseData);
         if (/1080p.*not supported.*reference-to-video/is.test(message)) return apiText("grokVideoReferenceResolution");
         if (error.response?.status === 415 || /(?:status|HTTP)\s*415\b/i.test(message)) return apiText("videoUnsupportedMedia");
+        if (error.response?.status === 422) return `${apiText("videoInvalidParameters")}${message ? `：${message}` : ""}`;
+        if (error.response?.status === 404) return `${apiText("videoNotFound")}${message ? `：${message}` : ""}`;
         return message || statusMessage(error.response?.status, fallback);
     }
     if (error instanceof DOMException && error.name === "AbortError") return apiText("requestCanceled");
