@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["@webgpu/types", "vite/client"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "paths": {
+      "@velocut/runtime": ["../../packages/runtime/src/index.ts"],
+      "@velocut/runtime/*": ["../../packages/runtime/src/*"],
+      "@velocut/provider-sdk": ["../../packages/provider-sdk/src/index.ts"],
+      "@velocut/provider-sdk/*": ["../../packages/provider-sdk/src/*"],
+      "@velocut/scene-sdk": ["../../packages/scene-sdk/src/index.ts"],
+      "@velocut/protocol": ["../../packages/protocol/src/types.ts"],
+      "@velocut/core-ts": ["../../packages/core-ts/src/engine.ts"],
+      "@velocut/render-sdk": ["../../packages/render-sdk/src/index.ts"],
+      "@velocut/render-sdk/*": ["../../packages/render-sdk/src/*"],
+      "@velocut/agent-sdk": ["../../packages/agent-sdk/src/index.ts"],
+      "@velocut/collab-sdk": ["../../packages/collab-sdk/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["src/main.tsx", "src/ui/ModelManager.tsx"]
+}

@@ -1,0 +1,1894 @@
+import { PreviewRateSelect } from './PreviewRateSelect';
+import { SceneExportDialog } from './SceneExportDialog';
+import {SceneBindingFields} from './SceneBindingFields';
+import {SceneAnchorRepairs} from './SceneAnchorRepairs';
+import {ScenePhysicsFields} from './ScenePhysicsFields';
+import {SceneJointFields} from './SceneJointFields';
+import { SceneAnimationFields } from './SceneAnimationFields';
+import { Icon, type IconName } from './primitives/Icon';
+// DirectorPanel — the stage view: orbit the compiled 3D scene, select any
+// character/prop and manipulate it with transform gizmos, scrub time, and see
+// the spec camera as a frustum.
+//
+// A richer input device over the same fields the SceneInspector edits: every
+// gesture commits ONE setAssetSpec (ghost-then-commit, like the preview's
+// transform gizmos), so manual blocking is attributed, undoable and instantly
+// visible to the agent — no UI-only state. The viewport shares the scene
+// graph + posing math with the export interpreter (scene-sdk buildStage), so
+// what you stage is exactly what renders.
+//
+// Interaction model (LibTV-style direct manipulation):
+//   click an object  → select (highlight box + gizmo + side-panel fields)
+//   gizmo drag       → move (XYZ arrows) or rotate (Y ring); commit on release
+//   click empty      → deselect; drag empty space orbits, wheel zooms
+//   📷 Set camera    → snap the shot camera to the current orbit viewpoint
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Asset } from '@velocut/protocol';
+import type { Animatable } from '@velocut/render-sdk';
+import {
+  ASSEMBLY_DEFAULTS,
+  type AssemblyTemplate,
+  constructionCamera,
+  SCENE_VIEWS,
+  normalizeSceneSpec,
+  sceneObjects,
+  sceneStructureKey,
+  resolveSceneGeometry,
+  resolvePropAppearance,
+  objectIsVisible, activeBinding, queryStageSpatial, type BindingStatus,
+  transformObject,
+  type AnimationChannel,
+  type SceneGeometry,
+  nextSceneId,
+  type SceneEdit,
+  applySpecCamera,
+  buildStage,
+  createColliderOverlay,
+  createJointOverlay,
+  expandShots,
+  withImportedModels,
+  loadSceneManifest,
+  specCameraPosition,
+  validateSceneSpec,
+  MANNEQUIN_DEFAULT_COLOR,
+  POSE_PRESETS,
+  type SceneAssetManifest,
+  type SceneSpec,
+  type Stage,
+} from '@velocut/scene-sdk';
+import type { Store } from '../state/store';
+import { directorController, type DirectorSession } from '../services/director-session';
+import { sceneResources } from '../services/scene-resources';
+import { importSceneModel, arrangeScene, editScene, replaceSceneSpec } from '../services/scene';
+import { LightFields, MeshFields, MaterialFields, JsonField } from './SceneModelFields';
+import { NumberField, AnimatableField, Vec3Row } from './SceneFields';
+
+export type Sel = {
+  kind: 'character' | 'prop' | 'group' | 'light';
+  id: string;
+};
+
+/** Shot beats: explicit shot starts when a cut list exists, else all camera
+ *  keyframe times. */
+function cameraKeyTimes(spec: SceneSpec): number[] {
+  if (spec.shots?.length) return spec.shots.map((s) => s.start);
+  const times = new Set<number>();
+  const collect = (a: Animatable | undefined) => {
+    if (Array.isArray(a)) for (const k of a) times.add(k.t);
+  };
+  collect(spec.camera?.fov);
+  const pos = spec.camera?.position;
+  collect(pos?.x);
+  collect(pos?.y);
+  collect(pos?.z);
+  const look = spec.camera?.lookAt;
+  if (look && !('character' in look)) {
+    collect(look.x);
+    collect(look.y);
+    collect(look.z);
+  }
+  return [...times].sort((a, b) => a - b);
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+export function DirectorPanel({
+  store,
+  asset,
+  onClose,
+  session,
+  compact = false,
+  showObjects = true,
+  showInspector = true,
+  onClosePanel = () => {},
+  onInspect = () => {},
+}: {
+  store: Store;
+  asset: Asset;
+  onClose: () => void;
+  session: DirectorSession;
+  compact?: boolean;
+  showObjects?: boolean;
+  showInspector?: boolean;
+  onClosePanel?: () => void;
+  onInspect?: () => void;
+}) {
+  const [objectSearch, setObjectSearch] = useState('');
+  const [spatialStatus,setSpatialStatus]=useState<{selectedId:string|null;anchors:Array<{id:string;kind:string;status:string;message?:string}>;bindings:BindingStatus[];invalidCount:number}>({selectedId:null,anchors:[],bindings:[],invalidCount:0});
+  const showInspectorRef=useRef(showInspector);showInspectorRef.current=showInspector;
+  const [guides, setGuides] = useState(false);
+  const guidesRef = useRef(guides);
+  guidesRef.current = guides;
+  const inspectRef = useRef(onInspect);
+  inspectRef.current = onInspect;
+  const rendererRef = useRef<import('three').WebGLRenderer | null>(null);
+  useEffect(() => () => rendererRef.current?.forceContextLoss(), []);
+  const importRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importKind, setImportKind] = useState<'prop' | 'character'>('prop');
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const controller = directorController(store);
+  const t = session.timeS;
+  const tRef = useRef(0);
+  tRef.current = t;
+  const [error, setError] = useState<string | null>(null);
+  const selRef = useRef<Sel | null>(null);
+  const mode = session.mode;
+  const setMode = (mode: DirectorSession['mode']) => controller.update({ mode });
+  const modeRef = useRef<DirectorSession['mode']>('translate');
+  modeRef.current = mode;
+  const [baseManifest, setManifest] = useState<SceneAssetManifest | null>(null);
+  // Set by the effect: imperative attach/detach of gizmo + highlight, so
+  // selection changes don't rebuild the stage.
+  const attachRef = useRef<((s: Sel | null) => void) | null>(null);
+  // Live orbit viewpoint, read by the "set camera here" button.
+  const orbitPosRef = useRef<[number, number, number]>([8, 6, 10]);
+  const orbitCameraRef = useRef<
+    import('three').PerspectiveCamera | import('three').OrthographicCamera | null
+  >(null);
+  const appliedViewRevisionRef = useRef(-1);
+  const orbitTargetRef = useRef<[number, number, number]>([0, 1, 0]);
+  const specText = asset.spec;
+
+  const spec = useMemo(() => {
+    try {
+      return specText ? normalizeSceneSpec(JSON.parse(specText) as SceneSpec) : null;
+    } catch {
+      return null;
+    }
+  }, [specText]);
+  const manifest = baseManifest && spec ? withImportedModels(baseManifest, spec) : baseManifest;
+  const durationS = spec ? spec.durationUs / 1e6 : 0;
+  const selected = spec
+    ? sceneObjects(spec).find((e) => e.object.id === session.objectId)
+    : undefined;
+  const sel: Sel | null = selected ? { kind: selected.kind, id: selected.object.id! } : null;
+  selRef.current = sel;
+  useEffect(() => {
+    attachRef.current?.(selRef.current);
+  }, [session.objectId]);
+  useEffect(() => {
+    const close = (e: PointerEvent) => {
+      for (const menu of document.querySelectorAll<HTMLDetailsElement>('.tool-menu[open]'))
+        if (!menu.contains(e.target as Node)) menu.open = false;
+    };
+    const escape = (e: KeyboardEvent) => {
+      const menu = document.querySelector<HTMLDetailsElement>('.tool-menu[open]');
+      if (menu && e.key === 'Escape') {
+        e.stopPropagation();
+        menu.open = false;
+        menu.querySelector('summary')?.focus();
+      }
+    };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', escape, true);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', escape, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    loadSceneManifest()
+      .then((m) => alive && setManifest(m))
+      .catch(() => alive && setManifest(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const select = (s: Sel | null) => {
+    selRef.current = s;
+    controller.update({ objectId: s?.id ?? null });
+    if (s) inspectRef.current();
+    attachRef.current?.(s);
+  };
+
+  /** One edit = one validated setAssetSpec (one undo step). */
+  const mutateSpec = async (mutate: (draft: SceneSpec) => void) => {
+    if (!specText) return;
+    const current = store.getState();
+    if (current.doc.assets.find((a) => a.id === asset.id)?.spec !== specText)
+      return setError('Scene changed; try the edit again.');
+    const draft = normalizeSceneSpec(JSON.parse(specText) as SceneSpec);
+    try { mutate(draft); } catch (error) { setError(error instanceof Error ? error.message : String(error)); return; }
+    const err = validateSceneSpec(draft);
+    if (err) return setError(err);
+    const r = await replaceSceneSpec(store, asset.id, draft, current.revision);
+    setError(r.ok ? null : r.message);
+  };
+
+  const runEdits = async (edits: SceneEdit[]) => {
+    const current = store.getState();
+    if (current.doc.assets.find(a => a.id === asset.id)?.spec !== specText) {
+      const message = 'Scene changed; try the edit again.';
+      setError(message); return {ok:false as const,message};
+    }
+    const r = await editScene(store, {
+      assetId: asset.id,
+      expectedRevision: current.revision,
+      edits,
+    });
+    setError(r.ok ? null : r.message);
+    return r;
+  };
+
+  const addPrimitive = async (model: string) => {
+    if (!spec || !model) return;
+    const id = nextSceneId(spec, model.split('/').pop() ?? 'prop');
+    const r = await runEdits([
+      {
+        type: 'add',
+        kind: 'prop',
+        object: {
+          id,
+          name: manifest?.props[model]?.label ?? model.split('/').pop(),
+          model,
+          position: { y: 0.5 },
+        },
+      },
+    ]);
+    if (r.ok) {
+      controller.update({ objectId: id, focusId: id });
+      inspectRef.current();
+    }
+  };
+
+  // Scrub also drives the main preview: seek to the same moment inside the
+  // clip so the flat render and the stage stay side-by-side comparable.
+  const clip = store
+    .getState()
+    .doc.tracks.flatMap((tr) => tr.clips)
+    .find((c) => c.assetId === asset.id);
+  const scrub = (next: number) => {
+    controller.update({ timeS: next });
+    if (clip) store.seek(clip.startUs + Math.round(next * 1e6));
+  };
+
+  /** Snap the shot camera to the current orbit viewpoint — the "look through
+   *  the viewfinder, then keep it" move. With a cut list, the shot under the
+   *  playhead is updated; character-tracking lookAt is preserved. */
+  const setCameraHere = () => {
+    const [px, py, pz] = orbitPosRef.current.map(round2);
+    const [tx, ty, tz] = orbitTargetRef.current.map(round2);
+    mutateSpec((d) => {
+      let cam = d.camera;
+      if (d.shots?.length) {
+        let active = d.shots[0];
+        for (const s of d.shots) if (s.start <= tRef.current + 1e-6) active = s;
+        cam = active.camera;
+      } else {
+        cam = d.camera ??= {};
+      }
+      cam.position = { x: px, y: py, z: pz };
+      if (!cam.lookAt || !('character' in cam.lookAt)) cam.lookAt = { x: tx, y: ty, z: tz };
+    });
+  };
+
+  const renderedSpec = useMemo(() => spec ? expandShots(normalizeSceneSpec(spec)) : null, [spec]);
+  const currentSpecRef = useRef(renderedSpec); currentSpecRef.current = renderedSpec;
+  const structureKey = useMemo(() => renderedSpec ? sceneStructureKey(renderedSpec) : null, [renderedSpec]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !specText) return;
+    let disposed = false;
+    let raf = 0;
+    let stage: Stage | null = null;
+    let renderer: import('three').WebGLRenderer | null = null;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      let parsed: SceneSpec;
+      try {
+        // Expand the cut list so the frustum shows the real shot camera.
+        parsed = expandShots(normalizeSceneSpec(JSON.parse(specText) as SceneSpec));
+      } catch {
+        setError('Spec is not valid JSON');
+        return;
+      }
+      try {
+        stage = await buildStage(parsed, undefined, sceneResources(store));
+      } catch (e) {
+        setError('Stage build failed: ' + (e instanceof Error ? e.message : String(e)));
+        return;
+      }
+      if (disposed) return;
+      setError(null);
+      const three = stage.three;
+      const [{ OrbitControls }, { TransformControls }] = await Promise.all([
+        import('three/examples/jsm/controls/OrbitControls.js'),
+        import('three/examples/jsm/controls/TransformControls.js'),
+      ]);
+      if (disposed) return;
+
+      let w = canvas.clientWidth || 960;
+      let h = canvas.clientHeight || 540;
+      renderer = new three.WebGLRenderer({ canvas, antialias: true });
+      rendererRef.current = renderer;
+      renderer.setSize(w, h, false);
+      renderer.shadowMap.enabled = true;
+
+      // Free orbit camera for staging — restored from the last frame's
+      // viewpoint, because this whole effect re-runs on every spec commit
+      // and losing your camera on each edit is unusable.
+      let orbit: import('three').PerspectiveCamera | import('three').OrthographicCamera =
+        orbitCameraRef.current?.clone() ?? new three.PerspectiveCamera(50, w / h, 0.1, 500);
+      orbit.position.set(...orbitPosRef.current);
+      let controls = new OrbitControls(orbit, canvas);
+      controls.target.set(...orbitTargetRef.current);
+      controls.enableRotate = controller.getSnapshot()?.view === 'perspective';
+      let changingObject = false;
+      const recordView = () => {
+        if (changingObject) return;
+        const current = controller.getSnapshot();
+        if (!current || current.view === 'shot') return;
+        controller.update({
+          view: current.view,
+          camera: {
+            position: orbit.position.toArray() as [number, number, number],
+            target: controls.target.toArray() as [number, number, number],
+            up: orbit.up.toArray() as [number, number, number],
+            ...(orbit instanceof three.PerspectiveCamera
+              ? { projection: 'perspective', fov: orbit.fov }
+              : {
+                  projection: 'orthographic',
+                  height: (orbit.top - orbit.bottom) / orbit.zoom,
+                }),
+          },
+        });
+      };
+      controls.addEventListener('end', recordView);
+      // …plus the SPEC camera shown as a frustum, so blocking happens with the
+      // real shot in view.
+      const specCam = new three.PerspectiveCamera(
+        40,
+        (parsed.width ?? 16) / (parsed.height ?? 9),
+        0.5,
+        12,
+      );
+      const shotCam = new three.PerspectiveCamera(
+        40,
+        (parsed.width ?? 16) / (parsed.height ?? 9),
+        0.1,
+        500,
+      );
+      const helper = new three.CameraHelper(specCam);
+      stage.scene.add(helper);
+
+      // ---------------------------------------------- selection + gizmo
+      // The gizmo drives a proxy, not the object: poseAt() re-derives every
+      // object transform per frame, so the object itself is never a stable
+      // handle. Outside a drag the proxy follows the object; during a drag the
+      // object follows the proxy; on release the delta is committed to the
+      // spec and poseAt takes over again.
+      const proxy = new three.Group();
+      stage.scene.add(proxy);
+      const gizmo = new TransformControls(orbit, canvas);
+      gizmo.setSpace('world');
+      stage.scene.add(gizmo.getHelper());
+      const selBox = new three.Box3Helper(new three.Box3(), 0xe6b774);
+      selBox.visible = false;
+      stage.scene.add(selBox);
+
+      for (const l of stage.lights) {
+        const marker = new three.Mesh(
+          new three.SphereGeometry(0.12, 12, 8),
+          new three.MeshBasicMaterial({ color: l.spec.color ?? '#ffffff' }),
+        );
+        marker.name = 'Director light handle';
+        l.root.add(marker);
+        if (l.spec.type === 'spot' || l.spec.type === 'directional')
+          l.root.add(
+            new three.ArrowHelper(new three.Vector3(0, 0, -1), new three.Vector3(), 0.8, 0xffdd77),
+          );
+      }
+      const selectedRoot = (): import('three').Object3D | null => {
+        const s = selRef.current;
+        if (!s || !stage) return null;
+        const entry = [...stage.characters, ...stage.props, ...stage.groups, ...stage.lights].find(
+          (e) => e.spec.id === s.id,
+        );
+        if (!entry) return null;
+        const current=currentSpecRef.current;
+        if(current&&modeRef.current!=='scale'&&activeBinding(current,s.id,modeRef.current==='translate'?'position':'orientation'))return null;
+        if (!objectIsVisible(entry.root)) return null;
+        if (s.kind === 'prop' && (entry as (typeof stage.props)[number]).attachComp != null)
+          return null;
+        return entry.root;
+      };
+
+      attachRef.current = (s: Sel | null) => {
+        selRef.current = s;
+        const root = selectedRoot();
+        if (root) {
+          root.parent!.add(proxy);
+          proxy.position.copy(root.position);
+          proxy.rotation.copy(root.rotation);
+          proxy.scale.copy(root.scale);
+          gizmo.attach(proxy);
+        } else {
+          gizmo.detach();
+        }
+        selBox.visible = !!root;
+      };
+
+      // Yaw is read via a YXZ euler and UNWRAPPED incrementally during the
+      // drag: a raw `rotation.y` delta reflects at ±90° (XYZ euler gimbal
+      // flip), which read as "the ring bounces back and can't pass 180°".
+      // Accumulating shortest-angle steps per change event supports any
+      // total rotation, including multiple turns.
+      const eul = new three.Euler();
+      const yawOf = () => eul.setFromQuaternion(proxy.quaternion, 'YXZ').y;
+      const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+      let dragStart: {
+        pos: import('three').Vector3;
+        rotation: import('three').Euler;
+        scale: import('three').Vector3;
+        axis: string | null;
+        lastYaw: number;
+        yawAccum: number;
+      } | null = null;
+      gizmo.addEventListener('objectChange', () => {
+        if (!dragStart) return;
+        const cur = yawOf();
+        dragStart.yawAccum += wrapPi(cur - dragStart.lastYaw);
+        dragStart.lastYaw = cur;
+      });
+      gizmo.addEventListener('dragging-changed', (ev: { value?: unknown }) => {
+        const dragging = !!ev.value;
+        changingObject = dragging;
+        controls.enabled = !dragging;
+        if (dragging) {
+          dragStart = {
+            pos: proxy.position.clone(),
+            rotation: proxy.rotation.clone(),
+            scale: proxy.scale.clone(),
+            axis: gizmo.axis,
+            lastYaw: yawOf(),
+            yawAccum: 0,
+          };
+          return;
+        }
+        // Release → commit one undoable spec edit.
+        if (!dragStart) return;
+        const dx = round2(proxy.position.x - dragStart.pos.x);
+        const dy = round2(proxy.position.y - dragStart.pos.y);
+        const dz = round2(proxy.position.z - dragStart.pos.z);
+        const rotation = proxy.rotation.clone();
+        const original = dragStart;
+        const scaling = proxy.scale.clone().divide(original.scale);
+        const yawDelta = Math.round((original.yawAccum * 180) / Math.PI);
+        dragStart = null;
+        const selection = selRef.current;
+        if (!selection) return;
+        const rotationDelta = ['x', 'y', 'z'].map((axis) => {
+          const k = axis as 'x' | 'y' | 'z';
+          return round2((wrapPi(rotation[k] - original.rotation[k]) * 180) / Math.PI);
+        });
+        // Preserve multi-turn yaw for legacy yaw-only objects.
+        const yawOnly =
+          original.axis === 'Y' &&
+          Math.abs(original.rotation.x) < 1e-6 &&
+          Math.abs(original.rotation.z) < 1e-6 &&
+          Math.abs(Math.sin(rotation.x)) < 1e-6 &&
+          Math.abs(Math.sin(rotation.z)) < 1e-6;
+        if (yawOnly) rotationDelta.splice(0, 3, 0, yawDelta, 0);
+        if (
+          !dx &&
+          !dy &&
+          !dz &&
+          !rotationDelta.some(Boolean) &&
+          scaling.distanceTo(new three.Vector3(1, 1, 1)) < 1e-6
+        )
+          return;
+        void mutateSpec((d) => {
+          const o = sceneObjects(d).find((e) => e.object.id === selection.id)?.object;
+          if (!o) return;
+          if (modeRef.current === 'scale' && ![scaling.x,scaling.y,scaling.z].every(Number.isFinite)) {
+            throw new Error('Edit scale keys or bindings when the sampled scale is zero.');
+          }
+          transformObject(o, selection.kind, modeRef.current === 'translate' ? {position:{x:dx,y:dy,z:dz}} :
+            modeRef.current === 'rotate' ? {rotation:{x:rotationDelta[0],y:rotationDelta[1],z:rotationDelta[2]}} :
+            {scale:{x:scaling.x,y:scaling.y,z:scaling.z}}, true, tRef.current, d);
+        });
+        // The spec change re-runs this effect (new specText) and rebuilds;
+        // selection survives via selRef.
+      });
+
+      // Click (not drag) picks; empty click clears. Gizmo handles win.
+      const ray = new three.Raycaster();
+      const ndc = new three.Vector2();
+      let downAt: [number, number] | null = null;
+      const onDown = (ev: PointerEvent) => {
+        downAt = gizmo.axis == null ? [ev.clientX, ev.clientY] : null;
+      };
+      const onUp = (ev: PointerEvent) => {
+        if (!downAt || !stage) return;
+        const moved = Math.hypot(ev.clientX - downAt[0], ev.clientY - downAt[1]);
+        downAt = null;
+        if (moved > 5 || gizmo.dragging) return;
+        const r = canvas.getBoundingClientRect();
+        ndc.set(
+          ((ev.clientX - r.left) / r.width) * 2 - 1,
+          -((ev.clientY - r.top) / r.height) * 2 + 1,
+        );
+        ray.setFromCamera(ndc, orbit);
+        const targets: Array<{ sel: Sel; root: import('three').Object3D }> = [
+          ...stage.lights.map((l) => ({
+            sel: { kind: 'light' as const, id: l.spec.id },
+            root: l.root,
+          })),
+          ...stage.characters.map((c) => ({
+            sel: { kind: 'character' as const, id: c.spec.id },
+            root: c.root,
+          })),
+          // Bone-attached props ride their character — not gizmo targets.
+          ...stage.props
+            .map((p) => ({
+              sel: { kind: 'prop' as const, id: p.spec.id! },
+              root: p.root,
+              attached: p.attachComp != null,
+            }))
+            .filter((p) => !p.attached),
+        ];
+        let best: { sel: Sel; dist: number } | null = null;
+        for (const cand of targets) {
+          const hits = ray.intersectObject(cand.root, true).filter(hit => objectIsVisible(hit.object));
+          if (hits.length && (!best || hits[0].distance < best.dist))
+            best = { sel: cand.sel, dist: hits[0].distance };
+        }
+        select(best?.sel ?? null);
+      };
+      canvas.addEventListener('pointerdown', onDown);
+      canvas.addEventListener('pointerup', onUp);
+      const resize = new ResizeObserver(() => {
+        if (!renderer) return;
+        w = Math.max(1, canvas.clientWidth);
+        h = Math.max(1, canvas.clientHeight);
+        renderer.setSize(w, h, false);
+        if (orbit instanceof three.PerspectiveCamera) orbit.aspect = w / h;
+        else {
+          const halfHeight = (orbit.top - orbit.bottom) / 2;
+          orbit.left = (-halfHeight * w) / h;
+          orbit.right = (halfHeight * w) / h;
+        }
+        orbit.updateProjectionMatrix();
+      });
+      resize.observe(canvas);
+      let colliderOverlay:ReturnType<typeof createColliderOverlay>|undefined,colliderOverlayKey='';
+      let jointOverlay:ReturnType<typeof createJointOverlay>|undefined,jointOverlayKey='';
+      cleanup = () => {
+        jointOverlay?.dispose();
+        colliderOverlay?.dispose();
+        canvas.removeEventListener('pointerdown', onDown);
+        canvas.removeEventListener('pointerup', onUp);
+        gizmo.dispose();
+        controls.dispose();
+        resize.disconnect();
+      };
+
+      // Re-apply the selection that survived a spec-commit rebuild.
+      stage.poseAt(tRef.current, {
+        cameraPos: specCameraPosition(parsed, tRef.current),
+      });
+      attachRef.current(selRef.current);
+
+      let viewRevision = appliedViewRevisionRef.current;
+      let lastTime = performance.now();
+      let diagnosticAt=0,diagnosticSignature='';
+      const loop = () => {
+        if (disposed || !stage || !renderer) return;
+        const currentSession = controller.getSnapshot();
+        if (!currentSession) return;
+        const nextSpec = currentSpecRef.current;
+        if (nextSpec && nextSpec !== parsed && stage.updateTransforms(nextSpec)) parsed = nextSpec;
+        const now = performance.now();
+        if (currentSession.playing) {
+          const next = Math.min(
+            parsed.durationUs / 1e6,
+            currentSession.timeS + Math.max(0, (now - lastTime) / 1000) * currentSession.rate,
+          );
+          controller.update({
+            timeS: next,
+            playing: next < parsed.durationUs / 1e6,
+          });
+          tRef.current = next;
+        }
+        lastTime = now;
+        stage.poseAt(tRef.current, {
+          cameraPos: specCameraPosition(parsed, tRef.current),
+        });
+        const colliderKey=JSON.stringify([currentSession.colliderView,currentSession.colliderView==='selected'?selRef.current?.id:null]);
+        if(colliderKey!==colliderOverlayKey){
+          colliderOverlayKey=colliderKey;colliderOverlay?.dispose();colliderOverlay=undefined;
+          if(currentSession.colliderView==='all'||currentSession.colliderView==='selected'&&selRef.current){
+            try{colliderOverlay=createColliderOverlay(stage,currentSession.colliderView==='selected'?selRef.current!.id:undefined);stage.scene.add(colliderOverlay.root);}catch(e){setError(e instanceof Error?e.message:String(e));}
+          }
+        }
+        if(colliderOverlay){colliderOverlay.root.visible=currentSession.view!=='shot';colliderOverlay.update();}
+        const jointKey=JSON.stringify([currentSession.jointView,currentSession.jointView==='selected'?selRef.current?.id:null]);
+        if(jointKey!==jointOverlayKey){
+          jointOverlayKey=jointKey;jointOverlay?.dispose();jointOverlay=undefined;
+          if(currentSession.jointView==='all'||currentSession.jointView==='selected'&&selRef.current){jointOverlay=createJointOverlay(stage,currentSession.jointView==='selected'?selRef.current!.id:undefined);stage.scene.add(jointOverlay.root);}
+        }
+        if(jointOverlay){jointOverlay.root.visible=currentSession.view!=='shot';jointOverlay.update();}
+        if(now>=diagnosticAt){
+          diagnosticAt=now+200;
+          const selectedId=selRef.current?.id??null;
+          let anchors:Array<{id:string;kind:string;status:string;message?:string}>=[];
+          if(selectedId&&showInspectorRef.current){
+            try {const result=queryStageSpatial(stage,[{type:'anchors',objectId:selectedId}])[0];if(result.type==='anchors')anchors=result.items.map(a=>({id:a.anchorId,kind:a.kind,status:a.status,message:a.message}));}catch{/* Selection may have just been deleted. */}
+          }
+          const states=stage.bindingStatuses??[];
+          const value={selectedId,anchors,bindings:states.filter(s=>s.targetId===selectedId).map(s=>({...s})),invalidCount:states.filter(s=>s.status==='invalid').length};
+          const signature=JSON.stringify(value);
+          if(signature!==diagnosticSignature){diagnosticSignature=signature;setSpatialStatus(value);}
+        }
+
+        if (currentSession.viewRevision !== viewRevision) {
+          viewRevision = currentSession.viewRevision;
+          appliedViewRevisionRef.current = viewRevision;
+          if (currentSession.view !== 'shot') {
+            const focusId =
+              currentSession.focusId &&
+              sceneObjects(parsed).some((e) => e.object.id === currentSession.focusId)
+                ? currentSession.focusId
+                : undefined;
+            const frame = constructionCamera(
+              stage,
+              w,
+              h,
+              currentSession.view,
+              focusId,
+              currentSession.camera,
+            );
+            controls.dispose();
+            orbit = frame.camera;
+            controls = new OrbitControls(orbit, canvas);
+            controls.addEventListener('end', recordView);
+            controls.target.copy(frame.target);
+            controls.enableRotate = currentSession.view === 'perspective';
+            gizmo.camera = orbit;
+          }
+        }
+        const shotView = currentSession.view === 'shot';
+        controls.enabled = !shotView && !gizmo.dragging;
+        gizmo.enabled = !shotView && !!selectedRoot();
+        gizmo.getHelper().visible = !shotView && !!selectedRoot();
+        helper.visible = guidesRef.current && !shotView;
+        gizmo.setMode(modeRef.current);
+        gizmo.showX = true;
+        gizmo.showZ = true;
+        const root = selectedRoot();
+        if(root && gizmo.object !== proxy){root.parent!.add(proxy);gizmo.attach(proxy);}
+        else if(!root && gizmo.object)gizmo.detach();
+        if (root) {
+          if (gizmo.dragging) {
+            // Object follows the gizmo's proxy (ghost preview of the edit).
+            // The local quaternion/scale preview matches the proxy; release
+            // turns the sampled difference into declarative track offsets.
+            root.position.copy(proxy.position);
+            if (modeRef.current === 'rotate') root.quaternion.copy(proxy.quaternion);
+            if (modeRef.current === 'scale') root.scale.copy(proxy.scale);
+          } else {
+            proxy.position.copy(root.position);
+            proxy.rotation.copy(root.rotation);
+            proxy.scale.copy(root.scale);
+          }
+          selBox.box.setFromObject(root);
+          selBox.visible = true;
+        } else {
+          selBox.visible = false;
+        }
+        for (const l of stage.lights)
+          for (const child of l.root.children) {
+            if (
+              child !== l.light &&
+              !(
+                'target' in l.light &&
+                child === (l.light as import('three').DirectionalLight).target
+              )
+            )
+              child.visible = !shotView && (guidesRef.current || selRef.current?.id === l.spec.id);
+          }
+        if (shotView) selBox.visible = false;
+        applySpecCamera(specCam, parsed, stage, tRef.current);
+        if (shotView) applySpecCamera(shotCam, parsed, stage, tRef.current);
+        helper.update();
+        controls.update();
+        orbitPosRef.current = [orbit.position.x, orbit.position.y, orbit.position.z];
+        orbitTargetRef.current = [controls.target.x, controls.target.y, controls.target.z];
+        orbitCameraRef.current = orbit;
+        if (gizmo.dragging) stage.syncInstances();
+        renderer.setViewport(0, 0, w, h);
+        if (shotView) {
+          // Show the authored aspect ratio without stretching the shot.
+          const vw = Math.min(w, h * shotCam.aspect),
+            vh = vw / shotCam.aspect;
+          const left = (w - vw) / 2,
+            bottom = (h - vh) / 2;
+          renderer.setClearColor('#101318');
+          renderer.clear();
+          renderer.setViewport(left, bottom, vw, vh);
+          renderer.setScissor(left, bottom, vw, vh);
+          renderer.setScissorTest(true);
+          renderer.render(stage.scene, shotCam);
+          renderer.setScissorTest(false);
+        } else renderer.render(stage.scene, orbit);
+        raf = requestAnimationFrame(loop);
+      };
+      raf = requestAnimationFrame(loop);
+    })();
+
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      cleanup?.();
+      attachRef.current = null;
+      // NO forceContextLoss here: this effect re-runs on every spec commit
+      // and reuses the SAME canvas — a lost context stays lost on that
+      // canvas, blanking every rebuild. One on-screen canvas = one context
+      // total; the browser reclaims it when the panel unmounts.
+      renderer?.dispose();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey, asset.id]);
+
+  const keys = spec ? cameraKeyTimes(spec) : [];
+  const selChar =
+    sel?.kind === 'character' ? spec?.characters?.find((o) => o.id === sel.id) : undefined;
+  const selProp = sel?.kind === 'prop' ? spec?.props?.find((o) => o.id === sel.id) : undefined;
+  const selGroup = sel?.kind === 'group' ? spec?.groups?.find((o) => o.id === sel.id) : undefined;
+  const selLight = sel?.kind === 'light' ? spec?.lights?.find((o) => o.id === sel.id) : undefined;
+  const selObj = selChar ?? selProp ?? selGroup ?? selLight;
+  const isMannequin =
+    !!selChar && !!manifest?.characters[selChar.model]?.file.startsWith('builtin:');
+  const characterModels = Object.keys(manifest?.characters ?? {});
+  const selectedGeometryId = selProp?.geometryId;
+  const appearance = spec && selProp ? resolvePropAppearance(spec, selProp) : undefined;
+  const selectedMaterial = spec?.materials?.[selProp?.materialId ?? ''];
+  const materialUsers = spec?.props?.filter(p => p.materialId === selProp?.materialId).length ?? 0;
+  const selectedGeometryResource = spec?.geometryResources?.[selectedGeometryId!];
+  const geometryKey = `${asset.id}:${selectedGeometryId}:${selectedGeometryResource?.src}:${selectedGeometryResource?.name}`;
+  const [loadedGeometry, setLoadedGeometry] = useState<{key:string;data:SceneGeometry} | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    if (selectedGeometryId && selectedGeometryResource && spec) {
+      void resolveSceneGeometry(spec, selectedGeometryId, sceneResources(store)).then(data => {
+        if (!disposed) setLoadedGeometry({key:geometryKey,data});
+      }).catch(e => { if (!disposed) setError(String(e)); });
+    }
+    return () => { disposed = true; };
+  }, [geometryKey, store]);
+  const selectedGeometry = spec?.geometries?.[selectedGeometryId!] ?? (loadedGeometry?.key === geometryKey ? loadedGeometry.data : undefined);
+  const propModels = Object.keys(manifest?.props ?? {});
+  const clipNames = (model: string) => Object.keys(manifest?.characters[model]?.clips ?? {});
+
+  /** Mutate the selected object (character or prop) in one commit. */
+  const mutateSel = (fn: (o: NonNullable<typeof selObj>, d: SceneSpec) => void) => {
+    if (!sel) return;
+    mutateSpec((d) => {
+      const o = sceneObjects(d).find((e) => e.object.id === sel.id)?.object;
+      if (o) fn(o, d);
+    });
+  };
+
+  /** Switching a character's model keeps the spec compilable: actions that
+   *  the new model doesn't have are dropped (they now fail loudly), and
+   *  pose/actions swap when crossing the mannequin/GLTF line. */
+  const switchCharacterModel = (model: string) => {
+    mutateSel((o) => {
+      const c = o as NonNullable<SceneSpec['characters']>[number];
+      c.model = model;
+      if (manifest?.characters[model]?.file.startsWith('builtin:')) {
+        delete c.actions;
+        c.pose = c.pose ?? 'standing';
+      } else {
+        delete c.pose;
+        const clips = manifest?.characters[model]?.clips ?? {};
+        c.actions = (c.actions ?? []).filter((a) => clips[a.clip]);
+        if (!c.actions.length) {
+          const first = Object.keys(clips)[0];
+          if (first) c.actions = [{ clip: first, start: 0 }];
+        }
+      }
+    });
+  };
+
+  const items = spec ? sceneObjects(spec) : [];
+  const parentOf = (o: (typeof items)[number]['object']) =>
+    o.parentId ?? ('attachTo' in o ? o.attachTo?.character : undefined);
+  const outline: Array<(typeof items)[number] & { depth: number }> = [];
+  const children = new Map<string | undefined, typeof items>();
+  for (const item of items) {
+    const parent = parentOf(item.object), list = children.get(parent) ?? [];
+    list.push(item); children.set(parent, list);
+  }
+  const walk = (parent: string | undefined, depth: number) => {
+    for (const item of children.get(parent) ?? []) {
+      outline.push({ ...item, depth });
+      walk(item.object.id, depth + 1);
+    }
+  };
+  walk(undefined, 0);
+  const objectIcons: Record<string, IconName> = {
+    prop: 'cube',
+    group: 'layers',
+    character: 'character',
+    light: 'light',
+  };
+
+  return (
+    <section className="director-overlay" data-compact={compact}>
+      <SceneExportDialog open={exportOpen} onClose={() => setExportOpen(false)} store={store} assetId={asset.id} name={asset.name} objectId={session.objectId} timeS={session.timeS}/>
+      <div className="director-head">
+        <div className="director-heading">
+          <span className="eyebrow">DIRECTOR WORKSPACE</span>
+          <span className="director-title">{asset.name}</span>
+        </div>
+        <span className="director-meta">
+          {items.length} objects · {durationS.toFixed(1)}s
+        </span>
+        <div className="tool-group">
+          <button
+            className="icon-button"
+            aria-label="撤销"
+            title="撤销 · Ctrl/⌘ Z"
+            disabled={!store.getState().canUndo}
+            onClick={() => store.undo()}
+          >
+            <Icon name="undo" size={16} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="重做"
+            title="重做 · Ctrl/⌘ Shift Z"
+            disabled={!store.getState().canRedo}
+            onClick={() => store.redo()}
+          >
+            <Icon name="redo" size={16} />
+          </button>
+        </div>
+        <button
+          className="director-close icon-button"
+          aria-label="Close Director"
+          title="Back to timeline"
+          onClick={onClose}
+        >
+          <Icon name="back" />
+        </button>
+      </div>
+      <div className="director-toolbar">
+        <div className="tool-group segmented">
+          <button
+            className={'director-tool' + (mode === 'translate' ? ' active' : '')}
+            onClick={() => setMode('translate')}
+            aria-label="Move"
+            title="Move objects"
+          >
+            <Icon name="move" />
+            <span className="button-label">Move</span>
+          </button>
+          <button
+            className={'director-tool' + (mode === 'rotate' ? ' active' : '')}
+            onClick={() => setMode('rotate')}
+            aria-label="Rotate"
+            title="Rotate objects"
+          >
+            <Icon name="rotate" />
+            <span className="button-label">Rotate</span>
+          </button>
+          <button
+            className={'director-tool' + (mode === 'scale' ? ' active' : '')}
+            onClick={() => setMode('scale')}
+            aria-label="Scale"
+            title="Scale objects"
+          >
+            <Icon name="scale" />
+            <span className="button-label">Scale</span>
+          </button>
+        </div>
+        <select
+          aria-label="Director view"
+          value={session.view}
+          onChange={(e) =>
+            controller.update({
+              view: e.target.value as DirectorSession['view'],
+            })
+          }
+        >
+          {SCENE_VIEWS.map((v) => (
+            <option key={v} value={v}>
+              {v.charAt(0).toUpperCase() + v.slice(1)}
+            </option>
+          ))}
+        </select>
+        <span className="spacer" />
+        <button
+          className="director-tool icon-button"
+          onClick={() => controller.update({ focusId: sel?.id ?? null })}
+          aria-label="Focus"
+          title="Frame selection"
+        >
+          <Icon name="focus" />
+        </button>
+        <button
+          className="director-tool icon-button play-button"
+          aria-label={session.playing ? '暂停' : '播放'}
+          onClick={() =>
+            controller.update({
+              playing: !session.playing,
+              ...(t >= durationS ? { timeS: 0 } : {}),
+            })
+          }
+        >
+          <Icon name={session.playing ? 'pause' : 'play'} />
+        </button>
+        <PreviewRateSelect rate={session.rate} onChange={rate => controller.update({ rate })} label="Director preview speed" />
+        <details className="tool-menu">
+          <summary className="icon-button" aria-label="More Director tools" title="More tools">
+            <Icon name="more" />
+          </summary>
+          <div className="tool-menu-content">
+            <button onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); controller.update({ playing: false }); setExportOpen(true); }}><Icon name="download"/>Export GLB…</button>
+            <button onClick={() => setGuides((v) => !v)} aria-pressed={guides}>
+              <Icon name="grid" />
+              {guides ? 'Hide guides' : 'Show guides'}
+            </button>
+            <button disabled={session.view !== 'perspective'} onClick={setCameraHere}>
+              <Icon name="camera" />
+              Set camera here
+            </button>
+          </div>
+        </details>
+      </div>
+      {error && <div className="scene-error">{error}</div>}
+      {spatialStatus.invalidCount>0&&<div className="scene-error" role="status">{spatialStatus.invalidCount} invalid bindings. Inspect Anchors / Bindings before export.</div>}
+      <div className="director-body">
+        <div className="director-viewport">
+          <canvas ref={canvasRef} className="director-canvas" />
+          <div className="viewport-hud">
+            <span>{session.view.toUpperCase()}</span>
+            {selObj && (
+              <button aria-label="Inspect selection" onClick={onInspect}>
+                <Icon name={objectIcons[sel!.kind]} />
+                {selObj.name ?? selObj.id}
+                <Icon name="inspector" size={13} />
+              </button>
+            )}
+          </div>
+          {outline.length === 0 && (
+            <div className="director-empty">
+              <Icon name="cube" size={30} />
+              <strong>A space for your next idea</strong>
+              <p>Add a shape to begin building your scene.</p>
+              <button onClick={() => void addPrimitive('prop/cube')}>
+                <Icon name="plus" size={15} />
+                Add cube
+              </button>
+            </div>
+          )}
+          <span className="viewport-hint">Orbit to explore · Scroll to zoom</span>
+        </div>
+        <aside
+          className="director-side"
+          hidden={!showObjects && !showInspector}
+          data-objects={showObjects}
+          data-inspector={showInspector}
+        >
+          <div className="panel-close-row">
+            <span>{showObjects ? 'Scene objects' : 'Selection properties'}</span>
+            <button
+              className="icon-button"
+              aria-label="Close Director panel"
+              onClick={onClosePanel}
+            >
+              <Icon name="close" />
+            </button>
+          </div>
+          <div className="director-objects" hidden={!showObjects}>
+            <div className="panel-title">
+              Scene objects <span className="count-badge">{items.length}</span>
+            </div>
+            <label className="search-field">
+              <Icon name="search" size={15} />
+              <input
+                aria-label="Search scene objects"
+                placeholder="Find an object"
+                value={objectSearch}
+                onChange={(e) => setObjectSearch(e.target.value)}
+              />
+            </label>
+            <div className="scene-outliner">
+              {outline
+                .filter(({ object }) =>
+                  `${object.id} ${object.name ?? ''}`
+                    .toLowerCase()
+                    .includes(objectSearch.toLowerCase()),
+                )
+                .map(({ kind, object, depth }) => (
+                  <button
+                    key={object.id}
+                    className={'director-key' + (sel?.id === object.id ? ' active' : '')}
+                    aria-label={object.name ?? object.id}
+                    title={`${object.name ?? object.id} · ${object.id}`}
+                    style={{ paddingLeft: 10 + depth * 14 }}
+                    onClick={() => select({ kind, id: object.id! })}
+                  >
+                    <Icon name={objectIcons[kind]} size={15} />
+                    <span>{object.name ?? object.id}</span>
+                    <small aria-hidden="true">{object.id}</small>
+                  </button>
+                ))}
+              {outline.length === 0 && <p className="empty-hint">Your objects will appear here.</p>}
+            </div>
+            <div className="object-create-tools">
+              <div className="prop-row">
+                <span className="prop-label">Shape</span>
+                <select
+                  aria-label="Add shape"
+                  value=""
+                  onChange={(e) => void addPrimitive(e.target.value)}
+                >
+                  <option value="">Add primitive…</option>
+                  {propModels.map((model) => (
+                    <option key={model} value={model}>
+                      {manifest?.props[model]?.label ?? model}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                className="fx-add"
+                onClick={() =>
+                  spec &&
+                  runEdits([
+                    {
+                      type: 'add',
+                      kind: 'group',
+                      object: { id: nextSceneId(spec, 'group') },
+                    },
+                  ])
+                }
+              >
+                <Icon name="layers" size={15} />
+                Group
+              </button>
+              <div className="prop-row">
+                <span className="prop-label">Build</span>
+                <select
+                  aria-label="Build assembly"
+                  value=""
+                  onChange={(e) => {
+                    if (spec && e.target.value)
+                      void runEdits([
+                        {
+                          type: 'assembly',
+                          id: nextSceneId(spec, e.target.value),
+                          recipe: {
+                            template: e.target.value as AssemblyTemplate,
+                          },
+                        },
+                      ]);
+                  }}
+                >
+                  <option value="">Choose assembly…</option>
+                  {Object.keys(ASSEMBLY_DEFAULTS).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="prop-row model-import-row">
+                <select
+                  aria-label="Import model as"
+                  value={importKind}
+                  onChange={(e) => setImportKind(e.target.value as 'prop' | 'character')}
+                >
+                  <option value="prop">Static model</option>
+                  <option value="character">Animated model</option>
+                </select>
+                <button
+                  className="fx-add"
+                  disabled={importing}
+                  onClick={() => importRef.current?.click()}
+                >
+                  {importing ? 'Importing…' : 'Import GLB'}
+                </button>
+                <input
+                  ref={importRef}
+                  hidden
+                  type="file"
+                  accept=".glb,model/gltf-binary"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    setImporting(true);
+                    const r = await importSceneModel(store, {
+                      assetId: asset.id,
+                      file,
+                      kind: importKind,
+                    });
+                    setImporting(false);
+                    setError(r.ok ? null : r.message);
+                    if (r.ok)
+                      controller.update({
+                        objectId: r.objectId,
+                        focusId: r.objectId,
+                      });
+                  }}
+                />
+              </div>
+              <button
+                className="fx-add"
+                onClick={() =>
+                  spec &&
+                  runEdits([
+                    {
+                      type: 'add',
+                      kind: 'light',
+                      object: {
+                        id: nextSceneId(spec, 'light'),
+                        type: 'spot',
+                        position: { x: 2, y: 4, z: 2 },
+                        rotationX: -65,
+                        rotationY: 25,
+                        intensity: 100,
+                      },
+                    },
+                  ])
+                }
+              >
+                <Icon name="light" size={15} />
+                Light
+              </button>
+            </div>
+          </div>
+          <div className="director-properties" hidden={!showInspector}>
+            {!selObj && (
+              <div className="selection-empty">
+                <Icon name="inspector" size={28} />
+                <strong>选择一个片段</strong>
+                <p>Choose an object on the stage or in the scene list to refine its details.</p>
+              </div>
+            )}
+            {selObj && sel && (
+              <div className="director-selcard">
+                <div className="group-title">
+                  {selObj.name ?? selObj.id}
+                  <button
+                    className="fx-remove"
+                    title="Remove from scene"
+                    onClick={() => {
+                      const s = sel;
+                      select(null);
+                      void runEdits([{ type: 'remove', id: s.id, cascade: true }]);
+                    }}
+                  >
+                    <Icon name="trash" size={15} />
+                  </button>
+                </div>
+                {!selGroup && !selLight && (
+                  <div className="prop-row">
+                    <span className="prop-label">Model</span>
+                    <select
+                      value={(selChar ?? selProp)!.model}
+                      onChange={(e) =>
+                        selChar
+                          ? switchCharacterModel(e.target.value)
+                          : mutateSel((o) => {
+                              const p = o as NonNullable<SceneSpec['props']>[number];
+                              p.model = e.target.value;
+                              delete p.geometryId;
+                              delete p.vertices;
+                              delete p.faces;
+                              delete p.uvs;
+                              delete p.path;
+                              delete p.radius;
+                              delete p.closed;
+                              delete p.holes;
+                              delete p.bevel;
+                              if (p.model === 'prop/lathe') {
+                                p.points = [
+                                  [0.2, 0],
+                                  [0.3, 0.2],
+                                  [0.15, 0.8],
+                                  [0.2, 1],
+                                ];
+                                delete p.depth;
+                              } else if (p.model === 'prop/extrude') {
+                                p.points = [
+                                  [-0.5, 0],
+                                  [0.5, 0],
+                                  [0, 1],
+                                ];
+                                p.depth = 0.1;
+                              } else {
+                                delete p.points;
+                                delete p.depth;
+                                if (p.model === 'prop/mesh') {
+                                  p.vertices = [
+                                    [0, 0, 0],
+                                    [1, 0, 0],
+                                    [0, 1, 0],
+                                    [0, 0, 1],
+                                  ];
+                                  p.faces = [
+                                    [0, 2, 1],
+                                    [0, 1, 3],
+                                    [0, 3, 2],
+                                    [1, 2, 3],
+                                  ];
+                                }
+                                if (p.model === 'prop/tube') {
+                                  p.path = [
+                                    [0, 0, 0],
+                                    [0.5, 1, 0],
+                                    [1, 1, 0],
+                                  ];
+                                  p.radius = 0.05;
+                                }
+                              }
+                            })
+                      }
+                    >
+                      {selProp?.model === 'prop/instance' && <option value="prop/instance">Shared geometry instance</option>}
+                      {((selChar ? characterModels : propModels).length
+                        ? selChar
+                          ? characterModels
+                          : propModels
+                        : [(selChar ?? selProp)!.model]
+                      ).map((m) => (
+                        <option key={m} value={m}>
+                          {(selChar ? manifest?.characters[m]?.label : manifest?.props[m]?.label) ??
+                            m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="prop-row">
+                  <span className="prop-label">名称</span>
+                  <input
+                    key={sel.id + (selObj.name ?? '')}
+                    defaultValue={selObj.name ?? ''}
+                    onBlur={(e) => {
+                      const name = e.target.value;
+                      if (name !== (selObj.name ?? ''))
+                        void mutateSel((o) => {
+                          o.name = name;
+                        });
+                    }}
+                  />
+                </div>
+                <div className="prop-row">
+                  <span className="prop-label">Parent</span>
+                  <select
+                    value={selObj.parentId ?? ''}
+                    onChange={(e) =>
+                      mutateSel((o) => {
+                        if (e.target.value) o.parentId = e.target.value;
+                        else delete o.parentId;
+                      })
+                    }
+                  >
+                    <option value="">World (local transform)</option>
+                    {(spec?.groups ?? [])
+                      .filter((g) => g.id !== sel.id)
+                      .map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name ?? g.id}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                {spec&&activeBinding(spec,sel.id,'position') ? <div className="prop-row"><span className="prop-label">位置</span><span className="kf-chip">↪ {activeBinding(spec,sel.id,'position')![0]}</span></div> : <Vec3Row
+                  label="位置"
+                  value={{...selObj.position,...Object.fromEntries(['x','y','z'].filter(axis=>selObj.animation?.channels?.[`position.${axis}` as AnimationChannel]!==undefined).map(axis=>[axis,selObj.animation!.channels![`position.${axis}` as AnimationChannel]]))}}
+                  onAxis={(axis, v) => mutateSel((o) => { const key=`position.${axis}` as AnimationChannel; if(o.animation?.channels?.[key]!==undefined)o.animation.channels[key]=v;else (o.position ??= {})[axis]=v; })}
+                />}
+                {(['rotationX', 'rotationY', 'rotationZ'] as const).map((axis) => (
+                  <div className="prop-row" key={axis}>
+                    <span className="prop-label">Rotate {axis.slice(-1)}</span>
+                    {spec&&activeBinding(spec,sel.id,'orientation') ? <span className="kf-chip">↪ {activeBinding(spec,sel.id,'orientation')![0]}</span> : <AnimatableField
+                      value={selObj.animation?.channels?.[axis] ?? selObj[axis]}
+                      fallback={0}
+                      step={15}
+                      onChange={(v) =>
+                        mutateSel((o) => {
+                          if(o.animation?.channels?.[axis]!==undefined)o.animation.channels[axis]=v;else o[axis] = v;
+                        })
+                      }
+                    />}
+                  </div>
+                ))}
+                {(['x','y','z'] as const).map(axis=><div className="prop-row" key={axis}>
+                  <span className="prop-label">Scale {axis.toUpperCase()}</span>
+                  <AnimatableField value={selObj.animation?.channels?.[`scale.${axis}`] ?? (typeof selObj.scale==='number'?selObj.scale:selObj.scale?.[axis])} fallback={1} min={0}
+                    onChange={v=>mutateSel(o=>{const key=`scale.${axis}` as AnimationChannel;if(o.animation?.channels?.[key]!==undefined||v===0){o.animation??={};o.animation.channels??={};o.animation.channels[key]=v;}else {o.scale=typeof o.scale==='number'?{x:o.scale,y:o.scale,z:o.scale}:{...o.scale};o.scale[axis]=v;}})}/>
+                </div>)}
+                {spec && <SceneAnimationFields object={selObj} spec={spec} kind={sel.kind} timeS={t} onChange={animation=>mutateSel(o=>{o.animation=animation;})} onEdit={runEdits}/>}
+                {spec&&selProp&&<ScenePhysicsFields value={selProp} spec={spec} store={store} assetId={asset.id} timeS={t} onEdit={runEdits} colliderView={session.colliderView} onView={colliderView=>controller.update({colliderView})}/>}
+                {spec&&selProp?.physics&&<SceneJointFields spec={spec} objectId={selProp.id!} store={store} assetId={asset.id} timeS={t} onEdit={runEdits} jointView={session.jointView} onView={jointView=>controller.update({jointView})}/>}
+                <details className="scene-actions">
+                  <summary>Anchors</summary>
+                  {spatialStatus.selectedId===sel.id&&spatialStatus.anchors.map(a=><p key={a.id} className={a.status==='invalid'?'scene-error':'empty-hint'}>{a.id} · {a.kind} · {a.status}{a.message?`: ${a.message}`:''}</p>)}
+                  <JsonField label="Object-local anchors" value={selObj.anchors??{}} onChange={value=>mutateSel(o=>{o.anchors=value as typeof o.anchors;})}/>
+                  <button className="fx-add" onClick={()=>mutateSel(o=>{
+                    let n=1;while(Object.hasOwn(o.anchors??{},`anchor_${n}`))n++;
+                    (o.anchors??={})[`anchor_${n}`]={position:[0,0,0]};
+                  })}>Add anchor</button>
+                  <div className="empty-hint">Local anchors follow object transforms. Surface anchors follow mesh deformation; topology changes require rebinding.</div>
+                  <SceneAnchorRepairs store={store} assetId={asset.id} objectId={sel.id} timeS={t} specText={specText}/>
+                </details>
+                {spec&&<SceneBindingFields spec={spec} objectId={sel.id} statuses={spatialStatus.selectedId===sel.id?spatialStatus.bindings:[]} onEdit={runEdits}/>}
+                {!selLight && (
+                  <button
+                    className="fx-add"
+                    onClick={async () => {
+                      const r = await arrangeScene(store, {
+                        assetId: asset.id,
+                        ids: [sel.id],
+                        mode: 'ground',
+                        timeS: t,
+                      });
+                      setError(r.ok ? null : r.message);
+                    }}
+                  >
+                    Place on ground
+                  </button>
+                )}
+                {selLight && (
+                  <LightFields
+                    value={selLight}
+                    onChange={(patch) => mutateSel((o) => Object.assign(o, patch))}
+                  />
+                )}
+                {selProp?.geometryId && selectedGeometry && (
+                  <>
+                    <div className="group-title">Geometry · {selProp.geometryId}</div>
+                    <p className="empty-hint">Geometry edits affect {spec?.props?.filter(p => p.geometryId === selProp.geometryId).length} linked objects. Transform and color affect this object only.</p>
+                    {selProp.model === 'prop/instance' && <button className="fx-add" onClick={() => runEdits([{ type: 'makeUnique', id: sel.id }])}>Make geometry unique</button>}
+                    <MeshFields
+                      value={{ model: 'prop/mesh', ...selectedGeometry }}
+                      onChange={(patch) => runEdits([{ type: 'geometry.update', id: selProp.geometryId!, geometry: { ...selectedGeometry, ...patch } }])}
+                    />
+                  </>
+                )}
+                {selProp?.model === 'prop/mesh' && !selProp.geometryId && (
+                  <MeshFields
+                    value={selProp}
+                    onChange={(patch) => mutateSel((o) => Object.assign(o, patch))}
+                  />
+                )}
+                {selGroup?.assembly && (
+                  <>
+                    <div className="group-title">Assembly dimensions</div>
+                    {Object.entries({
+                      ...ASSEMBLY_DEFAULTS[selGroup.assembly.template],
+                      ...selGroup.assembly.parameters,
+                    }).map(([field, value]) => (
+                      <div className="prop-row" key={field}>
+                        <span className="prop-label">{field}</span>
+                        <NumberField
+                          value={value}
+                          min={0.001}
+                          step={field === 'steps' ? 1 : 0.1}
+                          onCommit={(v) =>
+                            runEdits([
+                              {
+                                type: 'assembly',
+                                id: sel.id,
+                                recipe: {
+                                  template: selGroup.assembly!.template,
+                                  parameters: {
+                                    ...selGroup.assembly!.parameters,
+                                    [field]: v,
+                                  },
+                                },
+                              },
+                            ])
+                          }
+                        />
+                      </div>
+                    ))}
+                    <div className="empty-hint">
+                      Changing dimensions rebuilds generated parts; custom children and part
+                      materials stay.
+                    </div>
+                  </>
+                )}
+                <button
+                  className="fx-add"
+                  onClick={() =>
+                    spec &&
+                    runEdits([
+                      {
+                        type: 'duplicate',
+                        id: sel.id,
+                        newId: nextSceneId(spec, sel.kind),
+                        offset: { x: 1 },
+                      },
+                    ])
+                  }
+                >复制</button>
+                {selProp && spec && <>
+                  <label className="prop-row"><span className="prop-label">Material</span><select aria-label="Shared material" value={selProp.materialId ?? ''} onChange={e => mutateSel(o => { (o as typeof selProp).materialId = e.target.value || undefined; })}>
+                    <option value="">Object / source material</option>{Object.entries(spec.materials ?? {}).map(([id,m]) => <option key={id} value={id}>{m.name ?? id}</option>)}
+                  </select></label>
+                  {!selProp.materialId && selProp.model.startsWith('prop/') && <button className="fx-add" onClick={() => {
+                    let n=1;while(Object.hasOwn(spec.materials ?? {},`material_${n}`))n++;
+                    const id=`material_${n}`;
+                    return runEdits([{type:'material.create',id,material:{...appearance!.material,color:appearance!.color ?? '#8fa3bf'}},
+                      {type:'update',id:sel.id,patch:{materialId:id},clear:['material','color']}]);
+                  }}>Share this material</button>}
+                  {selectedMaterial && <>
+                    <p className="empty-hint">Shared by {materialUsers} {materialUsers === 1 ? 'object' : 'objects'}. Object settings below override shared values.</p>
+                    <button className="fx-add" onClick={() => runEdits([{type:'update',id:sel.id,patch:{},clear:['material','color']}])}>Clear material overrides</button>
+                    <details><summary>Edit shared material</summary><MaterialFields value={selectedMaterial} onChange={patch => runEdits([{type:'material.update',id:selProp.materialId!,material:{...selectedMaterial,...patch}}])}/></details>
+                  </>}
+                </>}
+                {selProp &&
+                  (['roughness', 'metalness', 'opacity'] as const).map((field) => (
+                    <div className="prop-row" key={field}>
+                      <span className="prop-label">{field}</span>
+                      {selProp.model.startsWith('model/') && !selProp.materialId && selProp.material?.[field] == null ? (
+                        <button
+                          className="kf-btn"
+                          onClick={() =>
+                            mutateSel((o) => {
+                              ((o as NonNullable<SceneSpec['props']>[number]).material ??= {})[
+                                field
+                              ] = field === 'roughness' ? 0.6 : field === 'opacity' ? 1 : 0;
+                            })
+                          }
+                        >
+                          Inherited · override
+                        </button>
+                      ) : (
+                        <NumberField
+                          min={0}
+                          max={1}
+                          step={0.1}
+                          value={
+                            appearance?.material[field] ??
+                            (field === 'roughness' ? 0.6 : field === 'opacity' ? 1 : 0)
+                          }
+                          onCommit={(v) =>
+                            mutateSel((o) => {
+                              ((o as NonNullable<SceneSpec['props']>[number]).material ??= {})[
+                                field
+                              ] = v;
+                            })
+                          }
+                        />
+                      )}
+                    </div>
+                  ))}
+                {selProp?.model.startsWith('model/') && (
+                  <>
+                    <button
+                      className="fx-add"
+                      onClick={() =>
+                        mutateSel((o) => {
+                          (o as NonNullable<SceneSpec['props']>[number]).color = '#ffffff';
+                        })
+                      }
+                    >
+                      Set white tint
+                    </button>
+                    <button
+                      className="fx-add"
+                      onClick={() =>
+                        runEdits([
+                          {
+                            type: 'update',
+                            id: sel.id,
+                            patch: {},
+                            clear: ['color', 'material', 'materialId'],
+                          },
+                        ])
+                      }
+                    >
+                      Restore source materials
+                    </button>
+                  </>
+                )}
+                {selProp?.points && (
+                  <div className="scene-actions">
+                    <div className="prop-label">
+                      {selProp.model === 'prop/lathe'
+                        ? 'Profile [radius, height]'
+                        : 'Outline [x, y]'}
+                    </div>
+                    <textarea
+                      key={sel.id + JSON.stringify(selProp.points)}
+                      className="scene-json"
+                      defaultValue={JSON.stringify(selProp.points)}
+                      onBlur={(e) => {
+                        try {
+                          const points = JSON.parse(e.target.value);
+                          if (JSON.stringify(points) !== JSON.stringify(selProp.points))
+                            void mutateSel((o) => {
+                              (o as NonNullable<SceneSpec['props']>[number]).points = points;
+                            });
+                        } catch {
+                          setError('Points must be JSON coordinate pairs.');
+                        }
+                      }}
+                    />
+                    {selProp.model === 'prop/extrude' && (
+                      <div className="prop-row">
+                        <span className="prop-label">Depth</span>
+                        <NumberField
+                          value={selProp.depth ?? 0.1}
+                          min={0.001}
+                          onCommit={(v) =>
+                            mutateSel((o) => {
+                              (o as NonNullable<SceneSpec['props']>[number]).depth = v;
+                            })
+                          }
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+                {selProp?.model === 'prop/extrude' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="prop-label">Bevel</span>
+                      <NumberField
+                        value={selProp.bevel ?? 0}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        onCommit={(v) =>
+                          mutateSel((o) => {
+                            (o as NonNullable<SceneSpec['props']>[number]).bevel = v;
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="prop-label">Hole outlines</div>
+                    <textarea
+                      key={sel.id + JSON.stringify(selProp.holes)}
+                      className="scene-json"
+                      defaultValue={JSON.stringify(selProp.holes ?? [])}
+                      onBlur={(e) => {
+                        try {
+                          const holes = JSON.parse(e.target.value);
+                          if (JSON.stringify(holes) !== JSON.stringify(selProp.holes ?? []))
+                            void mutateSel((o) => {
+                              (o as NonNullable<SceneSpec['props']>[number]).holes = holes;
+                            });
+                        } catch {
+                          setError('Holes must be JSON arrays of coordinate pairs.');
+                        }
+                      }}
+                    />
+                  </>
+                )}
+                {selProp?.model === 'prop/tube' && (
+                  <>
+                    <div className="prop-label">Path [x, y, z]</div>
+                    <textarea
+                      key={sel.id + JSON.stringify(selProp.path)}
+                      className="scene-json"
+                      defaultValue={JSON.stringify(selProp.path)}
+                      onBlur={(e) => {
+                        try {
+                          const path = JSON.parse(e.target.value);
+                          if (JSON.stringify(path) !== JSON.stringify(selProp.path))
+                            void mutateSel((o) => {
+                              (o as NonNullable<SceneSpec['props']>[number]).path = path;
+                            });
+                        } catch {
+                          setError('Path must be JSON coordinate triples.');
+                        }
+                      }}
+                    />
+                    <div className="prop-row">
+                      <span className="prop-label">Radius</span>
+                      <NumberField
+                        value={selProp.radius ?? 0.05}
+                        min={0.001}
+                        max={100}
+                        step={0.01}
+                        onCommit={(v) =>
+                          mutateSel((o) => {
+                            (o as NonNullable<SceneSpec['props']>[number]).radius = v;
+                          })
+                        }
+                      />
+                    </div>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={selProp.closed ?? false}
+                        onChange={(e) =>
+                          mutateSel((o) => {
+                            (o as NonNullable<SceneSpec['props']>[number]).closed =
+                              e.target.checked;
+                          })
+                        }
+                      />{' '}
+                      Closed path
+                    </label>
+                  </>
+                )}
+                {isMannequin && (
+                  <div className="prop-row">
+                    <span className="prop-label">Pose</span>
+                    <select
+                      value={
+                        typeof selChar!.pose === 'string'
+                          ? selChar!.pose
+                          : (selChar!.pose?.preset ?? 'standing')
+                      }
+                      onChange={(e) =>
+                        mutateSel((o) => {
+                          const c = o as NonNullable<SceneSpec['characters']>[number];
+                          if (c.pose && typeof c.pose === 'object' && c.pose.joints)
+                            c.pose.preset = e.target.value;
+                          else c.pose = e.target.value;
+                        })
+                      }
+                    >
+                      {Object.keys(POSE_PRESETS).map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                    {typeof selChar!.pose === 'object' && selChar!.pose?.joints && (
+                      <span
+                        className="kf-chip"
+                        title="Per-joint overrides — edit via the inspector's JSON tab"
+                      >
+                        ◆ joints
+                      </span>
+                    )}
+                  </div>
+                )}
+                {!selGroup && (
+                  <div className="prop-row">
+                    <span className="prop-label">颜色</span>
+                    <input
+                      type="color"
+                      value={
+                        (selObj as { color?: string }).color ?? appearance?.color ??
+                        (selChar
+                          ? MANNEQUIN_DEFAULT_COLOR
+                          : selLight || selProp?.model.startsWith('model/')
+                            ? '#ffffff'
+                            : '#8fa3bf')
+                      }
+                      onChange={(e) =>
+                        mutateSel((o) => ((o as { color?: string }).color = e.target.value))
+                      }
+                    />
+                  </div>
+                )}
+                {selChar && (
+                  <div className="prop-row">
+                    <span className="prop-label">Gaze</span>
+                    <select
+                      value={
+                        selChar.gaze === 'camera'
+                          ? 'camera'
+                          : selChar.gaze
+                            ? `char:${selChar.gaze.character}`
+                            : ''
+                      }
+                      onChange={(e) =>
+                        mutateSel((o) => {
+                          const c = o as NonNullable<SceneSpec['characters']>[number];
+                          const v = e.target.value;
+                          if (!v) delete c.gaze;
+                          else if (v === 'camera') c.gaze = 'camera';
+                          else c.gaze = { character: v.slice(5) };
+                        })
+                      }
+                    >
+                      <option value="">无</option>
+                      <option value="camera">Camera</option>
+                      {(spec?.characters ?? [])
+                        .filter((o) => o.id !== selChar.id)
+                        .map((o) => (
+                          <option key={o.id} value={`char:${o.id}`}>
+                            Look at {o.id}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+                {selChar && !isMannequin && (
+                  <div className="scene-actions">
+                    <div className="prop-label">Actions (clip · start s · fade s)</div>
+                    {(selChar.actions ?? []).map((a, ai) => (
+                      <div className="prop-row scene-action" key={ai}>
+                        <select
+                          value={a.clip}
+                          onChange={(e) =>
+                            mutateSel(
+                              (o) =>
+                                ((o as NonNullable<SceneSpec['characters']>[number]).actions![
+                                  ai
+                                ].clip = e.target.value),
+                            )
+                          }
+                        >
+                          {(clipNames(selChar.model).length
+                            ? clipNames(selChar.model)
+                            : [a.clip]
+                          ).map((n) => (
+                            <option key={n} value={n}>
+                              {n}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          step={0.1}
+                          min={0}
+                          title="Start (s)"
+                          value={a.start}
+                          onChange={(e) =>
+                            mutateSel(
+                              (o) =>
+                                ((o as NonNullable<SceneSpec['characters']>[number]).actions![
+                                  ai
+                                ].start = Number(e.target.value)),
+                            )
+                          }
+                        />
+                        <input
+                          type="number"
+                          step={0.1}
+                          min={0}
+                          title="Cross-fade (s)"
+                          value={a.fade ?? 0.3}
+                          onChange={(e) =>
+                            mutateSel(
+                              (o) =>
+                                ((o as NonNullable<SceneSpec['characters']>[number]).actions![
+                                  ai
+                                ].fade = Number(e.target.value)),
+                            )
+                          }
+                        />
+                        <button
+                          className="kf-btn"
+                          title="Remove action"
+                          onClick={() =>
+                            mutateSel((o) =>
+                              (o as NonNullable<SceneSpec['characters']>[number]).actions!.splice(
+                                ai,
+                                1,
+                              ),
+                            )
+                          }
+                        >
+                          <Icon name="trash" size={15} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      className="fx-add"
+                      onClick={() =>
+                        mutateSel((o) => {
+                          const c = o as NonNullable<SceneSpec['characters']>[number];
+                          const clips = clipNames(selChar.model);
+                          (c.actions ??= []).push({
+                            clip: clips[0] ?? 'Idle',
+                            start: 0,
+                          });
+                        })
+                      }
+                    >
+                      + Action
+                    </button>
+                  </div>
+                )}
+                {selProp && (
+                  <div className="prop-row">
+                    <span className="prop-label">Attach</span>
+                    <select
+                      title="Attach to a character bone (hand-held / worn)"
+                      value={
+                        selProp.attachTo
+                          ? `${selProp.attachTo.character}:${selProp.attachTo.bone ?? 'handR'}`
+                          : ''
+                      }
+                      onChange={(e) =>
+                        mutateSel((o) => {
+                          const p = o as NonNullable<SceneSpec['props']>[number];
+                          const v = e.target.value;
+                          if (!v) delete p.attachTo;
+                          else {
+                            const [character, bone] = v.split(':');
+                            p.attachTo = { character, bone };
+                            p.position = { x: 0, y: 0, z: 0 };
+                          }
+                        })
+                      }
+                    >
+                      <option value="">World</option>
+                      {(spec?.characters ?? []).flatMap((c) =>
+                        Object.keys(manifest?.characters[c.model]?.bones ?? {}).map((slot) => (
+                          <option key={`${c.id}:${slot}`} value={`${c.id}:${slot}`}>
+                            {c.id} · {slot}
+                          </option>
+                        )),
+                      )}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="group-title">Camera keys</div>
+            {keys.length === 0 && (
+              <div className="empty-hint">No camera keyframes (static shot)</div>
+            )}
+            {keys.map((k) => (
+              <button
+                key={k}
+                className={'director-key' + (Math.abs(k - t) < 0.001 ? ' active' : '')}
+                onClick={() => scrub(k)}
+              >
+                {k.toFixed(2)}s
+              </button>
+            ))}
+            <div className="empty-hint director-hint">
+              {sel
+                ? 'Drag the gizmo to move/rotate — releasing commits one undo step. Click empty ground to deselect.'
+                : 'Click a character or prop to select it. Drag empty space to orbit · wheel to zoom. Enable guides to see the shot camera. Use the more menu to set it to this view.'}
+            </div>
+          </div>
+        </aside>
+      </div>
+      <div className="director-footer">
+        <Icon name="timeline" size={16} />
+        <span className="director-time">
+          {t.toFixed(2)}s / {durationS.toFixed(2)}s
+        </span>
+        <input
+          aria-label="Scene time"
+          className="director-scrub"
+          type="range"
+          min={0}
+          max={durationS}
+          step={1 / 30}
+          value={t}
+          onChange={(e) => scrub(Number(e.target.value))}
+        />
+        <span className="frame-badge">{Math.round(spec?.fps ?? 30)} FPS</span>
+      </div>
+    </section>
+  );
+}

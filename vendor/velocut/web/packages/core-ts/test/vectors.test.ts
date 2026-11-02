@@ -1,0 +1,186 @@
+// Runs the SAME golden vectors as crates/velocut-core/tests/vectors.rs.
+// Any divergence between the Rust and TS engines fails here.
+// Run: node --experimental-strip-types --test packages/core-ts/test/vectors.test.ts
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { TsEngine } from '../src/engine.ts';
+import type { Command, VDocument } from '@velocut/protocol';
+import { validateCommand } from '@velocut/protocol';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const vectorsDir = join(here, '../../../../protocol/vectors');
+
+type Step =
+  | { apply: Command }
+  | { applyErr: { cmd: Command; code: string } }
+  | { load: unknown }
+  | { undo: true }
+  | { redo: true }
+  | { applySpec: { command: Record<string, unknown>; repeat: string; count: number } }
+  | { reload: true };
+
+interface Vector {
+  name: string;
+  steps: Step[];
+  expect: {
+    generationSlots?:Array<Record<string,unknown>>;
+    /** spec: string = exact match; null = must be ABSENT from the asset. */
+    assets?: Array<{ id: string; hasAudio?: boolean; spec?: string | null; specRepeat?: { value: string; count: number } }>;
+    clips?: Array<{
+      id: string;
+      trackId?: string;
+      startUs?: number;
+      durationUs?: number;
+      sourceInUs?: number;
+      speed?: number;
+      data?: Record<string, unknown>;
+    }>;
+    clipCounts?: Record<string, number>;
+    eval?: Array<{
+      pendingGenerationIds?:string[];
+      timeUs: number;
+      layers?: Array<{ clipId: string; sourceTimeUs?: number; opacity?: number; x?: number }>;
+      audio?: Array<{ clipId: string; gain?: number; sourceTimeUs?: number }>;
+    }>;
+  };
+}
+
+const approx = (a: number, b: number) => Math.abs(a - b) < 1e-3;
+function partial(actual:any,expected:any):void {if(Array.isArray(expected)){assert.equal(actual.length,expected.length);expected.forEach((v,i)=>partial(actual[i],v));}else if(expected&&typeof expected==='object'){for(const [k,v]of Object.entries(expected))partial(actual[k],v);}else assert.deepEqual(actual,expected);}
+
+function findClip(doc: VDocument, id: string) {
+  for (const track of doc.tracks) {
+    for (const clip of track.clips) {
+      if (clip.id === id) return { trackId: track.id, clip };
+    }
+  }
+  return null;
+}
+
+const files = readdirSync(vectorsDir)
+  .filter((f) => f.endsWith('.json'))
+  .sort();
+
+assert.ok(files.length > 0, 'no vectors found');
+
+for (const file of files) {
+  const vec: Vector = JSON.parse(readFileSync(join(vectorsDir, file), 'utf8'));
+  test(`${file}: ${vec.name}`, () => {
+    const engine = new TsEngine('test', 1920, 1080, 30, 1);
+
+    vec.steps.forEach((step, i) => {
+      if ('applySpec' in step) {
+        const fixture = step.applySpec;
+        const command = { ...fixture.command, spec: JSON.stringify({value:fixture.repeat.repeat(fixture.count)}) } as Command;
+        assert.ok(validateCommand(command).ok, 'protocol accepts the generated large spec');
+        const response = engine.apply(command); assert.ok(response.ok, JSON.stringify(response));
+      } else if ('reload' in step) {
+        assert.ok(engine.load(engine.document()).ok);
+      } else if ('apply' in step) {
+        const resp = engine.apply(step.apply);
+        assert.ok(resp.ok, `step ${i}: expected ok, got ${JSON.stringify(resp)}`);
+      } else if ('applyErr' in step) {
+        const resp = engine.apply(step.applyErr.cmd);
+        assert.ok(!resp.ok, `step ${i}: expected error, got ok`);
+        if (!resp.ok) {
+          assert.equal(resp.error.code, step.applyErr.code, `step ${i}: wrong error code`);
+        }
+      } else if ('load' in step) {
+        const resp = engine.load(step.load as VDocument);
+        assert.ok(resp.ok, `step ${i}: load failed`);
+
+      } else if ('undo' in step) {
+        const resp = engine.undo();
+        assert.ok(resp.ok, `step ${i}: nothing to undo`);
+      } else if ('redo' in step) {
+        const resp = engine.redo();
+        assert.ok(resp.ok, `step ${i}: nothing to redo`);
+      } else {
+        assert.fail(`step ${i}: unknown step ${JSON.stringify(step)}`);
+      }
+    });
+
+    const doc = engine.document();
+
+    for (const want of vec.expect.assets ?? []) {
+      const asset = doc.assets.find((a) => a.id === want.id);
+      assert.ok(asset, `asset ${want.id} not found`);
+      if (want.hasAudio !== undefined)
+        assert.equal(asset!.hasAudio, want.hasAudio, `${want.id} hasAudio`);
+      if (want.specRepeat) assert.equal(JSON.parse(asset!.spec!).value, want.specRepeat.value.repeat(want.specRepeat.count));
+      if (want.spec !== undefined) {
+        if (want.spec === null) assert.ok(asset!.spec == null, `${want.id} spec should be absent`);
+        else assert.equal(asset!.spec, want.spec, `${want.id} spec`);
+      }
+    }
+
+    for (const want of vec.expect.clips ?? []) {
+      const found = findClip(doc, want.id);
+      assert.ok(found, `clip ${want.id} not found`);
+      const { trackId, clip } = found!;
+      if (want.trackId !== undefined) assert.equal(trackId, want.trackId, `${want.id} track`);
+      if (want.startUs !== undefined) assert.equal(clip.startUs, want.startUs, `${want.id} startUs`);
+      if (want.durationUs !== undefined)
+        assert.equal(clip.durationUs, want.durationUs, `${want.id} durationUs`);
+      if (want.sourceInUs !== undefined)
+        assert.equal(clip.sourceInUs, want.sourceInUs, `${want.id} sourceInUs`);
+      for (const [key, expected] of Object.entries(want.data ?? {})) assert.deepEqual((clip as unknown as Record<string, unknown>)[key], expected, `${want.id} ${key}`);
+      if (want.speed !== undefined) assert.ok(approx(clip.speed, want.speed), `${want.id} speed`);
+    }
+
+    if(vec.expect.generationSlots)partial(doc.generationSlots??[],vec.expect.generationSlots);
+    for (const [trackId, count] of Object.entries(vec.expect.clipCounts ?? {})) {
+      const track = doc.tracks.find((t) => t.id === trackId);
+      assert.ok(track, `track ${trackId} not found`);
+      assert.equal(track!.clips.length, count, `clip count on ${trackId}`);
+    }
+
+    for (const evalCase of vec.expect.eval ?? []) {
+      const fg = engine.evaluate(evalCase.timeUs);
+      if(evalCase.pendingGenerationIds)assert.deepEqual(fg.pendingGenerationIds??[],evalCase.pendingGenerationIds);
+      for (const want of evalCase.audio ?? []) {
+        const slice = fg.audio.find((s) => s.clipId === want.clipId);
+        assert.ok(slice, `eval t=${evalCase.timeUs} missing audio slice ${want.clipId}`);
+        if (want.gain !== undefined)
+          assert.ok(
+            approx(slice!.gain, want.gain),
+            `t=${evalCase.timeUs} ${want.clipId} gain: got ${slice!.gain}`,
+          );
+        if (want.sourceTimeUs !== undefined)
+          assert.equal(slice!.sourceTimeUs, want.sourceTimeUs, `t=${evalCase.timeUs} audio sourceTime`);
+      }
+      if (evalCase.audio !== undefined)
+        assert.equal(
+          fg.audio.length,
+          evalCase.audio.length,
+          `eval t=${evalCase.timeUs} audio slice count: got ${JSON.stringify(fg.audio)}`,
+        );
+      if (evalCase.layers === undefined) continue;
+      assert.equal(
+        fg.layers.length,
+        evalCase.layers.length,
+        `eval t=${evalCase.timeUs} layer count: got ${JSON.stringify(fg.layers)}`,
+      );
+      for (const want of evalCase.layers) {
+        const layer = fg.layers.find((l) => l.clipId === want.clipId);
+        assert.ok(layer, `eval t=${evalCase.timeUs} missing layer ${want.clipId}`);
+        if (want.sourceTimeUs !== undefined)
+          assert.equal(layer!.sourceTimeUs, want.sourceTimeUs, `t=${evalCase.timeUs} sourceTime`);
+        if (want.opacity !== undefined)
+          assert.ok(
+            approx(layer!.transform.opacity, want.opacity),
+            `t=${evalCase.timeUs} opacity: got ${layer!.transform.opacity}`,
+          );
+        if (want.x !== undefined)
+          assert.ok(
+            approx(layer!.transform.x, want.x),
+            `t=${evalCase.timeUs} x: got ${layer!.transform.x}`,
+          );
+      }
+    }
+  });
+}

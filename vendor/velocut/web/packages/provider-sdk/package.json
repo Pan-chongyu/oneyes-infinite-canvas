@@ -1,0 +1,54 @@
+{
+  "name": "@velocut/provider-sdk",
+  "version": "0.0.2",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./video": {
+      "types": "./dist/video.d.ts",
+      "import": "./dist/video.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "import": "./dist/catalog.js"
+    },
+    "./declarative": {
+      "types": "./dist/declarative.d.ts",
+      "import": "./dist/declarative.js"
+    },
+    "./presets": {
+      "types": "./dist/presets.d.ts",
+      "import": "./dist/presets.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-sdk.mjs provider-sdk",
+    "prepack": "node ../../scripts/validate-package.mjs"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-ribbi/velocut.git",
+    "directory": "web/packages/provider-sdk"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "yaml": "^2.9.1"
+  }
+}

@@ -1,13 +1,16 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.89",
+  "version": "0.20.90",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
   "license": "MIT",
   "main": "desktop/main.cjs",
   "scripts": {
-    "build": "npm --prefix canvas-agent run build && npm --prefix web run build",
+    "build": "npm --prefix canvas-agent run build && npm --prefix web run build && npm run build:editor",
+    "build:editor": "node scripts/build-editor.mjs",
+    "test:editor": "node web/node_modules/tsx/dist/cli.mjs --tsconfig vendor/velocut/web/apps/editor/tsconfig.json --test vendor/velocut/web/apps/editor/src/services/oneyes-ai.test.ts",
+    "typecheck:editor": "node vendor/velocut/web/node_modules/typescript/bin/tsc -p vendor/velocut/web/apps/editor/tsconfig.json --noUnusedLocals false --noUnusedParameters false",
     "test": "node --test test/*.test.mjs && npm --prefix web run test:oneyes",
     "test:chat": "node scripts/test-agent-chat.mjs",
     "test:ota-ui": "node scripts/test-agent-chat.mjs --updates",

@@ -1,0 +1,526 @@
+// @velocut/agent-sdk — the LLM editing agent.
+//
+// "AI edits the same way you do": the agent's tools call the SAME dispatch /
+// document / evaluate surface that UI gestures and window.velocut use — one
+// command language, one validation path, one undo history.
+//
+// The loop is a manual tool-use loop over the Anthropic Messages API
+// (browser-direct via the official SDK). The transport is injectable so the
+// loop is testable without network access.
+
+import Anthropic from '@anthropic-ai/sdk';
+import type { Command, Envelope, FrameGraph, TimeUs, VDocument } from '@velocut/protocol';
+import { SYSTEM_PROMPT } from './protocol-prompt.ts';
+
+export { SYSTEM_PROMPT };
+
+/** Result of an auto-caption run, surfaced back to the model. */
+export interface CaptionResult {
+  ok: boolean;
+  trackId?: string;
+  count?: number;
+  message?: string;
+}
+
+/** Result of a TTS narration synthesis, surfaced back to the model. */
+export interface SpeakResult {
+  ok: boolean;
+  clipId?: string;
+  trackId?: string;
+  durationUs?: number;
+  atUs?: number;
+  message?: string;
+}
+
+/** Result of a perception (observe) call: a text digest the model reads, plus
+ *  zero or more images fed to its vision, plus structured data. The app layer
+ *  (which owns the renderer + document) produces this; agent-sdk only relays it
+ *  into the tool_result as text + image content blocks. */
+export interface ObserveResult {
+  ok: boolean;
+  summary: string;
+  images: { base64: string; mediaType: string }[];
+  data?: unknown;
+  message?: string;
+}
+
+/** Result of running an editing program (velocut_script): a JSON-serializable
+ *  return value, captured console output, and an error+stack on failure. Kept
+ *  JSON-only so the whole thing crosses an RPC boundary unchanged when the agent
+ *  loop moves to a backend (the script runs wherever the runtime lives). */
+export interface ScriptResult {
+  ok: boolean;
+  result?: unknown;
+  logs?: string[];
+  error?: string;
+}
+
+/** Result of a web research call (velocut_search): a cited answer the model
+ *  reads, plus the sources behind it. JSON-only → RPC-clean. */
+export interface SearchResult {
+  ok: boolean;
+  answer: string;
+  sources: { title: string; url: string }[];
+  message?: string;
+}
+
+/** What the agent needs from the editor — the Store (+ media) satisfies this.
+ *  Every method is JSON-in/JSON-out and may be sync OR async: the in-process
+ *  browser host returns synchronously; an RPC host (agent loop on a backend,
+ *  runtime in the user's browser) returns promises. The loop awaits either way,
+ *  so the SAME agent-sdk runs in-process today and over RPC unchanged. */
+export interface AgentHost {
+  dispatch(cmd: Command): Envelope | Promise<Envelope>;
+  document(): VDocument | Promise<VDocument>;
+  evaluate(timeUs: TimeUs): FrameGraph | Promise<FrameGraph>;
+  /** Speech → caption track. Optional so the loop degrades gracefully when no
+   *  transcriber is wired (the tool then reports it's unavailable). The host
+   *  owns ASR + caption layout so agent-sdk stays free of the render layer. */
+  caption?(opts: {
+    assetId?: string;
+    fontSize?: number;
+    color?: string;
+    /** Whisper language hint, e.g. 'chinese' | 'english'. Undefined = auto. */
+    language?: string;
+  }): Promise<CaptionResult>;
+  /** Perception: render-and-see. The host renders the composite (or a clip /
+   *  raw asset), measures it, and returns images + metrics. Params are opaque
+   *  here — the app owns the observe schema. Optional so the loop degrades when
+   *  no renderer is wired. */
+  observe?(input: Record<string, unknown>): Promise<ObserveResult>;
+  /** Generate spoken narration from text and lay it down as an audio clip.
+   *  The engine knows the clip's exact duration, so sync is structural. Optional
+   *  so the loop degrades when no TTS is wired. */
+  speak?(opts: { text: string; atUs?: number; trackId?: string; language?: string }): Promise<SpeakResult>;
+  /** Run an editing PROGRAM (JS) against the velocut API in one call — the
+   *  general "write a script, run it once" primitive (velocut's analog of a
+   *  shell loop). The host owns execution: it evals the code in the runtime
+   *  realm (the browser today; an RPC stub to the browser when the loop runs on
+   *  a backend) with a `velocut` API in scope, and returns JSON. agent-sdk only
+   *  forwards the code string — it never evals anything itself, so the seam
+   *  stays RPC-clean. Optional so the loop degrades when no runtime is wired. */
+  runScript?(code: string): Promise<ScriptResult>;
+  /** Web research: returns a cited answer + sources. Lets the agent verify facts
+   *  (names, plot order, what's famous) before editing, instead of trusting
+   *  training memory. The host owns the call (a proxied grounded search today),
+   *  JSON in/out → RPC-clean. Optional so the loop degrades when no search wired. */
+  search?(query: string): Promise<SearchResult>;
+}
+
+/** Progress events surfaced to the chat UI as the loop runs.
+ *  text/tool are the non-streaming whole-block events (kept for the fallback
+ *  transport); the *Start/*Delta/error events drive incremental streaming UI.
+ *  All are plain JSON, so onEvent stays an RPC-clean loop→UI progress channel. */
+export type AgentEvent =
+  | { kind: 'text'; text: string }
+  | {
+      kind: 'tool';
+      name: string;
+      input: unknown;
+      ok: boolean;
+      detail: string;
+      /** observe only: the SAME images & structured data the model received, so
+       *  the chat UI can show the human what the agent looked at (base64 strings
+       *  + plain JSON → onEvent stays RPC-clean). Absent for other tools. */
+      images?: { base64: string; mediaType: string }[];
+      data?: unknown;
+    }
+  | { kind: 'textStart' }
+  | { kind: 'textDelta'; delta: string }
+  | { kind: 'thinkingStart' }
+  | { kind: 'thinkingDelta'; delta: string }
+  | { kind: 'toolStart'; name: string; input: unknown }
+  | { kind: 'error'; message: string };
+
+/** The MessageStream returned by client.messages.stream() — derived from the
+ *  SDK type (it isn't re-exported at the package root) so the loop depends only
+ *  on its on('streamEvent')/finalMessage() surface, not an internal path. */
+export type AgentMessageStream = ReturnType<InstanceType<typeof Anthropic>['messages']['stream']>;
+
+export interface AgentTurnOptions {
+  /** Key for the default transport. With auth = 'bearer' it is sent as
+   *  `Authorization: Bearer`; otherwise as Anthropic's native `x-api-key`. */
+  apiKey: string;
+  /** Anthropic-protocol endpoint root. Defaults to the official API; point it
+   *  at any protocol-compatible relay/gateway (LiteLLM, one-api, a corporate
+   *  proxy) to route the agent elsewhere. Ignored when a transport is injected. */
+  baseURL?: string;
+  auth?: 'x-api-key' | 'bearer';
+  model?: string;
+  /** Prior conversation (user/assistant turns incl. tool blocks). */
+  history: Anthropic.MessageParam[];
+  userText: string;
+  host: AgentHost;
+  /** Extra guidance appended to the system prompt — e.g. the render-sdk effect
+   *  registry's docs, so new effects are documented without touching agent-sdk. */
+  systemExtra?: string;
+  onEvent?: (e: AgentEvent) => void;
+  /** Non-streaming transport (injectable for tests; defaults to the Anthropic SDK
+   *  when no streaming transport is wired). */
+  createMessage?: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
+  /** Streaming transport (optional). When present, the loop streams: it relays
+   *  text/thinking deltas to onEvent and awaits finalMessage() for the complete
+   *  content fed back into the tool loop. Both the real-key path
+   *  (client.messages.stream) and the dev path (an Anthropic client pointed at
+   *  the /llm-proxy SSE) return this same MessageStream, so the loop is
+   *  transport- and backend-agnostic (RPC-clean). Omit → falls back to
+   *  createMessage. */
+  createStream?: (params: Anthropic.MessageStreamParams) => AgentMessageStream;
+  maxIterations?: number;
+}
+
+const TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'velocut_apply',
+    description:
+      'Apply one editing command to the document (or an atomic batch via type:"batch"). Returns the engine envelope: on success it carries revision and events (freshly minted ids are in there); on failure, an error code and reason.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'object',
+          description: 'Velocut protocol command JSON, e.g. {"type":"splitClip","clipId":"clip_1","atUs":1500000}',
+        },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'velocut_get_document',
+    description: 'Read the full project document (tracks, clips, assets, nextId, duration). Take a look before making changes.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'velocut_evaluate',
+    description: 'Evaluate the composite manifest FrameGraph (layered picture + audio slices) at a given time, to understand what is on screen at that moment.',
+    input_schema: {
+      type: 'object',
+      properties: { timeUs: { type: 'number', description: 'Time in microseconds' } },
+      required: ['timeUs'],
+    },
+  },
+  {
+    name: 'velocut_observe',
+    description:
+      'See and measure the picture (render-and-see): returns actually rendered composite frame images + numeric readings (brightness/contrast/color temperature/sharpness/vibrance, audio loudness). This is your eyes and ears — look before you act, look again after you change, and decide from the actual picture instead of reading structure alone.\n' +
+      'mode:"scene" observes a 3D scene with source:{assetId}, at in scene-local microseconds, view:shot/front/right/top/perspective, objectId? for focus. Returns image plus evaluated world transforms/bounds and revision. Use front/right/top to verify placement.\n' +
+      'mode:"frame" looks at one instant (returns 1 image + metrics); "contact" is a thumbnail grid (by default one cell per video clip as a storyboard, or sampled across the full duration of source.assetId — used to map a long asset\'s scenes onto a timeline); "scan" returns a metrics-only timeline (per-window loudness/brightness/likely shot-change score), no images, for roughly locating silence gaps, the loudest highlights, and shot cut points; "audio" runs a **fine-grained** (~21ms) analysis of source.assetId\'s raw audio over [from,to], returning precise silence **segments** {startUs,endUs} (clean cut points / dialogue gaps — cut at a segment midpoint so no line gets clipped) and energy **peaks/onsets** (beat matching / locating highlight starts), no images — use scan for coarse localization first, then audio to refine cut points within that window.\n' +
+      '"shots" performs whole-video **shot segmentation** on a video asset (pass {assetId} or {clipId} in source; omitted = first video): returns a list of shot boundaries (each {index,startUs,endUs,keyUs}, all in source time) + a frame-difference curve, no images. Use it to **reason shot by shot** — align cuts/inserts to real cut points (never cut mid-shot), pace by shot length (speed up or trim long shots), and locate "that particular shot". Far more precise than scan\'s coarse shot-change score; the first run is one forward decode (seconds), and results are cached per asset so you can reference them repeatedly.\n' +
+      'Omit source = look at the composite the user sees; {clipId} looks at one clip in isolation; {assetId} looks at the asset\'s raw content (ignoring the timeline).\n' +
+      'metricsOnly:true returns metrics without images (cheap; for the "tweak a parameter → read a number → tweak again" optimization loop). Survey with contact/scan first, then inspect closely with frame; when a number can decide, skip the image.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        camera: { type: 'object', description: 'mode:scene custom inspection camera; does not change the authored shot.', properties: {
+          position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+          target: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+          up: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+          projection: { type: 'string', enum: ['perspective', 'orthographic'] }, fov: { type: 'number' }, height: { type: 'number' },
+        }, required: ['position', 'target'] },
+        view: { type: 'string', enum: ['shot', 'front', 'right', 'top', 'perspective'], description: 'mode:scene construction view; never changes the authored shot camera.' },
+        objectId: { type: 'string', description: 'mode:scene: focus this object or group.' },
+        mode: { type: 'string', enum: ['frame', 'contact', 'scan', 'audio', 'shots', 'scene'], description: 'Observation mode, default frame' },
+        source: {
+          type: 'object',
+          description: 'What to look at; omitted = the composite',
+          properties: {
+            clipId: { type: 'string', description: 'Look at this clip only (isolated from the composite)' },
+            assetId: { type: 'string', description: "Look at the asset's raw content; at/from/to are source times" },
+          },
+        },
+        at: { type: 'number', description: 'frame: the instant to observe (microseconds). Timeline time for the composite, source time with assetId' },
+        from: { type: 'number', description: 'Start of the contact/scan range (microseconds)' },
+        to: { type: 'number', description: 'End of the contact/scan range (microseconds)' },
+        count: { type: 'number', description: 'Number of contact sample cells (≤24) / scan windows (≤120)' },
+        resolution: { type: 'string', enum: ['thumb', 'preview', 'full'], description: 'Resolution; defaults: frame=preview, contact=thumb; use full only when scrutinizing fine detail' },
+        region: {
+          type: 'object',
+          description: 'frame: normalized crop 0~1, zoom into a region (e.g. checking whether a face or a subtitle is sharp)',
+          properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } },
+        },
+        metricsOnly: { type: 'boolean', description: 'Return metrics only, no images (optimization loop)' },
+      },
+    },
+  },
+  {
+    name: 'velocut_tts',
+    description:
+      'Generate narration voice-over: synthesize one line of narration text into speech and lay it down as an audio clip on the "Narration" track. The engine knows the exact duration of the audio (returns durationUs), so audio-visual sync is structural — you never need to align by hand.\n' +
+      'When atUs is omitted, the clip is appended at the end of the Narration track (call once per line and they line up in order). Pass language as "chinese"/"english" to match the text. The first run downloads the voice model (tens of seconds). Returns clipId / durationUs / atUs.\n' +
+      'This is "creation", not "trimming" — for a recap/commentary video, first study the footage (observe) and write the script, then generate narration line by line with velocut_tts, place the shots (clips trimmed from the original) at the matching narration times, and add subtitles with addTextClip.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The narration text for this line' },
+        atUs: { type: 'number', description: 'Placement start (microseconds); omitted = appended at the end of the Narration track' },
+        trackId: { type: 'string', description: 'Target audio track; omitted = automatically use/create the "Narration" track' },
+        language: { type: 'string', description: 'Text language: "chinese" / "english"' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'velocut_transcribe',
+    description:
+      'Automatic speech-to-subtitles: transcribes the speech in an asset and generates a "Captions" text track (bottom-centered, one text clip per sentence, all normal re-editable text). When assetId is omitted, the first asset with audio is picked automatically. The first run downloads the speech model and may take tens of seconds. Returns the generated track id and the subtitle count.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        assetId: { type: 'string', description: 'Asset id; omitted = the first asset with audio is picked automatically' },
+        fontSize: { type: 'number', description: 'Font size (pixels); omitted = adapts to the frame height' },
+        color: { type: 'string', description: 'Text color #RRGGBB, default white' },
+        language: {
+          type: 'string',
+          description:
+            "Language of the speech, so recognition outputs that language (otherwise it auto-detects, and Chinese is often mis-transcribed as English). Pass 'chinese' for Chinese audio, 'english' for English.",
+        },
+      },
+    },
+  },
+  {
+    name: 'velocut_search',
+    description:
+      'Grounded web search: given a question, returns a cited answer + a sources list. Use it to verify facts before acting — people/character names, plot order, who is who, which scene is the famous one, proper nouns, release/version info — instead of writing from training memory (especially for recap/commentary videos, where a narration getting a fact wrong is fatal).\n' +
+      'In the planning phase of a long-to-short cut: understand the footage with observe + verify plot facts with velocut_search, and only write the script after combining both. Make the question as specific as possible (include the title/version/episode). Returns {answer, sources}.',
+    input_schema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'The question to verify; as specific as possible (include qualifiers like title/version/episode)' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'velocut_script',
+    description:
+      'Run an editing program (JavaScript) — complete many editing steps in a single call, i.e. "write a script and run it once". This is your workhorse for batch tasks of dozens of units (long-to-short cuts, mashups, bulk speed changes, beat-synced cutting): instead of dozens of single-step tool calls, plan first with velocut_get_document/velocut_observe, then lay everything down with one script.\n' +
+      'Inside the script you can await the global velocut API:\n' +
+      '• velocut.apply(cmd) → execute one protocol command; returns the engine envelope (on success it carries revision and events; freshly minted ids are in events).\n' +
+      '• await velocut.tts({text, atUs?, trackId?, language}) → generate a narration audio clip; returns {ok, clipId, durationUs, atUs}. Call once per line and use the returned durationUs to size the matching shot/subtitle.\n' +
+      '• await velocut.observe(input) → look at the picture / read metrics; returns {ok, summary, data} (no images inside a script — use the numbers in data).\n' +
+      '• await velocut.motionClip({spec, atUs?, trackId?, name?}) → generate a motion-graphics clip (title card / lower third / animated caption / infographic) from a declarative spec; it lands automatically on the "Graphics" video track. The spec is pure JSON (not code) and is persisted — it reproduces identically after refresh/export.\n' +
+      '  spec = {version:1, durationUs, fps?, width?, height?, background? (full-frame fill color), layers:[…]}. Each layer has animatable transforms: x, y, opacity (0..1), scale (1 = 100%), rotation (degrees), plus optional in/out (seconds, the layer\'s visibility window). Any transform value can be a constant, or a list of keyframes [{t (seconds), v (value), ease?}] (ease takes GSAP names: "none"/"power2.out"/"back.out"/"elastic.out"…, describing the easing of the segment arriving at that keyframe; the value holds before the first and after the last keyframe).\n' +
+      '  Layer types: ①{type:"text", text, size?, weight?, color?, align? ("left"/"center"/"right"), baseline?, maxWidth? (auto-measured line wrapping, CJK supported), lineHeight?, stroke?, strokeWidth?, shadow?:{color,blur?,x?,y?}} ②{type:"rect", w, h, radius?, fill?, stroke?, lineWidth?} ③{type:"ellipse", w, h, fill?, stroke?, lineWidth?} ④{type:"image", src (CORS URL), w?, h?}. Transforms apply translate→rotate→scale around the (x,y) origin; the layer\'s own coordinates are relative to that origin (text draws from the origin; rect/ellipse extend w×h down-right from it). Coordinate system = output resolution (defaults to the full frame w×h; usually read doc.width/height from velocut.document()). Returns {ok, assetId, clipId, trackId, frameCount}.\n' +
+      '  Example: opening title card (fade in + rise over 0.5s, fade out over the final 0.4s): velocut.motionClip({atUs:0, spec:{version:1, durationUs:2_500_000, layers:[{type:"text", text:"Opening Title", size:96, weight:800, color:"#fff", align:"center", x:960, y:[{t:0,v:580},{t:0.5,v:540,ease:"power3.out"}], opacity:[{t:0,v:0},{t:0.5,v:1,ease:"power2.out"},{t:2.1,v:1},{t:2.5,v:0}], shadow:{color:"rgba(0,0,0,.6)",blur:24}}]}}). Animated captions aligned to narration: for each line, take the durationUs from tts and create a motionClip caption with the same atUs/durationUs, with opacity keyframes for the entrance/exit.\n' +
+      '• await velocut.sceneClip({spec, atUs?, trackId?, name?}) → generate a 3D character/scene animation clip (the Scene Director) from a declarative spec; it lands on the "Scenes" video track. Pure JSON like motionClip — persisted, deterministic, re-renders identically on export.\n' +
+      '  spec = {version:1, durationUs, fps?, width?, height?, environment? ("env/stage"/"env/grid"/"env/void"), lighting? ("day"/"night"/"indoor"/"none"), groups?:[…], lights?:[…], models?:{…}, curves?:{…}, characters?:[…], props?:[…], camera?}. World units are METERS (y up, ground y=0).\n' +
+      '  Character: {id, model (registry id), position?:{x?,y?,z?}, rotationY? (degrees; 0 faces +Z, toward the default camera), scale?, actions?:[{clip, start (s), loop?, fade? (cross-fade s, default 0.3)}], gaze?: "camera" | {character: id}}. Each axis / rotationY takes a constant or MotionSpec-style keyframes [{t,v,ease?}]. Actions: action i plays from its start until the next action\'s start (the last runs to the end); walking = play a locomotion clip AND keyframe position at the clip\'s gait speed so feet don\'t skate. gaze turns the HEAD toward the shot camera or another character (clamped, follows movement) — use it for dialogue staging and to-camera beats. morphs?: {name: weight 0..1, constant or keyframed} drives facial expressions (available names per model in sceneAssets, e.g. Surprised: [{t:1,v:0},{t:1.3,v:1}] for a reaction beat).\n' +
+      '  MANNEQUIN (char/mannequin) — the neutral poseable figure, ideal for previz/blocking that later conditions video generation: no animation clips; instead pose?: presetName | {preset?, joints?: {joint: [pitch, yaw, roll] degrees}}. Presets and joint names come from sceneAssets. Each joint axis is constant or KEYFRAMED — a keyframed pose moves (e.g. bow over a second: pose: {joints: {torso: [[{t:0,v:0},{t:1,v:45}], 0, 0]}}). Use an ease (e.g. "power2.inOut") on joint keys so movement doesn\'t look robotic. color? sets the body color (also works on flat-colored GLTF models like char/figure — use it to tell multiple figures apart). gaze and attachTo (handR/handL/head) work as usual. Presets ground themselves (sitting/squat/kneeling already lower the body) — just add the chair/box prop under the figure.\n' +
+      '  Prop: {model, position?, rotationY?, scale?, color?, attachTo?: {character: id, bone?: slot}, points?, depth?}. Primitive models: prop/cube, prop/sphere, prop/pillar, prop/cone, prop/torus (flat ring), prop/hemisphere (dome). PARAMETRIC models — real custom shapes: prop/lathe {points: [[radius,y],…] bottom→top, meters} revolves the profile around Y (vase = [[0.12,0],[0.2,0.1],[0.08,0.5],[0.14,0.7]]; cup, bottle, lampshade); prop/extrude {points: [[x,y],…] a closed outline, depth? meters} extrudes it flat (arrow, star, sign, logo plate) — outline is in the XY plane, extruded along Z, so it stands upright facing the default camera. scale is a number (uniform) or per-axis {x?,y?,z?} — e.g. a lamp post = prop/pillar with scale {x:0.2, y:3, z:0.2}. attachTo parents the prop to a character bone slot (see sceneAssets attach slots, e.g. handR/handL/head) — hand-held items ride the animation; position/scale become bone-local METERS (a hand-held box ≈ scale 0.15, position {0,0,0}). BLOCKOUT: rooms/sets are built from scaled cubes — a wall = prop/cube scale {x:4, y:2.5, z:0.12} positioned at y:1.25; a table = cube {x:1.2, y:0.05, z:0.8} at y:0.75 plus pillar legs. Greybox layouts read perfectly on camera.\n' +
+      '  PHYSICS (per-prop opt-in — DECIDE per beat: if the motion should EMERGE from the world (falling, toppling, bouncing, rolling, scattering, a stack collapsing on impact), give the props physics instead of hand-keyframing arcs; if the motion is choreographed (a prop gliding to a mark, UI-like moves), keep keyframes): prop.physics: "dynamic" | "fixed" | "kinematic" | {type, mass? (kg), restitution? (0..1 bounciness, default 0.3), friction? (default 0.6), velocity?: [x,y,z] m/s, angularVelocity?: [x,y,z] deg/s, startAt? (s — the body holds still until then, for timed beats)}. dynamic = simulated: give a CONSTANT initial position/rotationY (keyframes are rejected — the sim owns its motion; aim with velocity/startAt). fixed = immovable collider (ramp, wall). kinematic = keyframe-driven collider that PUSHES dynamics (moving platform, sweeping bar — this is how keyframed and simulated motion interact). The ground is an automatic collider (except env/void). Characters do NOT collide with physics props. Scene-level tuning: spec.physics: {gravity? m/s², default 9.81}. The simulation is baked deterministically at compile — same spec, same result, scrub/export-safe. Example (a ball smashes a crate tower at 1s): props: 6 cubes stacked at y 0.5/1.5/…, each physics:"dynamic", plus {model:"prop/sphere", position:{x:-8, y:1}, physics:{type:"dynamic", mass:60, velocity:[14,3,0], startAt:1}}.\n' +
+      '  Camera: {fov? (default 40), position?, lookAt?: {x,y,z} | {character: id} (tracks as it moves), roll? (dutch angle, degrees), shake?: {amplitude? (m, ~0.03), rotAmplitude? (deg, ~0.5), frequency? (Hz, ~1.1)} — deterministic handheld wobble}.\n' +
+      '  MULTI-SHOT: instead of one camera, give shots: [{start (s; first must be 0, ascending), camera: {…}}] — a hard CUT happens at each shot\'s start; keyframes inside a shot\'s camera are relative to the shot start. All shots must share one lookAt mode (all points, or all tracking the same character). Prefer shots over manual step keyframes for anything with 2+ camera setups.\n' +
+      '  FIRST call await velocut.sceneAssets() → {doc, manifest}: the registry of character models + their animation clip names (with gait speeds), environments, lighting and props. Use built-in names from this registry or imported model IDs from sceneInspect.spec.models — inventing one fails the compile.\n' +
+      '  Example (robot walks in and waves, camera pushes in and tracks): velocut.sceneClip({atUs:0, spec:{version:1, durationUs:6_000_000, environment:"env/stage", lighting:"day", characters:[{id:"hero", model:"char/robot", position:{x:[{t:0,v:-4.2},{t:3,v:0,ease:"none"}], z:0}, rotationY:[{t:0,v:90},{t:3,v:90},{t:3.4,v:0}], actions:[{clip:"Walking", start:0},{clip:"Wave", start:3.2, fade:0.4}]}], camera:{position:{x:[{t:0,v:6},{t:6,v:3.5}], y:2, z:[{t:0,v:8},{t:6,v:5.5}]}, lookAt:{character:"hero"}}}}). Returns {ok, assetId, clipId, trackId, frameCount}. Legacy raw editing: read the asset\'s spec (velocut.document(), assets[].spec is the JSON string), modify it, and await velocut.apply({type:"setAssetSpec", assetId, spec: JSON.stringify(updated)}) — one undoable step.\n' +
+      '• Prefer timeline-native generation: await velocut.generation({action:"capabilities"}) discovers configured channels and capabilities; create an addGenerationSlot command with {trackId,startUs,durationUs,request:{channel,model,prompt,ratio?,resolution?,generateAudio?,firstFrameReferenceId?,lastFrameReferenceId?,referenceImageIds?,referenceVideoIds?,referenceAudioIds?,parameters?,input?}}. Slots are editable/undoable and do not call providers. generation({action:"plan",slotId}) reports target/provider duration. captureReference with source {kind:"timeline",timeUs,clipId?} or {kind:"asset",assetId} and expectedRevision saves an immutable local reference (imported images, videos and audio are supported). capabilities includes model parameter fields/defaults and declarative definitions with inputSchema. For declarative models use the complete nested input object; do not flatten values into scalar parameters. submit needs slotId,intentVersion,requestId and uses real provider credits; only submit within an authorized generation request. It returns immediately. Reuse the same requestId after a timeout; get/list tracks persistent jobs without editing. cancel stops local tracking only; resume reuses a saved receipt and never reposts an uncertain submission. registerResult requires jobId,expectedRevision; adopt additionally requires slotId,intentVersion and optionally fit:"sourceDuration" or acceptEarlierIntent:true after review. Adoption registers/replaces atomically, preserving clip ID and effects. Endpoints, keys and raw reference URLs are forbidden. The configured uploader sends the saved first-frame snapshot only when submitting. Closing the project pauses processing until reopened.\n' +
+      '• Legacy convenience API: await velocut.videoGen({prompt, channel?, model?, durationS? (4-15), resolution? ("480p"/"720p"/"1080p"/"4k"), ratio? ("16:9"/"9:16"/"1:1"/…/"adaptive"), generateAudio?, atUs?, trackId?, name?}) → generate an AI video clip via a user-configured provider channel and land it on the "Generated" video track (bytes are downloaded and persisted — it scrubs/exports like imported footage). Returns {ok, assetId, clipId, trackId, atUs, durationUs, cost}. FIRST call velocut.videoGenChannels() → [{id, label, models, defaultModel}] to see what is configured; if empty, tell the user to add a channel in Agent settings → Video generation. COSTS REAL CREDITS per second of video — only call it when the user explicitly asked for AI-generated video, prefer short durations/low resolutions unless told otherwise, and NEVER loop retries on a paid call without the user asking. Generation takes 1-3+ minutes; the await simply takes that long. Reference media from a script must be upload:// handles (below) — raw URLs are rejected.\n' +
+      '• await velocut.sceneSpatial({assetId,timeS?,expectedRevision?,queries}) reads joints (sampled coordinates and geometric residuals), colliders, colliderGeometry (actual paged collision edges), anchors, raycasts, barycentric triangle samples, point distances and three-point angles at one scene/time. Results are world meters/degrees with revision, no full spec or renderer. Call sceneAssets or capabilities name:sceneSpatial for exact query schemas. sceneEdit anchor.set/anchor.remove authors object-local anchors. Use hit.local for a fixed local point, or hit.surfaceAnchor for a live attachment. Persist it with anchor.set, then compose binding.create/update/remove position/orientation relationships (full grammar in sceneAssets). Verified native geometry.patch edits preserve unrelated face attachments; full replacement/reindexing stays strict. sceneSpatial anchorRepair queries preview face-order or explicit-ray repairs; commit candidate.edit with sceneEdit expectedRevision. Inspect orientationChanged/windingReversed before committing; binding IDs and motion are retained. Existing owned-field animation needs motion.referenceTimeS. Query sceneBindings for definitions and sceneSpatial type:bindings for evaluated status. Physical joints: spec.joints with joint.create/update/remove; query sceneJoints for definitions and sceneSpatial type:joints for sampled state. Seven types, explicit local endpoints, axis/frames, limits and motors are documented in sceneAssets. Closed joint loops are allowed. Joint definitions add constraints, not structural certification. Physics colliders are named shapes on one body; edit with collider.create/update/remove/reset (see sceneAssets for definitions, automatic defaults and convex/mesh restrictions). These primitives do not auto-create assemblies or certify contact.\n' +
+      '• await velocut.sceneInspect({assetId, timeS?}) → {ok, revision, spec, objects:[{id,kind,parentId,position,quaternion,scale,bounds:{min,max,size,center}}]}. World transforms and bounds at timeS (seconds), stable IDs including legacy props.\n' +
+      '• await velocut.sceneEdit({assetId, expectedRevision?, dryRun?, edits:[…]}) → {ok,revision,ready,changedIds,spec} or {ok:false,message}. Preferred scene edit API: validates and compiles BEFORE one undoable commit; ready:true means rendering is attached. Pass the revision from sceneInspect to reject stale edits. Operations: {type:"add",kind:"prop"|"character"|"group"|"light",object:{id,…}}; {type:"update",id,patch:{…},clear?:[fieldNames]}; {type:"duplicate",id,newId,offset?:{x,y,z}} clones descendants; {type:"remove",id,cascade?:true}; {type:"scene",patch:{camera?,shots?,environment?,lighting?,physics?},clear?:["shots"]}. Patch replaces supplied fields (e.g. position or material), clear removes fields. Groups have {id,name?,parentId?,position?,rotationX?,rotationY?,rotationZ?,scale?}; objects use parentId to parent to a group, transforms are LOCAL. Euler XYZ rotations are degrees, each axis constant or keyframed; scale is uniform or {x,y,z}. Props material:{roughness?,metalness?,opacity?} each 0..1, emissive?:"#RRGGBB", emissiveIntensity?:0..100, side?:"front"|"double". Physics props currently must be world-root (no parentId). Use loops in this sandbox to generate arrays of edits, then submit ONE sceneEdit; use the discrete velocut_observe mode:"scene" to SEE the result (script observe only returns numbers).\n' +
+      '• Batch placement: read the doc returned by await sceneAssets() for the full current grammar. sceneEdit supports {type:"duplicateMany",ids,copies:[{prefix,transform?,relative?}],timeS?}: clones roots and descendants into prefix/oldId, remaps internal links and returns copies:[{prefix,rootIds,idMap}] plus createdIds. {type:"transform",ids,transform:{position?:{x?,y?,z?},rotation?:{x?,y?,z?},scale?:number|{x?,y?,z?}},relative?,timeS?} sets supplied parent-local components at timeS (default 0); relative adds positions/Euler degrees and multiplies scales. Retains omitted axes and shifts animation paths. {type:"layout",ids,layout,timeS?} supports line {mode:"line",origin,step}, grid {mode:"grid",origin,columns,spacing:{x,z}}, radial {mode:"radial",center,radius,startAngle?,sweepAngle?,facing?:"keep"|"inward"|"outward"|"tangent",rotationOffset?}. Layouts place origins in ID order within a shared parent frame. Radial 0 is +Z, positive toward +X, default full 360 ring omits duplicate endpoint; arcs include endpoints. No overlapping parent/child selections. Combine edits in ONE sceneEdit for atomicity. dryRun:true compiles without committing, returns preview:true,ready:false and unchanged revision. Several script calls remain separate undo transactions.\n' +
+      '• Resource primitives: query runtimeId first. resources({action:"import",runtimeId,requestId,file}) imports a browser File; a bounded base64/name/mimeType payload is also accepted. MCP uses velocut_import_media with an absolute path. This returns a job, NOT an asset or clip. jobs({action:"get",runtimeId,jobId}) returns data.state/result; list uses offset/limit; cancel may return cancel_requested until work stops. After import succeeds, result.resource.id is the handle. jobs({action:"submit",runtimeId,requestId,task:"media.probe",resourceId}) independently probes metadata; success returns result.probeId, resourceId, metadata. Then ops.registerAsset({resourceId,probeId,name?}) can be used in a document transaction, followed by ops.addClip using ref(registerOperationId,"assetId"). ops.duplicateClip({clipId,trackId?,startUs?}) deep-copies clip properties with fresh clip/effect IDs, defaulting after the source on the same track; destination must be unlocked/non-overlapping. Jobs never auto-insert or auto-register. Limits: 64 MiB/file, 256 MiB imported/pending resources per runtime, 128 retained jobs, 2 running/16 queued; audio probe path max 5 minutes/16 MiB. Job/handle records reset on reload; registered OPFS assets persist.\n' +
+      '• Atomic foundation: await velocut.capabilities({name?:commandType,namespace?:"commands"|"runtime"|"legacy"|"pending"|"effects"}) discovers generated schemas and availability. await velocut.query({kind:"snapshot"}) returns {ok,data:{snapshotId,document},revision,runtimeId}; query kind assets/tracks/clips/generationSlots/sceneObjects supports snapshotId, ids, fields, offset/limit (max 100); clips may filter trackId/assetId/fromUs/toUs (half-open timeline overlap). Scene objects are authored local values; use sceneInspect for world bounds. Pure velocut.ops.<commandType>(args) builds data; velocut.ref(operationId,"clipId"|"trackId"|"assetId"|"leftClipId"|"rightClipId"|"effectId"|"slotId") references an earlier operation result. await velocut.transaction({action:"validate"|"commit",runtimeId,expectedRevision,operations:[{id,command}],requestId?}) stages operations in order and commits once; requestId required for commit only. Results are {ok,data:{state,results,changes},revision,runtimeId}; errors have code/message/outcome. Query status with {action:"status",runtimeId,requestId}; identical retries return recorded results even after undo. Journals last only for the current Store runtime, max 128 requests; never replay a stale-runtime or unknown outcome blindly. No nested batch or generation jobs in this transaction.\n' +
+      '• await velocut.previewSession({rate?,playing?,timeUs?}) reads/controls editor timeline playback. rate is one of 0.25/0.5/1/1.5/2/4 (default 1); timeUs is project microseconds. Returns {ok,state:{rate,playing,timeUs,durationUs}}. These are ephemeral preview settings: no document/history/export changes. Preview audio follows rate with pitch change; authored speed-changed clips retain their existing audio limitation. Director uses its separate directorSession({rate}) setting and scene-local timeS.\n' +
+      '• await velocut.directorSession() → current Director workspace state; await velocut.directorSession({assetId?,open?,objectId?,timeS?,playing?,rate?,view?,mode?,focusId?,camera?,colliderView?,jointView?}) opens/controls the human-visible Director. Pass assetId to open; open:false closes. view:perspective/front/right/top/shot; mode:translate/rotate/scale; objectId selects by stable ID (null deselects); focusId frames an object/group (null frames all); timeS is scene-local seconds. rate is preview speed (0.25/0.5/1/1.5/2/4); resets to 1 when opening a fresh Director session. These are workspace navigation, no document/history edits. camera:{position:[x,y,z],target:[x,y,z],up?,projection?:perspective|orthographic,fov?,height?} sets a free inspection camera (height is orthographic vertical span); manual orbit/pan is readable through the same session camera. Pass the camera to velocut_observe mode:scene to see that exact view. View/focus preset changes clear the custom camera. jointView:off|selected|all shows joint guides. colliderView:off|selected|all shows actual collider wireframes in the workspace, hidden in shot view. Use sceneEdit to author an actual shot camera.\n' +
+      '• sceneEdit also supports {type:"assembly",id,recipe:{template:"table"|"chair"|"stairs",parameters?:{width,depth,height,thickness,steps}}}. Sizes in meters, steps only for stairs. It creates/reconfigures a group with ordinary editable props; reconfiguring rebuilds generated geometry, preserves custom children and part colors/materials. {type:"array",id,prefix,copies,offset:{x?,y?,z?}} creates 1..100 copies of an object/subtree with names prefix_1… and cumulative local offsets in one transaction.\n' +
+      '• await velocut.sceneArrange({assetId,ids:[objectIds],mode:"ground"|"on"|"align"|"distribute",referenceId?,axis?:"x"|"y"|"z",edge?:"min"|"max"|"center",gap?:meters,start?:meters,timeS?,expectedRevision?,dryRun?}) → same transaction result. distribute packs bounds in ids order along axis, leaving gap meters between edges; start optionally sets the first lower edge; no referenceId. ground puts lower world bounds at y=gap; on centers X/Z and puts the bottom at the reference top plus gap; align matches the selected world-bounds edge on an axis. Uses sampled geometry at timeS, translates keyframe paths in parent-local coordinates. Bounding-box placement, not a contact solver; inspect afterwards for irregular shapes. Do not move overlapping parent/child selections.\n' +
+      '• await velocut.sceneImportModel({assetId,base64,name?,kind?:"prop"|"character",expectedRevision?}) imports a self-contained GLB 2 (max 64 MiB), stores immutable bytes in the project, and atomically registers its model and creates an object. Returns modelId, objectId and animation clip names along with the scene transaction result. Use kind:character for an animated GLB, then edit its actions using the returned exact clip names. sceneInspect.spec.models lists imported models and their clips/bones/morphs; both character and prop model pickers expose them. External buffer/texture URLs are rejected: export embedded GLB from your modeler. The human Director has an Import GLB file picker.\n' +
+      '  SCENE ANIMATION: sceneAssets documents shared spec.curves and atomic curve.create/update/remove edits. Object animation:{timeOffset?,channels?} supports position.x/y/z, rotationX/Y/Z, scale.x/y/z, visible and opacity. Each channel accepts a number, [{t,v,ease?}], or {curveId,timeOffset?,timeScale?,valueScale?,valueOffset?}. Numeric visibility is step 0/1; animated scale can reach zero. Query sceneCurves with assetId; default summaries omit keys, fields:["id","curve"] reads definitions. Share curves across instances and set per-object delays for staggered construction; transform/layout edits retain bindings. Opacity multiplies materials/ancestors; transparent instances use individual draws sharing geometry and return to batches at alpha 1. Delays do not shift skeletal/pose/morph/camera/physics tracks. Read sceneAssets for clock, inheritance and physics details.\n' +
+      '  SHARED GEOMETRY: sceneAssets documents geometry.create/clone/update/patch/remove and resource-backed makeUnique edits; sceneGeometry reads bounded vertex/face/uv pages. Use spec.geometries plus prop/instance geometryId for repeated native meshes; individual object IDs/transforms/colors remain editable. Shared materials use material.create/update/remove and prop.materialId; local color/material fields override the shared definition. Query sceneMaterials, sceneGeometries or sceneBudget with assetId; sceneEdit preflight:true checks structure/budgets without rendering, includeSpec:false keeps bulk replies compact. There is no fixed instance-count limit (sceneLimits.instances:null); there is no fixed manifest byte limit (sceneLimits.specBytes:null); the separate referenced-geometry budget still applies; geometryResources stores immutable file versions, and instance/group transform-only edits reuse renderers; never silently merge or simplify requested parts to bypass a limit.\n' +
+      '  MODELING ADDITIONS: prop/mesh {vertices:[[x,y,z],…],faces:[[a,b,c],…],uvs?:[[u,v],…]} defines editable geometry (3..4096 vertices, 1..8192 non-degenerate triangles, zero-based counter-clockwise indices, optional UV per vertex; no fixed spec byte ceiling). Independent lights are sceneEdit add kind:light with object {id,type:"point"|"spot"|"directional"|"ambient",position?,rotationX/Y/Z?,parentId?,color?,intensity?:constantOrKeys,shadow?}. Point/spot take distance (0=infinite) and decay; spot takes angle (half-angle degrees 0<angle<90) and penumbra 0..1. Spot/directional point down local -Z. Set scene lighting:"none" for only your authored lights. sceneInspect reports evaluated light intensity.\n' +
+      '• await velocut.uploadFrame({timeUs, name?}) / await velocut.uploadClip({clipId, fromS?, maxS?, name?}) / await velocut.uploadAsset({assetId}) → render the composite frame at an instant (PNG) / ONE clip in isolation (mp4, capped ~15s; fromS picks the window\'s start within the clip — reference the action beat, not necessarily the opening) / an imported IMAGE asset\'s original file, and upload it to the user-configured store; returns {ok, handle: "upload://…", durationUs?}. Handles plug into videoGen reference fields: PREVIZ-TO-STYLED-RENDER, the flagship flow — const p = await velocut.uploadClip({clipId: sceneClipId}); then velocut.videoGen({prompt: "cinematic photoreal restyle of this blocking, golden hour", referenceVideoUrls: [p.handle], durationS: 5}) makes the provider follow the 3D previz\'s motion/composition while the prompt drives style. CASTING: combine both — uploadAsset a character photo the user referenced and pass it in referenceImageUrls alongside the previz handle in referenceVideoUrls, with a prompt saying the person in the reference image performs the reference video\'s motion — the provider replaces the mannequin with that character. uploadFrame handles work as firstFrameUrl/lastFrameUrl (first/last-frame conditioning). Requires upload storage configured in Agent settings; if it errors as unconfigured, tell the user. Uploads publish the rendered media to the user\'s own store — mention it in your summary.\n' +
+      '• velocut.evaluate(timeUs) → evaluate the composite manifest at an instant; velocut.document() → read the full document.\n' +
+      'Loops/conditionals/computing the next step from the previous return value are all supported. Typical pattern (laying down a long-to-short cut in one pass): keep a time cursor T; for each unit { const r = await velocut.tts({text, atUs:T, language:"chinese"}); velocut.apply(add the shot at startUs:T with duration r.durationUs and its source offset…); velocut.apply(add the subtitle bar at the same T and duration); T += r.durationUs; }.\n' +
+      'return a JSON value as the result (e.g. {units, totalUs}); console.log output inside the script is sent back to you; a thrown error comes back with message + stack — fix and re-run. Command field names follow the document structure seen via velocut_get_document and the command reference.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'JavaScript source. Top-level await is allowed; use return to produce a JSON-serializable result. Pure helpers: velocut.ops and velocut.ref. Globals: velocut (capabilities/query/transaction/resources/jobs/generation/apply/tts/observe/motionClip/sceneClip/sceneAssets/sceneEdit/sceneArrange/sceneImportModel/sceneInspect/directorSession/previewSession/videoGen/videoGenChannels/uploadFrame/uploadClip/uploadAsset/evaluate/document/seek) and console.',
+        },
+      },
+      required: ['code'],
+    },
+  },
+];
+
+/** tool_result content: text for most tools, or text+image blocks for observe. */
+type ToolContent = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>;
+
+async function executeTool(
+  host: AgentHost,
+  name: string,
+  input: unknown,
+): Promise<{
+  ok: boolean;
+  content: ToolContent;
+  summary: string;
+  /** observe only — relayed verbatim into the tool event for the chat UI. */
+  images?: { base64: string; mediaType: string }[];
+  data?: unknown;
+}> {
+  const text = (ok: boolean, result: string) => ({ ok, content: result, summary: result });
+  try {
+    switch (name) {
+      case 'velocut_apply': {
+        const cmd = (input as { command: Command }).command;
+        const resp = await host.dispatch(cmd);
+        return text(resp.ok, JSON.stringify(resp));
+      }
+      case 'velocut_get_document':
+        return text(true, JSON.stringify(await host.document()));
+      case 'velocut_evaluate': {
+        const t = Math.round((input as { timeUs: number }).timeUs);
+        return text(true, JSON.stringify(await host.evaluate(t)));
+      }
+      case 'velocut_observe': {
+        if (!host.observe) return text(false, 'Observe capability not wired (no renderer)');
+        const r = await host.observe((input ?? {}) as Record<string, unknown>);
+        const digest = r.summary + (r.data ? '\n' + JSON.stringify(r.data) : '') + (r.message ? '\n' + r.message : '');
+        const blocks: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam> = [{ type: 'text', text: digest }];
+        for (const img of r.images) {
+          blocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: img.mediaType as 'image/jpeg', data: img.base64 },
+          });
+        }
+        // Relay the same images & data to the chat UI so the human sees exactly
+        // what the agent saw (the model already got them in `blocks`).
+        return { ok: r.ok, content: blocks, summary: r.summary, images: r.images, data: r.data };
+      }
+      case 'velocut_tts': {
+        if (!host.speak) return text(false, 'TTS capability not wired (no speech synthesizer)');
+        const r = await host.speak((input ?? {}) as { text: string; atUs?: number; trackId?: string; language?: string });
+        return text(r.ok, JSON.stringify(r));
+      }
+      case 'velocut_transcribe': {
+        if (!host.caption) return text(false, 'Transcription capability not wired (no transcriber)');
+        const r = await host.caption(
+          (input ?? {}) as { assetId?: string; fontSize?: number; color?: string; language?: string },
+        );
+        return text(r.ok, JSON.stringify(r));
+      }
+      case 'velocut_search': {
+        if (!host.search) return text(false, 'Web search capability not wired (no search backend)');
+        const r = await host.search((input as { query: string }).query);
+        if (!r.ok) return text(false, r.message ?? 'Search failed');
+        const src = r.sources.length ? '\nSources: ' + r.sources.map((s) => `${s.title || s.url}`).join('; ') : '';
+        return { ok: true, content: r.answer + src, summary: r.answer.slice(0, 80) };
+      }
+      case 'velocut_script': {
+        if (!host.runScript) return text(false, 'Script execution capability not wired (no runtime)');
+        const r = await host.runScript((input as { code: string }).code);
+        // JSON in/out: result + logs the model reads, error+stack on failure.
+        const digest = JSON.stringify({ ok: r.ok, result: r.result, logs: r.logs, error: r.error });
+        return { ok: r.ok, content: digest, summary: r.error ? `Script error: ${r.error.split('\n')[0]}` : 'Script completed' };
+      }
+      default:
+        return text(false, `unknown tool: ${name}`);
+    }
+  } catch (e) {
+    return text(false, String(e instanceof Error ? e.message : e));
+  }
+}
+
+/**
+ * Run one user turn through the agent loop. Returns the new history
+ * (caller keeps it for the next turn).
+ */
+export async function runAgentTurn(opts: AgentTurnOptions): Promise<Anthropic.MessageParam[]> {
+  const model = opts.model ?? 'claude-opus-4-8';
+  // One default Anthropic client for the real-key path — built only when NO
+  // transport is injected. Tests inject createMessage (non-streaming); the dev
+  // app injects createStream (the proxy SSE). With nothing injected we have a
+  // real key, so we stream by default.
+  const client =
+    !opts.createMessage && !opts.createStream
+      ? new Anthropic({
+          // 'bearer' routes the key through Authorization (gateway convention);
+          // the SDK's apiKey field is Anthropic's native x-api-key header.
+          apiKey: opts.auth === 'bearer' ? null : opts.apiKey,
+          authToken: opts.auth === 'bearer' ? opts.apiKey : null,
+          baseURL: opts.baseURL,
+          dangerouslyAllowBrowser: true,
+        })
+      : null;
+  const createStream =
+    opts.createStream ?? (client ? (p: Anthropic.MessageStreamParams) => client.messages.stream(p) : undefined);
+  const createMessage =
+    opts.createMessage ?? (client ? (p: Anthropic.MessageCreateParamsNonStreaming) => client.messages.create(p) : undefined);
+
+  const messages: Anthropic.MessageParam[] = [...opts.history, { role: 'user', content: opts.userText }];
+  const maxIterations = opts.maxIterations ?? 24;
+  const system = opts.systemExtra ? `${SYSTEM_PROMPT}\n\n${opts.systemExtra}` : SYSTEM_PROMPT;
+
+  for (let i = 0; i < maxIterations; i++) {
+    const params: Anthropic.MessageStreamParams = {
+      model,
+      max_tokens: 16000,
+      thinking: { type: 'adaptive' },
+      system,
+      tools: TOOLS,
+      messages,
+    };
+
+    let response: Anthropic.Message;
+    if (createStream) {
+      // Streaming: relay text/thinking deltas to the UI as they arrive; the SDK
+      // accumulates the full message (thinking signatures + tool_use inputs are
+      // assembled internally), so the response below is byte-identical to the
+      // non-streaming path and the tool loop is unchanged.
+      try {
+        const stream = createStream(params);
+        stream.on('streamEvent', (ev: Anthropic.MessageStreamEvent) => {
+          if (ev.type === 'content_block_start') {
+            if (ev.content_block.type === 'text') opts.onEvent?.({ kind: 'textStart' });
+            else if (ev.content_block.type === 'thinking') opts.onEvent?.({ kind: 'thinkingStart' });
+          } else if (ev.type === 'content_block_delta') {
+            if (ev.delta.type === 'text_delta') opts.onEvent?.({ kind: 'textDelta', delta: ev.delta.text });
+            else if (ev.delta.type === 'thinking_delta')
+              opts.onEvent?.({ kind: 'thinkingDelta', delta: ev.delta.thinking });
+            // input_json_delta is intentionally not surfaced — the tool input is
+            // only complete (and safe to execute) after finalMessage().
+          }
+        });
+        response = await stream.finalMessage();
+      } catch (e) {
+        // A mid-stream upstream error / abort: report it and stop the turn.
+        // Do NOT push a half-streamed assistant block into messages (it would
+        // make the next request invalid).
+        opts.onEvent?.({ kind: 'error', message: String(e instanceof Error ? e.message : e) });
+        break;
+      }
+    } else if (createMessage) {
+      response = await createMessage(params as Anthropic.MessageCreateParamsNonStreaming);
+    } else {
+      throw new Error('runAgentTurn: no transport (provide apiKey, createStream, or createMessage)');
+    }
+
+    // Echo the assistant turn back verbatim — thinking blocks (with
+    // signatures) and tool_use blocks must be preserved.
+    messages.push({ role: 'assistant', content: response.content });
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of response.content) {
+      if (block.type === 'text' && block.text.trim()) {
+        // Streaming already surfaced this text via textDelta; only the
+        // non-streaming fallback needs the whole-block text event.
+        if (!createStream) opts.onEvent?.({ kind: 'text', text: block.text });
+      } else if (block.type === 'tool_use') {
+        opts.onEvent?.({ kind: 'toolStart', name: block.name, input: block.input });
+        const { ok, content, summary, images, data } = await executeTool(opts.host, block.name, block.input);
+        opts.onEvent?.({ kind: 'tool', name: block.name, input: block.input, ok, detail: summary, images, data });
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content,
+          is_error: !ok || undefined,
+        });
+      }
+    }
+
+    if (response.stop_reason !== 'tool_use' || toolResults.length === 0) break;
+    messages.push({ role: 'user', content: toolResults });
+  }
+
+  return messages;
+}

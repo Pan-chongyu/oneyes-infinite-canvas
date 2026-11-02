@@ -1,0 +1,326 @@
+import {declarativeChannels} from './declarative-models';
+import {modelPreset,parameterDefaults,type ModelSettings} from '@velocut/provider-sdk/catalog';
+// services/videogen.ts — AI video generation: channel configuration + the
+// generate-and-land pipeline.
+//
+// Configuration mirrors services/llm.ts (BYOK): channels live only in this
+// browser's localStorage; each channel is {kind, baseUrl, apiKey, models} —
+// the protocol implementation (kind) comes from render-sdk's provider
+// registry, so channels speaking the same protocol differ only by data.
+//
+// Security invariants (SECURITY.md): provider calls happen HOST-side only.
+// A sandboxed script can name a configured channel id and a model — never a
+// base URL, key, or reference-media URL — so prompt-injected code cannot
+// point the host at an attacker endpoint or exfiltrate via provider-side
+// URL fetches. The full surface (reference URLs) is reserved for the user
+// paths: window.velocut.videoGen and the settings UI.
+
+import { createVideoGen, videoGenProviders, type MediaLibrary, type VideoGenRequest,type VideoModelCapabilities } from '@velocut/render-sdk';
+import { saveMedia } from '@velocut/collab-sdk';
+import type { Store } from '../state/store';
+import { activeStorage } from './projects';
+import { resolveUploadHandle } from './upload';
+
+export interface VideoGenChannel {
+  /** User-chosen channel id (what scripts/agents name), e.g. 'my-relay'. */
+  id: string;
+  label?: string;
+  /** Protocol implementation id from the render-sdk registry. */
+  kind: string;
+  baseUrl: string;
+  apiKey: string;
+  /** Model ids this channel offers (advertised to the agent). */
+  models: string[];
+  defaultModel?: string;
+  capabilities?:Record<string,VideoModelCapabilities>;
+  modelSettings?:Record<string,ModelSettings>;
+}
+
+export interface VideoGenConfig {
+  channels: VideoGenChannel[];
+}
+
+const STORAGE = 'velocut.videogen';
+
+export function parseVideoCapabilities(value:unknown):Record<string,VideoModelCapabilities>{
+  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Model capabilities must be an object keyed by model ID');
+  return Object.fromEntries(Object.entries(value).map(([model,v])=>{
+    if(!v||typeof v!=='object'||Array.isArray(v))throw Error(`Invalid capabilities for ${model}`);
+    const p=v as Record<string,unknown>,out:VideoModelCapabilities={};
+    if(Object.keys(p).some(k=>!['durationsS','ratios','resolutions','imageToVideo','audio'].includes(k)))throw Error(`Unknown model capability field for ${model}`);
+    if(p.durationsS!==undefined){if(!Array.isArray(p.durationsS)||!p.durationsS.length||p.durationsS.some(v=>typeof v!=='number'||!Number.isFinite(v)||v<=0))throw Error('durationsS must contain positive seconds');out.durationsS=p.durationsS;}
+    for(const k of ['ratios','resolutions'] as const)if(p[k]!==undefined){if(!Array.isArray(p[k])||!p[k].length||p[k].some(v=>typeof v!=='string'||!v))throw Error(`${k} must contain strings`);out[k]=p[k] as string[];}
+    for(const k of ['imageToVideo','audio'] as const)if(p[k]!==undefined){if(typeof p[k]!=='boolean')throw Error(`${k} must be boolean`);out[k]=p[k];}
+    return [model,out];
+  }));
+}
+
+export function loadVideoGenConfig(): VideoGenConfig {
+  try {
+    const raw = localStorage.getItem(STORAGE);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<VideoGenConfig>;
+      const channels = Array.isArray(parsed.channels) ? parsed.channels : [];
+      return {
+        channels: [...declarativeChannels(),...channels
+          .filter((c): c is VideoGenChannel => Boolean(c && typeof c.id === 'string' && typeof c.baseUrl === 'string'))
+          .map((c) => {
+            let capabilities:VideoGenChannel["capabilities"];
+            try{if(c.capabilities!==undefined)capabilities=parseVideoCapabilities(c.capabilities);}catch{/* Preserve the channel when optional constraints are malformed. */}
+            return ({
+            ...c,
+            kind: c.kind || 'task-api',
+            models: Array.isArray(c.models) ? c.models.filter((m) => typeof m === 'string') : [],
+            modelSettings:c.modelSettings,
+            capabilities:Object.fromEntries([...new Set([...Object.keys(c.modelSettings??{}),...Object.keys(capabilities??{})])].map(id=>[id,{...modelPreset(c.modelSettings?.[id]?.presetId)?.capabilities,...c.modelSettings?.[id]?.capabilities,...capabilities?.[id]}])),
+          });})],
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { channels: declarativeChannels() };
+}
+
+export function saveVideoGenConfig(cfg: VideoGenConfig): void {
+  localStorage.setItem(STORAGE, JSON.stringify(cfg));window.dispatchEvent(new Event('velocut-models-changed'));
+}
+
+/** The channel surface safe to show an agent/script: no URLs, no keys. */
+export function describeVideoGenChannels(): Array<{ id: string; label?: string; models: string[]; defaultModel?: string }> {
+  return loadVideoGenConfig().channels.map((c) => ({
+    id: c.id,
+    label: c.label,
+    models: c.models,
+    defaultModel: c.defaultModel,
+  }));
+}
+
+/** Probe a channel with a zero-cost request (query a bogus task id): one round
+ *  trip verifies URL, CORS and auth. A structured 404 means everything up to
+ *  authorization works; 401/403 isolates a bad key. */
+export async function testVideoGenChannel(ch: VideoGenChannel): Promise<{ ok: boolean; message: string }> {
+  const url = `${ch.baseUrl.replace(/\/+$/, '')}/api/v1/tasks/00000000-0000-0000-0000-000000000000`;
+  try {
+    const r = await fetch(url, { headers: { authorization: `Bearer ${ch.apiKey}` } });
+    if (r.status === 401 || r.status === 403) return { ok: false, message: `HTTP ${r.status}: the API key was rejected.` };
+    if (r.status === 404 || r.ok) return { ok: true, message: 'Connected — endpoint and key accepted.' };
+    return { ok: false, message: `HTTP ${r.status}: ${(await r.text()).slice(0, 200)}` };
+  } catch (e) {
+    return {
+      ok: false,
+      message: `${String(e instanceof Error ? e.message : e)} — check the URL, and that the endpoint allows browser (CORS) requests. In dev, the local proxy button routes around CORS.`,
+    };
+  }
+}
+
+export interface VideoGenClipOptions {
+  prompt: string;
+  /** Configured channel id (defaults to the first channel). */
+  channel?: string;
+  /** Model id (defaults to the channel's defaultModel, then its first model). */
+  model?: string;
+  durationS?: number;
+  resolution?: string;
+  ratio?: string;
+  generateAudio?: boolean;
+  firstFrameUrl?: string;
+  lastFrameUrl?: string;
+  referenceImageUrls?: string[];
+  referenceVideoUrls?: string[];
+  referenceAudioUrls?:string[];
+  parameters?:Record<string,string|number|boolean>;
+  /** Timeline placement (defaults to appending on the Generated track). */
+  atUs?: number;
+  trackId?: string;
+  name?: string;
+  onStatus?: (status: string, elapsedS: number) => void;
+  signal?: AbortSignal;
+}
+
+const REF_FIELDS = ['firstFrameUrl', 'lastFrameUrl', 'referenceImageUrls', 'referenceVideoUrls','referenceAudioUrls'] as const;
+
+/** The sandbox-restricted videoGen entry (ScriptApi.videoGen): channel id +
+ *  model + prompt, and reference media ONLY as upload:// handles minted by
+ *  the host's uploadFrame/uploadClip — never raw URLs, so prompt-injected
+ *  programs cannot make the provider fetch attacker endpoints or steer
+ *  conditioning media beyond what the host itself rendered and uploaded.
+ *  Shared by both script hosts (window.velocut.script + the agent). */
+export function sandboxVideoGen(store: Store, media: MediaLibrary): (o: unknown) => Promise<VideoGenClipResult> {
+  return (o) => {
+    const opts = (o ?? {}) as Record<string, unknown>;
+    for (const k of REF_FIELDS) {
+      const vals = opts[k] == null ? [] : Array.isArray(opts[k]) ? (opts[k] as unknown[]) : [opts[k]];
+      const raw = vals.find((v) => typeof v !== 'string' || !v.startsWith('upload://'));
+      if (raw != null) {
+        return Promise.resolve({
+          ok: false,
+          message: `videoGen: '${k}' only accepts upload:// handles from velocut.uploadFrame/uploadClip in a sandboxed script (got '${String(raw).slice(0, 60)}'). Raw URLs are user-configured paths only.`,
+        });
+      }
+    }
+    return generateVideoClip(store, media, opts as unknown as VideoGenClipOptions);
+  };
+}
+
+export interface VideoGenClipResult {
+  ok: boolean;
+  assetId?: string;
+  clipId?: string;
+  trackId?: string;
+  atUs?: number;
+  durationUs?: number;
+  /** Credits the channel reported charging. */
+  cost?: number;
+  message?: string;
+}
+
+/** When the channel is reached through the dev CORS proxy
+ *  (/videogen-proxy/<host>/…), route another absolute URL (the result CDN)
+ *  through the same proxy — its CORS policy is as unknown as the API's. */
+function proxiedUrl(channelBase: string, absoluteUrl: string): string {
+  const m = channelBase.match(/^(https?:\/\/[^/]+)\/videogen-proxy\//);
+  if (!m) return absoluteUrl;
+  try {
+    const u = new URL(absoluteUrl);
+    return `${m[1]}/videogen-proxy/${u.host}${u.pathname}${u.search}`;
+  } catch {
+    return absoluteUrl;
+  }
+}
+
+/**
+ * Generate a video and land it as a normal video asset + clip: download the
+ * (short-lived) result URL immediately, persist bytes to OPFS, probe, and
+ * place on the "Generated" video track — so it scrubs, exports and undoes
+ * like imported footage. Shared by window.velocut.videoGen and the sandbox
+ * RPC (which pre-filters URL options).
+ */
+export async function generateVideoClip(store: Store, media: MediaLibrary, opts: VideoGenClipOptions): Promise<VideoGenClipResult> {
+  const cfg = loadVideoGenConfig();
+  const ch = opts.channel ? cfg.channels.find((c) => c.id === opts.channel) : cfg.channels[0];
+  if (!ch) {
+    const have = cfg.channels.map((c) => c.id).join(', ') || 'none configured';
+    return { ok: false, message: `videoGen: unknown channel '${opts.channel ?? ''}' (configured channels: ${have}). Open Agent settings → Video generation to add one.` };
+  }
+  if (!ch.apiKey) return { ok: false, message: `videoGen: channel '${ch.id}' has no API key configured.` };
+  const model = opts.model ?? ch.defaultModel ?? ch.models[0];
+  if (!model) return { ok: false, message: `videoGen: channel '${ch.id}' has no models configured and none was requested.` };
+  if (ch.models.length && !ch.models.includes(model)) {
+    return { ok: false, message: `videoGen: model '${model}' is not offered by channel '${ch.id}' (available: ${ch.models.join(', ')})` };
+  }
+
+  let gen;
+  try {
+    gen = createVideoGen(ch.kind, { baseUrl: ch.baseUrl, apiKey: ch.apiKey,modelSettings:ch.modelSettings?.[model] });
+  } catch (e) {
+    const kinds = videoGenProviders().map((k) => k.id).join(', ');
+    return { ok: false, message: `videoGen: ${e instanceof Error ? e.message : String(e)} (registered kinds: ${kinds})` };
+  }
+
+  // Reference media accepts upload:// handles (minted by uploadFrame/
+  // uploadClip) alongside raw URLs — resolve them to the real store URLs
+  // here, failing loudly on a stale/unknown handle.
+  const deref = (v: string): string => {
+    if (!v.startsWith('upload://')) return v;
+    const real = resolveUploadHandle(v);
+    if (!real) throw new Error(`videoGen: unknown upload handle '${v}' — handles come from uploadFrame/uploadClip in THIS session`);
+    return real;
+  };
+  let refs: Pick<VideoGenRequest, 'firstFrameUrl' | 'lastFrameUrl' | 'referenceImageUrls' | 'referenceVideoUrls' | 'referenceAudioUrls'>;
+  try {
+    refs = {
+      firstFrameUrl: opts.firstFrameUrl && deref(opts.firstFrameUrl),
+      lastFrameUrl: opts.lastFrameUrl && deref(opts.lastFrameUrl),
+      referenceImageUrls: opts.referenceImageUrls?.map(deref),
+      referenceVideoUrls: opts.referenceVideoUrls?.map(deref),
+      referenceAudioUrls:opts.referenceAudioUrls?.map(deref),
+    };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+
+  const {ratio,resolution,generateAudio,...parameters}=parameterDefaults(ch.modelSettings?.[model]);
+  const req: VideoGenRequest = {
+    model,
+    prompt: opts.prompt,
+    durationS: opts.durationS,
+    resolution: opts.resolution??(typeof resolution==='string'?resolution:undefined),
+    ratio: opts.ratio??(typeof ratio==='string'?ratio:undefined),
+    generateAudio: opts.generateAudio??(typeof generateAudio==='boolean'?generateAudio:undefined),
+    parameters:{...parameters,...opts.parameters},
+    ...refs,
+    onStatus: opts.onStatus,
+    signal: opts.signal,
+  };
+
+  let result;
+  try {
+    result = await gen.generate(req);
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+
+  // Download NOW — result URLs are typically valid for 24h only.
+  let file: File;
+  try {
+    let resp = await fetch(result.videoUrl, { signal: opts.signal }).catch(() => null);
+    if (!resp?.ok) {
+      const viaProxy = proxiedUrl(ch.baseUrl, result.videoUrl);
+      if (viaProxy !== result.videoUrl) resp = await fetch(viaProxy, { signal: opts.signal });
+    }
+    if (!resp?.ok) return { ok: false, message: `videoGen: generated, but downloading the video failed (HTTP ${resp?.status ?? 'network/CORS error'}). URL: ${result.videoUrl}` };
+    const blob = await resp.blob();
+    const base = (opts.name ?? `${model} ${opts.prompt.slice(0, 24)}`).replace(/[\\/:*?"<>|]/g, ' ').trim();
+    file = new File([blob], `${base}.mp4`, { type: blob.type || 'video/mp4' });
+  } catch (e) {
+    return { ok: false, message: `videoGen: download failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  // Same landing path as imported footage (Toolbar.importFiles).
+  const src = await saveMedia(file, activeStorage().mediaDir).catch(() => `local://${file.name}`);
+  const source = await media.probeVideo(file);
+  const p = source.probe();
+
+  let trackId = opts.trackId;
+  if (!trackId) {
+    const existing = store.getState().doc.tracks.find((t) => t.kind === 'video' && t.name === 'Generated');
+    if (existing) trackId = existing.id;
+    else {
+      const r = store.dispatch({ type: 'addTrack', kind: 'video', name: 'Generated' });
+      const ev = r.ok ? r.events.find((e) => e.kind === 'trackAdded') : undefined;
+      trackId = ev?.kind === 'trackAdded' ? ev.trackId : undefined;
+    }
+  }
+  if (!trackId) return { ok: false, message: 'videoGen: failed to create the Generated track.' };
+  const track = store.getState().doc.tracks.find((t) => t.id === trackId);
+  const atUs = opts.atUs ?? Math.max(0, ...(track?.clips.map((c) => c.startUs + c.durationUs) ?? [0]));
+
+  const aResp = store.dispatch({
+    type: 'addAsset',
+    kind: 'video',
+    src,
+    name: opts.name ?? file.name.replace(/\.mp4$/, ''),
+    durationUs: p.durationUs,
+    width: p.width,
+    height: p.height,
+    hasAudio: p.hasAudio,
+  });
+  const aEv = aResp.ok ? aResp.events.find((e) => e.kind === 'assetAdded') : undefined;
+  const assetId = aEv?.kind === 'assetAdded' ? aEv.assetId : undefined;
+  if (!assetId) return { ok: false, message: 'videoGen: failed to register the video asset.' };
+  media.attachVideo(assetId, source, file);
+
+  const cResp = store.dispatch({ type: 'addClip', trackId, assetId, startUs: atUs, durationUs: p.durationUs });
+  if (!cResp.ok) return { ok: false, message: `videoGen: failed to place the clip: ${cResp.error?.message ?? ''}` };
+  const cEv = cResp.events.find((e) => e.kind === 'clipAdded');
+  return {
+    ok: true,
+    assetId,
+    clipId: cEv?.kind === 'clipAdded' ? cEv.clipId : undefined,
+    trackId,
+    atUs,
+    durationUs: p.durationUs,
+    cost: result.cost,
+  };
+}

@@ -1,0 +1,357 @@
+// state/history.ts — a branching edit history (git-style).
+//
+// Every successful command becomes a node whose snapshot is the document AFTER
+// it ran. Nodes form a tree: jumping back to an earlier node and editing again
+// spawns a NEW child (a branch) without destroying the path you left — so no
+// history is ever lost, and any node can be checked out and continued from.
+//
+// This lives at the store layer (not the engine): the engine stays a pure
+// reducer, and the store drives undo/redo/jump by loading a node's snapshot.
+// Each node also records WHO made the edit (a human peer or the AI) so the
+// history board can attribute every change.
+
+import type { Command, VDocument } from '@velocut/protocol';
+import { CURRENT_FORMAT_VERSION, migrateDocumentOrThrow } from '@velocut/protocol';
+
+export interface Actor {
+  kind: 'user' | 'ai';
+  /** Stable per-browser peer id (persisted). */
+  peerId: string;
+  /** Editable display name. */
+  name: string;
+  /** For ai edits: the model that produced them. */
+  model?: string;
+}
+
+export interface HistoryNode {
+  id: string;
+  parentId: string | null;
+  /** Wall-clock ms. */
+  ts: number;
+  actor: Actor;
+  /** null only for the root. */
+  command: Command | null;
+  /** Human-readable one-liner. */
+  label: string;
+  /** For ai edits: the chat turn that triggered this (for grouping). */
+  prompt?: string;
+  /** Document state immediately AFTER this command (KB-scale). */
+  snapshot: VDocument;
+}
+
+export interface HistorySerialized {
+  /** Persisted-document format version of the snapshots (see @velocut/protocol
+   *  migrate.ts). Absent in pre-versioning data → treated as v1. */
+  formatVersion?: number;
+  nodes: HistoryNode[];
+  rootId: string;
+  headId: string;
+  seq: number;
+}
+
+/** Storage-only encoding; public snapshots and serialize() remain ordinary documents. */
+export interface CompactHistorySerialized extends Omit<HistorySerialized, 'nodes'> {
+  historyEncoding: 'spec-table-v1';
+  specs: string[];
+  nodes: unknown[];
+}
+
+function mapCommandSpecs(value: unknown, map: (value: unknown) => unknown, depth = 0): unknown {
+  if (depth > 32) throw new Error('history command nesting exceeds limit');
+  if (!value || typeof value !== 'object') return value;
+  const c = value as Record<string, unknown>;
+  if (c.type === 'batch' && Array.isArray(c.commands)) return { ...c, commands: c.commands.map(x => mapCommandSpecs(x, map, depth + 1)) };
+  if ((c.type === 'addAsset' || c.type === 'setAssetSpec') && c.spec != null) return { ...c, spec: map(c.spec) };
+  return { ...c };
+}
+function mapSnapshotSpecs(value: VDocument, map: (value: unknown) => unknown) {
+  return { ...value, assets: value.assets.map(a => a.spec == null ? { ...a } : { ...a, spec: map(a.spec) }) };
+}
+
+let MONO = 0;
+
+export class HistoryTree {
+  private nodes = new Map<string, HistoryNode>();
+  private rootId: string;
+  private headId: string;
+  private seq = 0;
+  private specPool = new Map<string, string>();
+
+  private internSpec = (value: unknown): string => {
+    if (typeof value !== 'string') throw new Error('history spec must be a string');
+    const existing = this.specPool.get(value);
+    if (existing !== undefined) return existing;
+    this.specPool.set(value, value); return value;
+  };
+  private copySnapshot(doc: VDocument): VDocument {
+    return mapSnapshotSpecs(structuredClone(doc), this.internSpec) as VDocument;
+  }
+  /** Pruning/rebasing must also release strings no longer used by any branch. */
+  private rebuildSpecPool() {
+    this.specPool.clear();
+    for (const node of this.nodes.values()) {
+      for (const asset of node.snapshot.assets) if (asset.spec != null) asset.spec = this.internSpec(asset.spec);
+      node.command = mapCommandSpecs(node.command, this.internSpec) as Command | null;
+    }
+  }
+
+  constructor(rootDoc: VDocument, rootActor: Actor) {
+    const id = this.mintId();
+    const root: HistoryNode = {
+      id,
+      parentId: null,
+      ts: Date.now(),
+      actor: rootActor,
+      command: null,
+      label: '初始项目',
+      snapshot: this.copySnapshot(rootDoc),
+    };
+    this.nodes.set(id, root);
+    this.rootId = id;
+    this.headId = id;
+  }
+
+  private mintId(): string {
+    // Unique without Math.random reliance: time + monotonic counter.
+    return `h${Date.now().toString(36)}_${(MONO++).toString(36)}_${(this.seq++).toString(36)}`;
+  }
+
+  get head(): HistoryNode {
+    return this.nodes.get(this.headId)!;
+  }
+  get rootNodeId(): string {
+    return this.rootId;
+  }
+  getNode(id: string): HistoryNode | undefined {
+    return this.nodes.get(id);
+  }
+  all(): HistoryNode[] {
+    return [...this.nodes.values()];
+  }
+
+  /** Children of a node, oldest-first (insertion order). */
+  childrenOf(id: string): HistoryNode[] {
+    return this.all()
+      .filter((n) => n.parentId === id)
+      .sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id));
+  }
+
+  /** Root → head, the currently checked-out branch. */
+  pathToHead(): HistoryNode[] {
+    const path: HistoryNode[] = [];
+    let cur: HistoryNode | undefined = this.head;
+    while (cur) {
+      path.unshift(cur);
+      cur = cur.parentId ? this.nodes.get(cur.parentId) : undefined;
+    }
+    return path;
+  }
+
+  canUndo(): boolean {
+    return this.head.parentId != null;
+  }
+  canRedo(): boolean {
+    return this.childrenOf(this.headId).length > 0;
+  }
+
+  /** Replace the root's snapshot — used once at startup to seat the tree on
+   *  the persisted/restored document (only meaningful while the tree is just
+   *  the root). */
+  rebaseRoot(doc: VDocument): void {
+    this.nodes.get(this.rootId)!.snapshot = this.copySnapshot(doc);
+    this.rebuildSpecPool();
+  }
+
+  /** Align the head node's snapshot to an externally-loaded document — used to
+   *  absorb the collab restore "echo" on startup (the Yjs rebuild can differ
+   *  from the persisted snapshot by nextId/ordering) without adding a node. */
+  rebaseHead(doc: VDocument): void {
+    this.head.snapshot = this.copySnapshot(doc);
+    this.rebuildSpecPool();
+  }
+
+  /** True while nothing has been recorded yet (fresh tree). */
+  isPristine(): boolean {
+    return this.nodes.size === 1 && this.headId === this.rootId;
+  }
+
+  /** Append a node under head and move head onto it (branches if head already
+   *  had children — the old children remain as sibling branches). command is
+   *  null for non-command nodes (root, remote sync). */
+  record(
+    command: Command | null,
+    snapshot: VDocument,
+    actor: Actor,
+    label: string,
+    prompt?: string,
+  ): HistoryNode {
+    const node: HistoryNode = {
+      id: this.mintId(),
+      parentId: this.headId,
+      ts: Date.now(),
+      actor,
+      command: mapCommandSpecs(structuredClone(command), this.internSpec) as Command | null,
+      label,
+      prompt,
+      snapshot: this.copySnapshot(snapshot),
+    };
+    this.nodes.set(node.id, node);
+    this.headId = node.id;
+    return node;
+  }
+
+  /** Move head to parent; returns the snapshot to load (or null at root). */
+  undo(): VDocument | null {
+    const p = this.head.parentId;
+    if (!p) return null;
+    this.headId = p;
+    return this.head.snapshot;
+  }
+
+  /** Move head onto the most-recently-created child of the current branch. */
+  redo(): VDocument | null {
+    const kids = this.childrenOf(this.headId);
+    if (!kids.length) return null;
+    const next = kids[kids.length - 1]; // newest branch
+    this.headId = next.id;
+    return next.snapshot;
+  }
+
+  /** Check out any node; returns its snapshot. */
+  jumpTo(id: string): VDocument | null {
+    const n = this.nodes.get(id);
+    if (!n) return null;
+    this.headId = id;
+    return n.snapshot;
+  }
+
+  serialize(): HistorySerialized {
+    return {
+      formatVersion: CURRENT_FORMAT_VERSION,
+      nodes: this.all(),
+      rootId: this.rootId,
+      headId: this.headId,
+      seq: this.seq,
+    };
+  }
+
+  serializeCompact(): CompactHistorySerialized {
+    const specs: string[] = [], indices = new Map<string, number>();
+    const encode = (value: unknown) => {
+      if (typeof value !== 'string') throw new Error('history spec must be a string');
+      let index = indices.get(value);
+      if (index === undefined) { index = specs.length; specs.push(value); indices.set(value, index); }
+      return { specRef: index };
+    };
+    return { ...this.serialize(), historyEncoding: 'spec-table-v1', specs,
+      nodes: this.all().map(n => ({ ...n, snapshot: mapSnapshotSpecs(n.snapshot, encode), command: mapCommandSpecs(n.command, encode) })),
+    };
+  }
+
+  /** Rebuild from persisted data, migrating each node's snapshot to the current
+   *  format. Throws DocumentFormatError on a future/invalid version — the caller
+   *  (loadHistory) catches it and starts with a fresh tree. */
+  static deserialize(data: HistorySerialized | CompactHistorySerialized): HistoryTree {
+    if (!data || !Array.isArray(data.nodes) || !data.nodes.length) throw new Error('invalid history nodes');
+    const encoding = 'historyEncoding' in data ? data.historyEncoding : undefined;
+    if (encoding !== undefined && encoding !== 'spec-table-v1') throw new Error('unsupported history encoding');
+    const table = encoding === 'spec-table-v1' ? (data as CompactHistorySerialized).specs : [];
+    if (!Array.isArray(table) || table.some(s => typeof s !== 'string')) throw new Error('invalid history spec table');
+    const decode = (value: unknown): string => {
+      if (typeof value === 'string') return value;
+      const ref = value as {specRef?: number} | null;
+      if (!encoding || !ref || typeof ref !== 'object' || Object.keys(ref).length !== 1 || !Object.hasOwn(ref, 'specRef') || !Number.isSafeInteger(ref.specRef) || ref.specRef! < 0 || ref.specRef! >= table.length) throw new Error('invalid history spec reference');
+      return table[ref.specRef!];
+    };
+    const nodes = data.nodes.map(raw => {
+      const n = raw as HistoryNode;
+      const snapshot = mapSnapshotSpecs(n.snapshot, decode);
+      return { ...n, actor: structuredClone(n.actor), snapshot: migrateDocumentOrThrow(snapshot, data.formatVersion), command: mapCommandSpecs(structuredClone(n.command), decode) as Command | null };
+    });
+    const root = nodes.find(n => n.id === data.rootId);
+    if (!root) throw new Error('history root is missing');
+    // Construct normally so private fields and bound functions are initialized.
+    const t = new HistoryTree(root.snapshot, root.actor);
+    t.nodes = new Map(nodes.map(n => [n.id, n]));
+    if (t.nodes.size !== nodes.length) throw new Error('duplicate history node id');
+    t.rootId = data.rootId;
+    t.headId = nodes.some(n => n.id === data.headId) ? data.headId : data.rootId;
+    t.seq = data.seq ?? nodes.length;
+    t.rebuildSpecPool();
+    return t;
+  }
+}
+
+// ---------------------------------------------------------------- labels
+
+const trackKindLabel: Record<string, string> = { video: 'video', audio: 'audio', text: 'text' };
+const us = (n?: number | null) => (n == null ? '?' : (Math.round(n / 1e5) / 10).toFixed(1) + 's');
+
+/** A short human description of a command for the history board. */
+export function describeCommand(cmd: Command): string {
+  switch (cmd.type) {
+    case 'addGenerationSlot': return 'Create generation slot';
+    case 'updateGenerationSlot': return 'Edit generation slot';
+    case 'removeGenerationSlot': return 'Remove generation slot';
+    case 'resolveGenerationSlot': return 'Adopt generated video';
+    case 'replaceClipSource': return 'Replace clip source';
+    case 'addAsset':
+      return `Import ${trackKindLabel[cmd.kind] ?? cmd.kind} "${cmd.name}"`;
+    case 'addTrack':
+      return `Add ${trackKindLabel[cmd.kind] ?? cmd.kind} track`;
+    case 'removeTrack':
+      return 'Remove track';
+    case 'moveTrack':
+      return 'Reorder tracks';
+    case 'addClip':
+      return `Place asset on track @${us(cmd.startUs)}`;
+    case 'addTextClip':
+      return `Add text "${(cmd.text?.content ?? '').slice(0, 8)}"`;
+    case 'duplicateClip':
+      return 'Duplicate clip';
+    case 'removeClip':
+      return 'Remove clip';
+    case 'moveClip':
+      return `Move clip → ${us(cmd.startUs)}`;
+    case 'trimClip':
+      return `Trim ${cmd.edge === 'in' ? 'head' : 'tail'} → ${us(cmd.toUs)}`;
+    case 'splitClip':
+      return `Split @${us(cmd.atUs)}`;
+    case 'setClipSpeed':
+      return `Speed ${cmd.speed}x`;
+    case 'setTransform':
+      return 'Adjust transform';
+    case 'setClipVolume':
+      return `Volume ${Math.round(cmd.volume * 100)}%`;
+    case 'setText':
+      return 'Edit text style';
+    case 'setTransition':
+      return cmd.transition
+        ? `Transition · ${cmd.transition.kind === 'fadeBlack' ? 'fade to black' : 'dissolve'}`
+        : 'Remove transition';
+    case 'setKeyframe':
+      return `Keyframe · ${cmd.property}`;
+    case 'removeKeyframe':
+      return `Remove keyframe · ${cmd.property}`;
+    case 'addEffect':
+      return cmd.effect === 'colorGrade' ? 'Color grade' : `Add effect · ${cmd.effect}`;
+    case 'setEffectParams':
+      return 'Adjust effect params';
+    case 'removeEffect':
+      return 'Remove effect';
+    case 'setTrackMuted':
+      return cmd.muted ? 'Mute track' : 'Unmute track';
+    case 'setTrackLocked':
+      return cmd.locked ? 'Lock track' : 'Unlock track';
+    case 'setAssetSpec':
+      return cmd.spec == null ? 'Clear graphics spec' : 'Edit graphics spec';
+    case 'batch': {
+      const inner = cmd.commands;
+      if (inner.length === 1) return describeCommand(inner[0]);
+      const first = inner[0] ? describeCommand(inner[0]) : '';
+      return `Batch ×${inner.length}: ${first}…`;
+    }
+    default:
+      return (cmd as { type: string }).type;
+  }
+}

@@ -13,3 +13,5 @@
 参考图无损编码使用 @jsquash/webp 1.5.0（Apache-2.0）及其 libwebp 编码器（BSD）。许可文本随网页／桌面资源放在 `licenses/image-codecs.txt`；不代表这些项目的官方产品。
 
 桌面版同时分发 @basketikun/canvas-agent（MIT）和 OpenAI Codex CLI 0.146.0（Apache-2.0，https://github.com/openai/codex）。各依赖保留各自 package.json 与许可文件，运行时随桌面安装包提供；不代表 OpenAI 官方客户端。
+
+智能剪辑直接迁移 open-ribbi/velocut（MIT，Copyright (c) 2026 willbean），固定提交 3e371c012b321d2bb3726fa340753609ddc9c88e；完整源码、MIT 和修改说明位于 vendor/velocut。保留其多轨编辑器与媒体／渲染 SDK，并接入 OneYes 模型和画布；不代表上游官方产品。编辑器三维素材的 CC0／CC-BY 来源与署名见随包 editor/scene-assets/LICENSES.md，依赖许可随包 editor/licenses/dependencies.txt。

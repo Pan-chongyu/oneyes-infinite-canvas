@@ -32,4 +32,5 @@ Linux 沿用各格式的标准架构名称：AppImage 的 x86_64 / arm64、DEB �
 
 macOS 当前为 ad-hoc 签名，未 Apple 公证；Windows 未配置商业代码签名，系统首次安装可能显示来源确认。不要把本分支包描述为已通过 Apple 公证或 Microsoft 签名认证。
 
-根目录运行 `npm ci`、`npm ci --prefix web`、`npm ci --prefix canvas-agent`，然后运行 `npm run media:prepare` 下载并验证当前原生芯片的 FFmpeg/FFprobe，最后执行 `npm test`、`npm run build`、`npm run dist -- --win --x64`（按当前系统改为 --mac / --linux 与 --arm64）。媒体工具只在构建准备时下载，安装包内已包含二进制、AI 模型和 WASM，用户无需安装这些依赖。web/.npmrc 沿用上游 antd 6 与 pro-components beta 的实际依赖组合，忽略其仍指向 antd 5 的 peer 声明；不降级 UI 库。CI 在原生架构 Runner 分别构建并做启动检查，所有任务成功后才发布。
+根目录运行 `npm ci`、`npm ci --prefix web`、`npm ci --prefix canvas-agent
+npm ci --prefix vendor/velocut/web --ignore-scripts`，然后运行 `npm run media:prepare` 下载并验证当前原生芯片的 FFmpeg/FFprobe，最后执行 `npm test`、`npm run build`、`npm run dist -- --win --x64`（按当前系统改为 --mac / --linux 与 --arm64）。媒体工具只在构建准备时下载，安装包内已包含二进制、AI 模型和 WASM，用户无需安装这些依赖。web/.npmrc 沿用上游 antd 6 与 pro-components beta 的实际依赖组合，忽略其仍指向 antd 5 的 peer 声明；不降级 UI 库。CI 在原生架构 Runner 分别构建并做启动检查，所有任务成功后才发布。

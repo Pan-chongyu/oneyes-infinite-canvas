@@ -14,6 +14,7 @@ const { createUpdater } = require('./updater.cjs');
 const { updateTarget } = require('./update-platform.cjs');
 const { prepareInstall } = require('./update-install.cjs');
 const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
+const { createEditorWindows } = require('./editor-windows.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 let diagnostics = { report: async () => {}, recover: async () => {}, close: async () => {} };
@@ -24,6 +25,8 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
 app.whenReady().then(async () => {
+    const editors = createEditorWindows({ BrowserWindow, dialog, directory: __dirname, chrome: windowChromeOptions, report,
+        theme: w => syncWindowTheme(w, nativeTheme, nativeTheme.shouldUseDarkColors ? 'dark' : 'light') });
     const root = resolve(__dirname, '../web/dist'), vault = createVault(app.getPath('userData'));
     // Native installation identity and encrypted queue are independent of account/API keys.
     try {
@@ -61,13 +64,21 @@ app.whenReady().then(async () => {
         onRecovered: (stage, operation) => { void diagnostics.recover({ component: 'update', stage, operation }); },
         changed: state => { if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
         install: async plan => { const apply = await prepareInstall(plan); await apply(); app.quit(); } });
-    let diagnosticsClosed = false;
+    let diagnosticsClosed = false, quitting = false;
     app.on('before-quit', event => {
-        updater.close(); agent.stop(); network.close();
         if (diagnosticsClosed) return;
         event.preventDefault();
+        if (quitting) return;
+        quitting = true;
         // Persist only; never hold app exit waiting for a network upload.
-        void Promise.allSettled([diagnostics.close(), media.close()]).finally(() => { diagnosticsClosed = true; app.quit(); });
+        void editors.flushAll().then(async () => {
+            updater.close(); agent.stop(); network.close();
+            await Promise.allSettled([diagnostics.close(), media.close()]);
+            diagnosticsClosed = true; app.quit();
+        }).catch(async error => {
+            quitting = false; report('app', 'save', error);
+            await dialog.showMessageBox({type:'error',message:'剪辑项目未能保存，已暂停退出',detail:'请返回剪辑窗口重试保存，或在窗口关闭提示中选择强制关闭。',buttons:['返回剪辑']});
+        });
     });
     protocol.handle('oneyes-canvas', async request => {
         try {
@@ -109,6 +120,9 @@ app.whenReady().then(async () => {
     const trusted = event => {
         if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('oneyes-canvas://app/')) throw new Error('拒绝访问配置');
     };
+    ipcMain.handle('editor:open', (event, key) => { trusted(event); return editors.open(key); });
+    ipcMain.handle('editor:close', event => { if (!editors.trusted(event)) throw new Error('拒绝访问剪辑窗口'); editors.close(event); });
+    ipcMain.handle('editor:report', (event, stage, error) => { if (!editors.trusted(event)) throw new Error('拒绝访问剪辑窗口'); return diagnostics.report({component:'media',stage,error}); });
     ipcMain.handle('media:create', (event, operation, count, options) => { trusted(event); return media.create(operation, count, options); });
     ipcMain.handle('media:start', async (event, id) => { trusted(event); try { return { data: await media.start(id) }; } catch (error) { return { error: error.message }; } });
     ipcMain.handle('media:release', (event, id) => { trusted(event); return media.release(id); });
@@ -151,7 +165,7 @@ app.whenReady().then(async () => {
     function createWindow() {
         window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#0a0a0a', ...windowChromeOptions(), icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         for (const name of ['enter-full-screen', 'leave-full-screen']) window.on(name, () => window.webContents.send('window:fullscreen', window.isFullScreen()));
-        window.webContents.on('render-process-gone', (_event, details) => { if (details.reason !== 'clean-exit') void diagnostics.report({ component:'app', stage:'crash', reason:'runtime' }); });
+        window.webContents.on('render-process-gone', (_event, details) => { editors.disconnectHost(); if (details.reason !== 'clean-exit') void diagnostics.report({ component:'app', stage:'crash', reason:'runtime' }); });
         window.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => { if (mainFrame && code !== -3) report('app', 'load', new Error('network')); });
         window.setMenuBarVisibility(false);
         const external = url => { try { const u = new URL(url); if (u.protocol === 'https:' && !u.username && !u.password) void shell.openExternal(u.href); } catch {} };
@@ -160,7 +174,7 @@ app.whenReady().then(async () => {
         window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
         window.webContents.session.setPermissionCheckHandler(() => false);
         window.webContents.session.on('will-download', (_event, item) => item.setSaveDialogOptions({ title: '保存文件' }));
-        window.on('closed', () => { window = null; });
+        window.on('closed', () => { editors.disconnectHost(); window = null; });
         if (!smoke) window.webContents.once('did-finish-load', async () => {
             await window.webContents.executeJavaScript(`new Promise(resolve => {
                 const ready = () => { if (!document.body.dataset.canvasReady) return; observer.disconnect(); resolve(true); };

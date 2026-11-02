@@ -68,12 +68,17 @@ jobs:
             package-lock.json
             web/package-lock.json
             canvas-agent/package-lock.json
+            vendor/velocut/web/package-lock.json
       - name: Install Linux packaging tools
         if: matrix.target == 'linux'
         run: sudo apt-get update -qq && sudo apt-get install -y rpm libfuse2t64 xvfb
       - run: npm ci
       - run: npm ci --prefix web
       - run: npm ci --prefix canvas-agent --include=optional
+      - run: npm ci --prefix vendor/velocut/web --ignore-scripts
+      - run: npm run build:editor
+      - run: npm run typecheck:editor
+      - run: npm run test:editor
       - name: Prepare checksum-pinned native media tools
         run: npm run media:prepare
         env:

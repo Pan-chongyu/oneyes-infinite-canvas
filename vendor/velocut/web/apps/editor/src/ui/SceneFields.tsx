@@ -1,0 +1,113 @@
+// SceneFields — small shared form controls for SceneSpec editing, used by the
+// SceneInspector (scene-level fields) and the Director panel's selection card
+// (per-object fields). Both commit through the same validated setAssetSpec
+// path; these are just the input widgets.
+
+import { useEffect, useState } from 'react';
+import { isCurveBinding, type ChannelValue } from '@velocut/scene-sdk';
+
+/** Constant Animatable → number input; keyframed → read-only badge (edit via
+ *  the JSON tab, which can express the full grammar). */
+export function AnimatableField({
+  value,
+  fallback,
+  step = 0.1,
+  min,
+  max,
+  onChange,
+}: {
+  value: ChannelValue | undefined;
+  fallback: number;
+  step?: number;
+  min?: number;
+  max?: number;
+  onChange: (v: number) => void;
+}) {
+  if(isCurveBinding(value))return <span className="kf-chip" title="Edit the shared curve or binding in Animation">↪ {value.curveId}</span>;
+  if (Array.isArray(value)) {
+    return (
+      <span className="kf-chip" title="Keyframed — edit via the JSON tab">
+        ◆ {value.length} keys
+      </span>
+    );
+  }
+  return (
+    <NumberField
+      value={Math.round(((value ?? fallback) as number) * 100) / 100}
+      step={step}
+      min={min}
+      max={max}
+      onCommit={onChange}
+    />
+  );
+}
+
+export function Vec3Row({
+  label,
+  value,
+  onAxis,
+}: {
+  label: string;
+  value: { x?: ChannelValue; y?: ChannelValue; z?: ChannelValue } | undefined;
+  onAxis: (axis: 'x' | 'y' | 'z', v: number) => void;
+}) {
+  return (
+    <div className="prop-row scene-vec3">
+      <span className="prop-label">{label}</span>
+      {(['x', 'y', 'z'] as const).map((axis) => (
+        <label key={axis} className="axis-field" aria-label={`${label} ${axis.toUpperCase()}`}>
+          <span>{axis.toUpperCase()}</span>
+          <AnimatableField value={value?.[axis]} fallback={0} onChange={(v) => onAxis(axis, v)} />
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** Draft locally while typing; compilation happens once on blur/Enter. */
+export function NumberField({
+  value,
+  step = 0.1,
+  min,
+  max,
+  onCommit,
+}: {
+  value: number;
+  step?: number;
+  min?: number;
+  max?: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const n = Number(draft);
+    if (
+      !draft.trim() ||
+      !Number.isFinite(n) ||
+      (min != null && n < min) ||
+      (max != null && n > max)
+    ) {
+      setDraft(String(value));
+      return;
+    }
+    if (n !== value) onCommit(n);
+  };
+  return (
+    <input
+      type="number"
+      value={draft}
+      step={step}
+      min={min}
+      max={max}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') {
+          setDraft(String(value));
+        }
+      }}
+    />
+  );
+}

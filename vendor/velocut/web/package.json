@@ -1,0 +1,39 @@
+{
+  "name": "velocut-web",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm -w velocut-editor run dev",
+    "build": "npm run build:sdks && npm -w velocut-editor run build",
+    "test": "node --experimental-strip-types --test 'packages/**/test/*.test.ts' && npm run test:codex-plugin",
+    "e2e": "playwright test",
+    "build:codex-plugin": "npm -w @velocut/mcp run build",
+    "test:codex-plugin": "npm run build:codex-plugin && node --test 'packages/mcp/test/*.test.mjs'",
+    "build:sdks": "node scripts/build-sdk.mjs",
+    "predev": "npm run build:sdks",
+    "pretest": "npm run build:sdks",
+    "build:release": "npm run build && npm run build:codex-plugin && npm -w @velocut/cli run build",
+    "pack:release": "node scripts/pack-release.mjs",
+    "test:distribution": "node scripts/test-distribution.mjs",
+    "publish:release": "node scripts/publish-release.mjs",
+    "version:release": "node scripts/version-release.mjs",
+    "docs:screenshots": "npm run build:release && node scripts/capture-readme.mjs",
+    "build:brand": "node scripts/build-brand.mjs",
+    "archive:release": "node scripts/archive-release.mjs",
+    "test:release": "node --test scripts/release-artifacts.test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.0.0"
+  }
+}
