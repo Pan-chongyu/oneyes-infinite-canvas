@@ -26,6 +26,7 @@ export type CanvasPluginAi = {
     generateText: (prompt: string, options?: GenerateTextOptions) => Promise<GenerateTextResult>;
     listModels: (capability?: PluginModelCapability) => ModelOption[];
     defaultModel: (capability: PluginModelCapability) => string;
+    isModelReady?: (model: string, capability: PluginModelCapability) => boolean;
 };
 
 // Node-specific buttons appended to the hover toolbar.

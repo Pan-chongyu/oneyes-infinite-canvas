@@ -16,7 +16,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasNodeData, CanvasConnection } from "@/types/canvas";
-import type { CanvasPluginHost, CanvasPluginAi } from "@/types/canvas-plugin";
+import type { CanvasPluginHost, CanvasPluginAi, ModelOption } from "@/types/canvas-plugin";
 import type { SmartEditSettings } from "@/types/smart-edit";
 registerBuiltinNodes();
 registerNodeDefinitions(smartEditPlugin.nodes, smartEditPlugin.id);
@@ -42,6 +42,12 @@ function Fixture() {
         [project, setProject] = useState("A"),
         [open, setOpen] = useState(true);
     const calls = useRef(0),
+        requestedModels = useRef<string[]>([]),
+        models = useRef<ModelOption[]>([
+            { value: "fixture", label: "隔离测试模型" },
+            { value: "second::fixture", label: "另一渠道 / 隔离测试模型" },
+        ]),
+        ready = useRef(true),
         transcriptions = useRef(0),
         failure = useRef(false),
         hold = useRef(false);
@@ -57,6 +63,8 @@ function Fixture() {
     const ai: CanvasPluginAi = {
         generateText: async (_prompt, options) => {
             calls.current++;
+            requestedModels.current.push(options?.model || "");
+            if (_prompt.includes("blob:") || _prompt.includes("data:")) throw Error("AI 编排不得上传原始视频或图片");
             if (failure.current) throw Error("模型连接失败，请手动重试");
             if (hold.current)
                 await new Promise<void>((resolve, reject) => {
@@ -70,8 +78,9 @@ function Fixture() {
         },
         generateImage: async () => ({ images: [] }),
         generateVideo: async () => ({ url: "", mimeType: "" }),
-        listModels: () => [{ value: "fixture", label: "隔离测试模型" }],
+        listModels: () => models.current,
         defaultModel: () => "fixture",
+        isModelReady: () => ready.current,
     };
     const host: CanvasPluginHost = {
         projectId: project,
@@ -94,6 +103,15 @@ function Fixture() {
         editTest: {
             state: () => ref.current,
             calls: () => calls.current,
+            requestedModels: () => requestedModels.current,
+            models: (value: ModelOption[]) => {
+                models.current = value;
+                set({ ...ref.current });
+            },
+            ready: (value: boolean) => {
+                ready.current = value;
+                set({ ...ref.current });
+            },
             transcriptions: () => transcriptions.current,
             patch: (value: Partial<SmartEditSettings>) => updateMetadata("tool", { smartEdit: { ...host.getNode("tool")?.metadata?.smartEdit, ...value } }),
             reset: () => {
@@ -101,6 +119,11 @@ function Fixture() {
                 setOpen(true);
                 failure.current = false;
                 hold.current = false;
+                models.current = [
+                    { value: "fixture", label: "隔离测试模型" },
+                    { value: "second::fixture", label: "另一渠道 / 隔离测试模型" },
+                ];
+                ready.current = true;
                 set(initial());
             },
             fail: () => {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { editSources, editFingerprint, editInputSignature, validateEditAnalysis, validateEditClips, localEditPlan, readEditPlan, editDuration, editSubtitles } from "./smart-edit";
+import { editSources, editFingerprint, editInputSignature, validateEditAnalysis, validateEditClips, localEditPlan, readEditPlan, editDuration, editSubtitles, splitEditClip, trimEditClip, resolveEditTextModel } from "./smart-edit";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { EditAnalysis } from "@/types/smart-edit";
 const source = { id: "v", type: "video", title: "原片", position: { x: 0, y: 0 }, width: 300, height: 200, metadata: { storageKey: "original.mp4" } } as CanvasNodeData;
@@ -107,4 +107,53 @@ test("source identity excludes movement while tracking original media, subtitles
             "x",
         ),
     );
+});
+test("manual editing keeps full mute media, splits exactly and rejects invalid trims without mutating originals", () => {
+    const manual = localEditPlan({ ...analysis, sources: [{ ...analysis.sources[0], audioTracks: 0 }] }, "manual", 0);
+    assert.deepEqual(
+        manual.map((c) => [c.start, c.end]),
+        [[0, 10]],
+    );
+    const original = manual[0],
+        trimmed = trimEditClip(original, 1, 9, analysis.sources[0]);
+    const pair = splitEditClip(trimmed, 4);
+    assert.deepEqual(
+        pair.map((c) => [c.start, c.end]),
+        [
+            [1, 4],
+            [4, 9],
+        ],
+    );
+    assert.equal(pair[0].id, original.id);
+    assert.notEqual(pair[1].id, original.id);
+    assert.equal(pair[1].sourceId, original.sourceId);
+    assert.equal(pair[1].label, original.label);
+    assert.equal(editDuration(pair, 0), 8);
+    assert.equal(original.start, 0);
+    assert.equal(original.end, 10);
+    assert.equal(editSubtitles(pair, analysis, 0), editSubtitles([trimmed], analysis, 0));
+    for (const time of [1, 9, NaN, Infinity, -1]) assert.throws(() => splitEditClip(trimmed, time), /片段内部/);
+    for (const [start, end] of [
+        [-1, 2],
+        [1, 1],
+        [5, 2],
+        [0, 11],
+        [NaN, 2],
+    ])
+        assert.throws(() => trimEditClip(original, start, end, analysis.sources[0]), /入点/);
+    assert.equal(splitEditClip({ ...trimmed, enabled: false }, 5)[1].enabled, false);
+});
+test("AI editing resolves the exact configured text channel and blocks missing selections without falling back", () => {
+    const models = [
+        { value: "vip::model", label: "VIP / model" },
+        { value: "svip::model", label: "SVIP / model" },
+        { value: "claude::configured", label: "Claude / configured" },
+    ];
+    const ai = { listModels: (capability?: string) => (capability === "text" ? models : []), defaultModel: () => models[0].value, isModelReady: (model: string) => model !== "svip::model" };
+    assert.equal(resolveEditTextModel(ai).value, "vip::model");
+    assert.equal(resolveEditTextModel(ai, "claude::configured").value, "claude::configured");
+    assert.throws(() => resolveEditTextModel(ai, "svip::model"), /API Key/);
+    assert.throws(() => resolveEditTextModel(ai, "removed::model"), /已移除/);
+    assert.throws(() => resolveEditTextModel({ ...ai, defaultModel: () => "image::only" }), /默认文本模型/);
+    assert.throws(() => resolveEditTextModel({ ...ai, listModels: () => [] }), /没有文本模型/);
 });

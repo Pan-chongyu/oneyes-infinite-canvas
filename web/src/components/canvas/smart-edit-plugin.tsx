@@ -1,23 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Checkbox, Input, InputNumber, Select, Segmented, Progress } from "antd";
-import { Scissors, X, Play, ArrowUp, ArrowDown, ScanLine, WandSparkles, Captions, Download, Plus } from "lucide-react";
+import { Scissors, X, Play, ArrowUp, ArrowDown, ScanLine, WandSparkles, Captions, Download, Plus, Copy, Undo2, Redo2, Settings2 } from "lucide-react";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
 import type { CanvasNodeContext, CanvasPlugin } from "@/types/canvas-plugin";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { EditClip, SmartEditSettings } from "@/types/smart-edit";
-import { smartEditAccepts, editSources, editFingerprint, editInputSignature, localEditPlan, smartEditDefaults, editDuration, editSubtitles, validateEditClips } from "@/lib/canvas/smart-edit";
+import { smartEditAccepts, editSources, editFingerprint, editInputSignature, localEditPlan, smartEditDefaults, editDuration, editSubtitles, validateEditClips, splitEditClip, resolveEditTextModel } from "@/lib/canvas/smart-edit";
 import { validateCues } from "@/lib/canvas/studio";
 import { analyzeEdit, proposeEdit, renderEdit } from "@/services/smart-edit";
-import { creatorSourceBlob, processNativeVideo } from "@/services/creator-media";
+import { processNativeVideo } from "@/services/creator-media";
 import { uploadMediaFile, deleteStoredMedia } from "@/services/file-storage";
 import { videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { SourceSummary } from "./source-summary";
+import { SmartEditPreview } from "./smart-edit-preview";
+import { useConfigStore } from "@/stores/use-config-store";
 
 const running = new Set<string>();
 const taskKey = (ctx: CanvasNodeContext) => `${ctx.projectId}:${ctx.node.id}`;
 const readSources = (ctx: CanvasNodeContext) => editSources(ctx.getNode(ctx.node.id) || ctx.node, ctx.getNodes(), ctx.getConnections());
 const modes = [
+    { label: "手动剪辑", value: "manual" },
     { label: "口播精剪", value: "silence" },
     { label: "分镜选片", value: "scenes" },
     { label: "文字剪辑", value: "text" },
@@ -52,71 +55,6 @@ function Content({ ctx }: { ctx: CanvasNodeContext }) {
         </div>
     );
 }
-function ClipPreview({ source, clip }: { source?: CanvasNodeData; clip?: EditClip }) {
-    const [url, setUrl] = useState(""),
-        [error, setError] = useState("");
-    const video = useRef<HTMLVideoElement>(null);
-    useEffect(() => {
-        const controller = new AbortController();
-        let objectUrl = "";
-        setUrl("");
-        setError("");
-        if (source)
-            void creatorSourceBlob(source, controller.signal)
-                .then((blob) => {
-                    controller.signal.throwIfAborted();
-                    objectUrl = URL.createObjectURL(blob);
-                    setUrl(objectUrl);
-                })
-                .catch((error) => {
-                    if (!controller.signal.aborted) setError(error.message);
-                });
-        return () => {
-            controller.abort();
-            if (objectUrl) URL.revokeObjectURL(objectUrl);
-        };
-    }, [source?.id, source?.metadata?.storageKey, source?.metadata?.content, source?.metadata?.primaryImageId]);
-    useEffect(() => {
-        if (video.current && clip) {
-            video.current.pause();
-            video.current.currentTime = clip.start;
-        }
-    }, [clip?.id, clip?.start, clip?.end]);
-    if (!source || !clip) return null;
-    return (
-        <div className="space-y-1" data-edit-preview>
-            <div className="flex h-36 items-center justify-center overflow-hidden rounded" aria-label="原素材片段预览">
-                {!url ? (
-                    <span className="text-xs" role="status">
-                        {error || "正在读取原素材…"}
-                    </span>
-                ) : source.type === "image" ? (
-                    <img className="h-full w-full object-contain" src={url} alt={source.title} />
-                ) : (
-                    <video
-                        ref={video}
-                        className="h-full w-full object-contain"
-                        src={url}
-                        controls
-                        preload="metadata"
-                        onLoadedMetadata={(e) => {
-                            e.currentTarget.currentTime = clip.start;
-                        }}
-                        onTimeUpdate={(e) => {
-                            if (e.currentTarget.currentTime >= clip.end) e.currentTarget.pause();
-                        }}
-                        onPlay={(e) => {
-                            if (e.currentTarget.currentTime < clip.start || e.currentTarget.currentTime >= clip.end) e.currentTarget.currentTime = clip.start;
-                        }}
-                    />
-                )}
-            </div>
-            <p className="m-0 text-[11px] opacity-70">
-                原素材预览 · {clip.start.toFixed(2)}–{clip.end.toFixed(2)} 秒；转场、调色与配乐在输出时合成
-            </p>
-        </div>
-    );
-}
 export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }) {
     const latest = useRef(ctx);
     latest.current = ctx;
@@ -127,6 +65,8 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
         [previewId, setPreviewId] = useState(""),
         [search, setSearch] = useState("");
     const { modal } = App.useApp();
+    const openConfig = useConfigStore((state) => state.openConfigDialog);
+    const [history, setHistory] = useState<{ past: EditClip[][]; future: EditClip[][] }>({ past: [], future: [] });
     const s = ctx.node.metadata?.smartEdit || {},
         mode = s.mode || "silence";
     let sources: CanvasNodeData[] = [],
@@ -143,6 +83,27 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
         const smartEdit = { ...latest.current.getNode(ctx.node.id)?.metadata?.smartEdit, ...value };
         if (guard.current) guard.current.expected = JSON.stringify(smartEdit);
         latest.current.updateMetadata({ smartEdit, errorDetails: undefined });
+    };
+    const editClips = (clips: EditClip[], settings: Partial<SmartEditSettings> = {}) => {
+        if (JSON.stringify(clips) === JSON.stringify(s.clips || []) && !Object.keys(settings).length) return;
+        setHistory((h) => ({ past: [...h.past, s.clips || []], future: [] }));
+        patch({ ...settings, clips });
+    };
+    // Undo is local to this editing session; the current plan remains persisted on the node.
+    useEffect(() => {
+        setHistory({ past: [], future: [] });
+    }, [ctx.projectId, ctx.node.id, s.analysis]);
+    const undo = () => {
+        const clips = history.past.at(-1);
+        if (!clips) return;
+        setHistory({ past: history.past.slice(0, -1), future: [s.clips || [], ...history.future] });
+        patch({ clips });
+    };
+    const redo = () => {
+        const clips = history.future[0];
+        if (!clips) return;
+        setHistory({ past: [...history.past, s.clips || []], future: history.future.slice(1) });
+        patch({ clips });
     };
     const ids =
         s.sourceIds ??
@@ -218,13 +179,18 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
         void run(async (signal, check, stage) => {
             const analysis = await analyzeEdit(sources, s, ctx.getConnections(), signal, (p) => stage(p.stage, p.progress));
             check();
-            patch({ analysis, clips: undefined, rationale: undefined });
-            if (mode !== "ai") patch({ analysis, clips: localEditPlan(analysis, mode, s.padding ?? smartEditDefaults.padding), planMode: mode, planPadding: s.padding ?? smartEditDefaults.padding });
+            const next: Partial<SmartEditSettings> = { analysis, clips: undefined, rationale: undefined, planMode: undefined, planPadding: undefined };
+            // Save successful analysis even when text editing still needs subtitles.
+            try {
+                if (mode !== "ai") Object.assign(next, { clips: localEditPlan(analysis, mode, s.padding ?? smartEditDefaults.padding), planMode: mode, planPadding: s.padding ?? smartEditDefaults.padding });
+            } finally {
+                patch(next);
+            }
         });
     const rebuild = () => {
         try {
             if (!current || !s.analysis) throw Error("请先分析当前素材");
-            patch({ clips: localEditPlan(s.analysis, mode, s.padding ?? smartEditDefaults.padding), rationale: undefined, planMode: mode, planPadding: s.padding ?? smartEditDefaults.padding });
+            editClips(localEditPlan(s.analysis, mode, s.padding ?? smartEditDefaults.padding), { rationale: undefined, planMode: mode, planPadding: s.padding ?? smartEditDefaults.padding });
         } catch (error) {
             ctx.updateMetadata({ errorDetails: (error as Error).message });
         }
@@ -259,22 +225,30 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
             },
         });
     };
-    const propose = () =>
+    const propose = () => {
+        let model;
+        try {
+            model = resolveEditTextModel(ctx.ai, s.model);
+        } catch (error) {
+            ctx.updateMetadata({ errorDetails: (error as Error).message });
+            return;
+        }
         modal.confirm({
             title: "生成 AI 剪辑清单？",
-            content: "将素材名称、镜头时间、字幕和剪辑要求发送到所选文本模型并计费。此步骤不上传视频和图片；没有字幕时只能依据镜头边界编排。新清单会替换当前片段，输出前仍可编辑。",
+            content: `使用「${model.label}」，将素材名称、镜头时间、字幕和剪辑要求发送到模型并按站点计费。此步骤不上传视频和图片；没有字幕时只能依据镜头边界编排。新清单会替换当前片段，输出前仍可手动编辑。`,
             okText: "生成清单",
             cancelText: "取消",
             onOk: () => {
                 void run(async (signal, check, stage) => {
                     if (!s.analysis || !current) throw Error("请先分析当前素材");
                     stage("正在编排剪辑清单…");
-                    const plan = await proposeEdit(ctx.ai, sources, s, s.analysis, signal);
+                    const plan = await proposeEdit(latest.current.ai, sources, { ...s, model: model.value }, s.analysis, signal);
                     check();
-                    patch({ ...plan, planMode: "ai" });
+                    editClips(plan.clips, { rationale: plan.rationale, model: model.value, planMode: "ai" });
                 });
             },
         });
+    };
     const render = () =>
         void run(async (signal, check, stage) => {
             const result = await renderEdit(sources, s, signal, (p) => stage(p.stage, p.progress), ctx.getConnections());
@@ -296,7 +270,7 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                 if (!committed && key) await deleteStoredMedia([key]);
             }
         });
-    const changeClip = (id: string, value: Partial<EditClip>) => patch({ clips: s.clips?.map((c) => (c.id === id ? { ...c, ...value } : c)) });
+    const changeClip = (id: string, value: Partial<EditClip>) => editClips((s.clips || []).map((c) => (c.id === id ? { ...c, ...value } : c)));
     const clips = s.clips || [],
         enabled = clips.filter((c) => c.enabled);
     let duration = "",
@@ -309,6 +283,13 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
             planError = (error as Error).message;
         }
     const chosen = clips.find((c) => c.id === previewId) || clips[0];
+    let textModel,
+        modelError = "";
+    try {
+        textModel = resolveEditTextModel(ctx.ai, s.model);
+    } catch (error) {
+        modelError = (error as Error).message;
+    }
     const number = (key: keyof typeof smartEditDefaults, label: string, props: { min?: number; max?: number; step?: number } = {}) => (
         <label className="flex items-center justify-between gap-2 text-xs" key={key}>
             {label}
@@ -358,8 +339,10 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                 </div>
                 <Button type="text" size="small" aria-label="关闭剪辑" icon={<X size={14} />} onClick={onClose} />
             </header>
-            <label className="block space-y-1 text-xs">
-                素材与脚本
+            <details open={!current} className="space-y-2 text-xs">
+                <summary className="cursor-pointer py-1">
+                    素材与脚本<span className="ml-2 opacity-60">{sources.length} 份</span>
+                </summary>
                 <Select
                     aria-label="剪辑素材"
                     className="w-full"
@@ -374,34 +357,39 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                     onChange={(sourceIds) => patch({ sourceIds })}
                     placeholder="视频、图片、配乐、字幕或脚本"
                 />
-            </label>
-            <div className="max-h-28 space-y-1 overflow-auto">
-                {sources.map((source, index) => (
-                    <div key={source.id} className="flex items-center gap-1">
-                        <SourceSummary node={source} />
-                        {[-1, 1].map((offset) => (
-                            <Button
-                                type="text"
-                                size="small"
-                                key={offset}
-                                aria-label={`${offset < 0 ? "上移" : "下移"}${source.title}`}
-                                disabled={busy || index + offset < 0 || index + offset >= ids.length}
-                                icon={offset < 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-                                onClick={() => {
-                                    const next = [...ids];
-                                    [next[index], next[index + offset]] = [next[index + offset], next[index]];
-                                    patch({ sourceIds: next });
-                                }}
-                            />
-                        ))}
-                        <Button type="text" size="small" aria-label={`移除${source.title}`} disabled={busy} icon={<X size={12} />} onClick={() => patch({ sourceIds: ids.filter((id) => id !== source.id) })} />
-                    </div>
-                ))}
-            </div>
-            <Button type="text" size="small" disabled={busy} onClick={() => patch({ sourceIds: undefined })}>
-                使用上游连线
-            </Button>
+                <div className="max-h-28 space-y-1 overflow-auto">
+                    {sources.map((source, index) => (
+                        <div key={source.id} className="flex items-center gap-1">
+                            <SourceSummary node={source} />
+                            {[-1, 1].map((offset) => (
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    key={offset}
+                                    aria-label={`${offset < 0 ? "上移" : "下移"}${source.title}`}
+                                    disabled={busy || index + offset < 0 || index + offset >= ids.length}
+                                    icon={offset < 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+                                    onClick={() => {
+                                        const next = [...ids];
+                                        [next[index], next[index + offset]] = [next[index + offset], next[index]];
+                                        patch({ sourceIds: next });
+                                    }}
+                                />
+                            ))}
+                            <Button type="text" size="small" aria-label={`移除${source.title}`} disabled={busy} icon={<X size={12} />} onClick={() => patch({ sourceIds: ids.filter((id) => id !== source.id) })} />
+                        </div>
+                    ))}
+                </div>
+                <Button type="text" size="small" disabled={busy} onClick={() => patch({ sourceIds: undefined })}>
+                    使用上游连线
+                </Button>
+            </details>
             <Segmented block size="small" aria-label="剪辑方式" options={modes} value={mode} disabled={busy} onChange={(mode) => patch({ mode: mode as SmartEditSettings["mode"] })} />
+            {mode === "manual" && (
+                <p className="m-0 text-xs leading-5" style={{ color: ctx.theme.node.muted }}>
+                    读取素材后，直接定位、裁剪和拼接；无需配置模型。自动剪辑的结果也能在这里继续调整。
+                </p>
+            )}
             <div className="flex flex-wrap items-center gap-1">
                 <Button
                     type="text"
@@ -410,7 +398,7 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                     disabled={disabled || !sources.some((n) => ["video", "image"].includes(n.type))}
                     onClick={() => (clips.length ? modal.confirm({ title: "重新分析素材？", content: "将重建当前剪辑清单，原素材和已输出视频保留。", okText: "重新分析", cancelText: "保留清单", onOk: analyze }) : analyze())}
                 >
-                    {current ? "重新分析" : "分析素材"}
+                    {current ? "重新分析" : mode === "manual" ? "读取素材" : "分析素材"}
                 </Button>
                 {current && mode !== "ai" && (
                     <Button
@@ -419,7 +407,7 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                         disabled={disabled}
                         onClick={() => (clips.length ? modal.confirm({ title: "重建片段清单？", content: "将按当前剪辑方式重建片段，替换手动调整。", okText: "重建清单", cancelText: "取消", onOk: rebuild }) : rebuild())}
                     >
-                        按当前方式生成清单
+                        {mode === "manual" ? "整段导入清单" : "按当前方式生成清单"}
                     </Button>
                 )}
             </div>
@@ -429,7 +417,10 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                 </p>
             )}
             {(mode === "ai" || mode === "text") && (
-                <div className="space-y-2">
+                <details className="space-y-2 text-xs" open={mode === "text"}>
+                    <summary className="cursor-pointer py-1">
+                        语音识别与字幕<span className="ml-2 opacity-60">可选</span>
+                    </summary>
                     <label className="block space-y-1 text-xs">
                         语音识别模型
                         <Select
@@ -452,7 +443,7 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                     <p className="m-0 text-[11px]" style={{ color: ctx.theme.node.muted }}>
                         连接已有「语音转字幕」节点可复用对应字幕；识别会上传音轨并计费。按字幕搜索、保留或删除整段，不猜测词级时间。
                     </p>
-                </div>
+                </details>
             )}
             {mode === "ai" && (
                 <div className="space-y-2">
@@ -467,11 +458,19 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                         options={ctx.ai.listModels("text")}
                         value={s.model}
                         onChange={(model) => patch({ model })}
-                        placeholder="使用当前默认文本模型"
+                        placeholder={textModel ? `默认：${textModel.label}` : "请选择已接入的文本模型"}
                     />
-                    <Button type="text" size="small" icon={<WandSparkles size={14} />} disabled={disabled || !current} onClick={propose}>
-                        生成 AI 剪辑清单
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                        <Button type="text" size="small" icon={<WandSparkles size={14} />} disabled={disabled || !current || Boolean(modelError)} onClick={propose}>
+                            生成 AI 剪辑清单
+                        </Button>
+                        <Button type="text" size="small" icon={<Settings2 size={13} />} disabled={busy} onClick={() => openConfig(false, "channels")}>
+                            模型设置
+                        </Button>
+                    </div>
+                    <p className="m-0 text-[11px] leading-5" role={modelError ? "alert" : "status"} style={{ color: ctx.theme.node.muted }}>
+                        {modelError || `当前：${textModel?.label}。沿用已接入的渠道和 Key，生成后可手动修改。`}
+                    </p>
                 </div>
             )}
             {s.rationale && (
@@ -497,7 +496,9 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                             disabled={busy}
                             onClick={() => {
                                 const source = s.analysis!.sources[0];
-                                patch({ clips: [...clips, { id: nanoid(), sourceId: source.id, start: 0, end: source.duration, enabled: true, label: source.title }] });
+                                const next = { id: nanoid(), sourceId: source.id, start: 0, end: source.duration, enabled: true, label: source.title };
+                                editClips([...clips, next]);
+                                setPreviewId(next.id);
                             }}
                         >
                             添加片段
@@ -506,14 +507,59 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                     {clips.length > 0 && (
                         <>
                             <Input size="small" aria-label="搜索剪辑片段" allowClear value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索字幕、片段或选择理由" />
-                            <ClipPreview source={sources.find((n) => n.id === chosen?.sourceId)} clip={chosen} />
+                            <div className="flex items-center justify-between gap-1 text-xs">
+                                <span>成片顺序</span>
+                                <div className="flex items-center gap-1">
+                                    <Button type="text" size="small" aria-label="撤销片段编辑" icon={<Undo2 size={13} />} disabled={busy || !history.past.length} onClick={undo} />
+                                    <Button type="text" size="small" aria-label="重做片段编辑" icon={<Redo2 size={13} />} disabled={busy || !history.future.length} onClick={redo} />
+                                </div>
+                            </div>
+                            <div className="flex gap-1 overflow-x-auto pb-1" data-edit-sequence aria-label="剪辑顺序">
+                                {clips.map((c, index) => (
+                                    <button
+                                        key={c.id}
+                                        type="button"
+                                        aria-label={`预览片段${index + 1}`}
+                                        aria-pressed={c.id === chosen?.id}
+                                        disabled={busy}
+                                        className="min-w-16 shrink-0 border-b-2 px-2 py-1.5 text-left text-xs transition-opacity hover:opacity-70 disabled:opacity-40 motion-reduce:transition-none"
+                                        style={{
+                                            flexGrow: Math.max(0, c.end - c.start),
+                                            borderColor: c.id === chosen?.id ? ctx.theme.node.text : ctx.theme.toolbar.border,
+                                            color: c.enabled ? ctx.theme.node.text : ctx.theme.node.muted,
+                                            textDecoration: c.enabled ? undefined : "line-through",
+                                        }}
+                                        onClick={() => setPreviewId(c.id)}
+                                    >
+                                        <span className="block">片段 {index + 1}</span>
+                                        <span className="text-[10px] opacity-60">{(c.end - c.start).toFixed(2)} 秒</span>
+                                    </button>
+                                ))}
+                            </div>
+                            <SmartEditPreview
+                                source={sources.find((n) => n.id === chosen?.sourceId)}
+                                detail={s.analysis.sources.find((a) => a.id === chosen?.sourceId)}
+                                clip={chosen}
+                                disabled={busy}
+                                onChange={(value) => changeClip(value.id, value)}
+                                onSplit={(time) => {
+                                    if (!chosen) return;
+                                    try {
+                                        const pair = splitEditClip(chosen, time);
+                                        editClips(clips.flatMap((c) => (c.id === chosen.id ? pair : [c])));
+                                        setPreviewId(pair[1].id);
+                                    } catch (error) {
+                                        ctx.updateMetadata({ errorDetails: (error as Error).message });
+                                    }
+                                }}
+                            />
                             <div className="max-h-72 space-y-2 overflow-auto" data-edit-clips>
                                 {clips
                                     .filter((c) => !search || c.label.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
                                     .map((c) => {
                                         const index = clips.indexOf(c);
                                         return (
-                                            <div key={c.id} className="space-y-1 border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
+                                            <div key={c.id} className="space-y-1 border-t pt-2" data-edit-clip={c.id} style={{ borderColor: ctx.theme.toolbar.border }}>
                                                 <div className="flex items-center gap-1">
                                                     <Checkbox aria-label={`保留片段${index + 1}`} checked={c.enabled} disabled={busy} onChange={(e) => changeClip(c.id, { enabled: e.target.checked })} />
                                                     <Button type="text" size="small" className="min-w-0 flex-1 !justify-start truncate" onClick={() => setPreviewId(c.id)}>
@@ -530,11 +576,23 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                                                             onClick={() => {
                                                                 const next = [...clips];
                                                                 [next[index], next[index + offset]] = [next[index + offset], next[index]];
-                                                                patch({ clips: next });
+                                                                editClips(next);
                                                             }}
                                                         />
                                                     ))}
-                                                    <Button type="text" size="small" aria-label={`删除片段${index + 1}`} disabled={busy} icon={<X size={12} />} onClick={() => patch({ clips: clips.filter((item) => item.id !== c.id) })} />
+                                                    <Button
+                                                        type="text"
+                                                        size="small"
+                                                        aria-label={`复制片段${index + 1}`}
+                                                        disabled={busy}
+                                                        icon={<Copy size={12} />}
+                                                        onClick={() => {
+                                                            const next = { ...c, id: nanoid() };
+                                                            editClips([...clips.slice(0, index + 1), next, ...clips.slice(index + 1)]);
+                                                            setPreviewId(next.id);
+                                                        }}
+                                                    />
+                                                    <Button type="text" size="small" aria-label={`删除片段${index + 1}`} disabled={busy} icon={<X size={12} />} onClick={() => editClips(clips.filter((item) => item.id !== c.id))} />
                                                 </div>
                                                 <div className="flex items-center gap-2 text-xs">
                                                     {(["start", "end"] as const).map((key) => (
@@ -617,6 +675,11 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
                 </p>
             )}
             <footer className="sticky bottom-0 space-y-2 border-t py-2" style={{ background: ctx.theme.toolbar.panel, borderColor: ctx.theme.toolbar.border }}>
+                {!busy && clips.length === 0 && history.past.length > 0 && (
+                    <Button type="text" size="small" icon={<Undo2 size={13} />} onClick={undo}>
+                        撤销片段编辑
+                    </Button>
+                )}
                 {busy ? (
                     <>
                         <div className="flex items-center justify-between gap-2 text-xs" role="status">
@@ -665,8 +728,8 @@ export function SmartEditPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClo
 export const smartEditPlugin: CanvasPlugin = {
     id: "smart-edit",
     name: "智能剪辑",
-    version: "1.0.0",
-    description: "自动选片、口播精剪、文字剪辑与 AI 成片编排",
+    version: "1.1.0",
+    description: "现有模型自动编排、手动裁剪、字幕与配乐成片",
     nodes: [
         {
             type: "smart-edit:editor",
@@ -674,7 +737,7 @@ export const smartEditPlugin: CanvasPlugin = {
             description: "视频／图片／脚本 → 可编辑片段、字幕与配乐成片",
             icon: <Scissors size={18} />,
             defaultSize: { width: 320, height: 180 },
-            defaultMetadata: { smartEdit: {}, status: "idle" },
+            defaultMetadata: { smartEdit: { mode: "ai" }, status: "idle" },
             autoOpenPanel: true,
             renderOwnStatus: true,
             Content,

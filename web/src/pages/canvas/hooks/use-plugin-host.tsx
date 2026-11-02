@@ -94,9 +94,13 @@ export function usePluginHost(params: PluginHostParams) {
                 const text = await requestImageQuestion(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
                 return { text };
             },
-            // List configured models for a capability; labels use the model name without the channel prefix.
-            listModels: (capability) => selectableModelsByCapability(effectiveConfig, capability as ModelCapability | undefined).map((value) => ({ value, label: decodeChannelModel(value)?.model || value })),
+            // Keep channel identity visible when the same model exists in multiple groups.
+            listModels: (capability) => selectableModelsByCapability(effectiveConfig, capability as ModelCapability | undefined).map((value) => {
+                const decoded = decodeChannelModel(value), channel = effectiveConfig.channels.find(c => c.id === decoded?.channelId);
+                return { value, label: channel ? `${channel.name} / ${decoded!.model}` : value };
+            }),
             defaultModel: (capability) => buildGenerationConfig(effectiveConfig, undefined, capability).model,
+            isModelReady: (model, capability) => selectableModelsByCapability(effectiveConfig, capability).includes(model) && isAiConfigReady(effectiveConfig, model),
         };
     }, [effectiveConfig, isAiConfigReady, openConfigDialog, t]);
 

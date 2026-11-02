@@ -2,7 +2,7 @@ import type { CanvasNodeData, CanvasConnection } from "@/types/canvas";
 import type { EditAnalysis, SmartEditSettings } from "@/types/smart-edit";
 import type { CanvasPluginAi } from "@/types/canvas-plugin";
 import type { CreatorProgress } from "@/types/creator-tools";
-import { editFingerprint, validateEditAnalysis, smartEditDefaults, readEditPlan, smartEditSystem, validateEditClips, editSubtitles, editDuration } from "@/lib/canvas/smart-edit";
+import { editFingerprint, validateEditAnalysis, smartEditDefaults, readEditPlan, smartEditSystem, validateEditClips, editSubtitles, editDuration, resolveEditTextModel } from "@/lib/canvas/smart-edit";
 import { validateCues } from "@/lib/canvas/studio";
 import { processNativeVideo } from "./creator-media";
 
@@ -30,6 +30,8 @@ export async function analyzeEdit(sources: CanvasNodeData[], settings: SmartEdit
     return analysis;
 }
 export async function proposeEdit(ai: CanvasPluginAi, sources: CanvasNodeData[], settings: SmartEditSettings, analysis: EditAnalysis, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const model = resolveEditTextModel(ai, settings.model).value;
     const instruction = [
         settings.instruction,
         ...sources.filter((n) => n.type === "text").map((n) => n.metadata?.content || n.metadata?.prompt),
@@ -39,7 +41,7 @@ export async function proposeEdit(ai: CanvasPluginAi, sources: CanvasNodeData[],
         .join("\n");
     if (!instruction.trim()) throw Error("请填写剪辑要求，或连接脚本／文本节点");
     const input = { instruction, sources: analysis.sources };
-    const result = await ai.generateText(JSON.stringify(input), { signal, model: settings.model, system: smartEditSystem });
+    const result = await ai.generateText(JSON.stringify(input), { signal, model, system: smartEditSystem });
     signal.throwIfAborted();
     return readEditPlan(result.text, analysis);
 }

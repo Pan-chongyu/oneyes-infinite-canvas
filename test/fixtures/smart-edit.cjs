@@ -24,7 +24,7 @@ app.whenReady().then(async () => {
         if (/^\/fixture-media\/(red|blue)$/.test(url.pathname)) return new Response(await readFile(join(directory, url.pathname.split('/').at(-1) + '.mp4')), { headers: { 'Content-Type': 'video/mp4' } });
         const target = route(request.url, process.env.CANVAS_EDIT_TEST_ROOT); assert.ok(target.file); return net.fetch(target.file);
     });
-    const js = code => win.webContents.executeJavaScript(code);
+    const js = async code => { try { return await win.webContents.executeJavaScript(code); } catch (error) { console.error('Smart-edit fixture step:', code); throw error; } };
     const wait = async code => { const until = Date.now() + 30000; while (!await js(code)) { if (Date.now() > until) throw Error('Smart-edit fixture timed out: ' + code); await new Promise(resolve => setTimeout(resolve, 25)); } };
     const click = async text => {
         if (['生成 AI 剪辑清单', '识别缺失字幕'].includes(text)) await wait('!document.querySelector(".ant-modal-confirm")');
@@ -32,16 +32,48 @@ app.whenReady().then(async () => {
         if (['生成清单', '开始识别'].includes(text)) await wait('!document.querySelector(".ant-modal-confirm")');
     };
     const status = value => wait(`editTest.state().nodes.find(n=>n.id==='tool')?.metadata.status===${JSON.stringify(value)}`);
-    const screenshot = async suffix => { if (!process.env.CANVAS_EDIT_TEST_SCREENSHOT) return; win.showInactive(); await wait('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出成片")?.disabled'); await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))'); await js('Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))'); await writeFile(process.env.CANVAS_EDIT_TEST_SCREENSHOT.replace('.png', suffix + '.png'), (await win.webContents.capturePage()).toPNG()); win.hide(); };
+    const clips = () => js('editTest.state().nodes.find(n=>n.id==="tool").metadata.smartEdit.clips');
+    const seek = async time => {
+        await wait('document.querySelector("[data-edit-preview] video")?.readyState >= 1');
+        await js(`document.querySelector('[data-edit-preview] video').currentTime=${time}`);
+        await wait(`Math.abs(Number(document.querySelector('[aria-label="播放头秒数"]').value) - ${time}) < 0.01`);
+    };
+    const screenshot = async suffix => { if (!process.env.CANVAS_EDIT_TEST_SCREENSHOT) return; win.showInactive(); await wait('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出成片")?.disabled'); await wait('document.querySelector("[data-edit-preview] video")?.readyState >= 2'); await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))'); await js('Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))'); await writeFile(process.env.CANVAS_EDIT_TEST_SCREENSHOT.replace('.png', suffix + '.png'), (await win.webContents.capturePage()).toPNG()); win.hide(); };
     try {
         await win.loadURL(process.argv[2]); await wait('Boolean(window.editTest)');
         if (process.env.CANVAS_EDIT_TEST_PHASE === 'restore') {
             await status('error'); assert.match(await js('document.body.innerText'), /上次剪辑已中断/);
-            assert.equal(await js('editTest.state().nodes.find(n=>n.id==="tool").metadata.smartEdit.clips.length'), 2);
+            assert.equal((await clips()).length, 3);
+            assert.deepEqual((await clips()).map(c => [c.sourceId, c.start, c.end]), [['v1', 0, .5], ['v1', .5, 1], ['v0', 0, 1]]);
+            assert.equal(await js('editTest.state().nodes.find(n=>n.id==="tool").metadata.smartEdit.mode'), 'manual');
+            assert.equal(await js('editTest.state().nodes.find(n=>n.id==="tool").metadata.smartEdit.model'), 'second::fixture');
             assert.equal(await js('editTest.calls()'), 0); assert.equal(await js('editTest.transcriptions()'), 0);
             await click('输出成片'); await status('success'); assert.ok(await js('editTest.output()') > 0);
             console.log('SMART_EDIT_RESTART_OK: persisted analysis, clips and original media render after process restart; no paid replay');
         } else {
+            await js('editTest.models([]);editTest.patch({mode:"manual"})');
+            await click('读取素材'); await status('success');
+            assert.deepEqual((await clips()).map(c => [c.start, c.end]), [[0, 2], [0, 2]]);
+            await wait('document.querySelector("[data-edit-preview] video")?.readyState >= 2');
+            await js('document.querySelector("[data-edit-preview] video").muted=true;document.querySelector("[aria-label=播放片段]").click()');
+            await wait('document.querySelector("[data-edit-preview] video").currentTime > 0');
+            await js('document.querySelector("[aria-label=暂停预览]").click()');
+            assert.equal(await js('document.querySelector("[data-edit-preview] video").paused'), true);
+            await seek(1); await click('在此切分');
+            assert.deepEqual((await clips()).map(c => [c.start, c.end]), [[0, 1], [1, 2], [0, 2]]);
+            await seek(1.5); await click('设为出点'); assert.equal((await clips())[1].end, 1.5);
+            await js('document.querySelector("[aria-label=复制片段2]").click()');
+            assert.equal((await clips()).length, 4); assert.equal(new Set((await clips()).map(c => c.id)).size, 4);
+            await js('document.querySelector("[aria-label=撤销片段编辑]").click()'); assert.equal((await clips()).length, 3);
+            await js('document.querySelector("[aria-label=重做片段编辑]").click()'); assert.equal((await clips()).length, 4);
+            const copy = (await clips())[2].id;
+            await js('document.querySelector("[aria-label=片段3上移]").click()'); assert.equal((await clips())[1].id, copy);
+            await screenshot('-manual-light'); await js('editTest.theme(true)'); await screenshot('-manual-dark'); await js('editTest.theme(false)');
+            await click('输出成片'); await status('success'); assert.ok(await js('editTest.output()') > 0); assert.equal(await js('editTest.calls()'), 0);
+            await js('editTest.patch({mode:"ai",instruction:"无模型测试"})');
+            assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="生成 AI 剪辑清单").disabled'), true);
+            assert.match(await js('document.body.innerText'), /还没有文本模型/); assert.equal(await js('editTest.calls()'), 0);
+            await js('editTest.reset()');
             await click('分析素材'); await status('success');
             assert.equal(await js('editTest.state().nodes.find(n=>n.id==="tool").metadata.smartEdit.clips.length'), 2);
             await js('editTest.move()'); assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出成片").disabled'), false);
@@ -51,16 +83,27 @@ app.whenReady().then(async () => {
             await click('输出成片'); await status('success'); assert.ok(await js('editTest.output()') > 0); assert.equal(await js('editTest.state().connections.length'), 1);
             await js('editTest.patch({mode:"text"})'); await click('识别缺失字幕'); await wait('document.querySelector(".ant-modal-confirm")'); await click('开始识别'); await status('success');
             assert.equal(await js('editTest.transcriptions()'), 2); await click('识别缺失字幕'); assert.equal(await js('editTest.transcriptions()'), 2, 'existing subtitles are reused');
-            await js('editTest.patch({mode:"ai",instruction:"产品短片"})'); await click('生成 AI 剪辑清单'); await wait('document.querySelector(".ant-modal-confirm")'); await click('生成清单'); await status('success'); assert.equal(await js('editTest.calls()'), 1);
+            await js('editTest.patch({mode:"ai",instruction:"产品短片",model:"removed::model"})');
+            assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="生成 AI 剪辑清单").disabled'), true); assert.match(await js('document.body.innerText'), /已移除/);
+            await js('editTest.patch({model:"fixture"});editTest.ready(false)');
+            assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="生成 AI 剪辑清单").disabled'), true); assert.match(await js('document.body.innerText'), /API Key/);
+            await js('editTest.ready(true)');
+            await js('document.querySelector("[aria-label=剪辑文本模型]").closest(".ant-select").querySelector(".ant-select-content").dispatchEvent(new MouseEvent("mousedown", {bubbles:true}))');
+            await wait('Array.from(document.querySelectorAll(".ant-select-item-option")).some(n=>n.textContent.includes("另一渠道"))');
+            await js('Array.from(document.querySelectorAll(".ant-select-item-option")).find(n=>n.textContent.includes("另一渠道")).click()');
+            assert.equal(await js('editTest.state().nodes.find(n=>n.id==="tool").metadata.smartEdit.model'), 'second::fixture');
+            await click('生成 AI 剪辑清单'); await wait('document.querySelector(".ant-modal-confirm")'); assert.match(await js('document.querySelector(".ant-modal-confirm").innerText'), /另一渠道/); await click('生成清单'); await status('success'); assert.equal(await js('editTest.calls()'), 1);
+            assert.deepEqual(await js('editTest.requestedModels()'), ['second::fixture']);
+            await seek(.5); await click('在此切分'); assert.equal((await clips()).length, 3);
             await js('editTest.fail()'); await click('生成 AI 剪辑清单'); await wait('document.querySelector(".ant-modal-confirm")'); await click('生成清单'); await status('error'); assert.equal(await js('editTest.calls()'), 2); assert.match(await js('document.body.innerText'), /模型连接失败/);
-            await js('editTest.save()');
+            await js('editTest.patch({mode:"manual"});editTest.save()');
             await js('editTest.reset()'); await click('分析素材'); await status('success'); await js('editTest.patch({mode:"ai",instruction:"取消测试"});editTest.hold()');
             await click('生成 AI 剪辑清单'); await wait('document.querySelector(".ant-modal-confirm")'); await click('生成清单'); await status('loading'); await click('停止'); await status('error'); assert.equal(await js('editTest.calls()'), 3);
             await js('editTest.reset()'); await click('分析素材'); await status('success'); await js('editTest.patch({mode:"ai",instruction:"素材改变测试"});editTest.hold()');
             await click('生成 AI 剪辑清单'); await wait('document.querySelector(".ant-modal-confirm")'); await click('生成清单'); await status('loading'); await js('editTest.patch({title:"外部修改"})'); await status('error'); assert.match(await js('document.body.innerText'), /素材或设置已改变/);
             await js('editTest.reset()'); await click('分析素材'); await js('editTest.switch()'); await wait('!document.querySelector("[data-smart-edit-panel]")'); assert.equal(await js('editTest.state().nodes.length'), 2);
             await js('editTest.reset()'); await click('分析素材'); await js('editTest.remove()'); await wait('!document.querySelector("[data-smart-edit-panel]")'); assert.equal(await js('editTest.state().nodes.length'), 2);
-            console.log('SMART_EDIT_UI_OK: production/native media protocol, editable selection, render/save, transcription reuse, model errors without replay, cancellation, project isolation, themes');
+            console.log('SMART_EDIT_UI_OK: native manual preview/trim/split/duplicate/reorder/undo/redo/render with no model, exact model-channel selection, missing model/key blocking, AI-to-manual editing, transcription reuse, errors without replay, cancellation, project isolation, themes');
         }
         await engine.close(); await rm(directory, { recursive: true, force: true }); app.exit(0);
     } catch (error) { console.error(error); console.error(await js('document.body.innerText').catch(() => 'no page')); await engine.close(); app.exit(1); }

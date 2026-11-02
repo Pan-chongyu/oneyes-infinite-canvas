@@ -108,7 +108,7 @@ try {
 }
 ```
 
-还可使用 `ctx.ai.generateImage(prompt, options)` 返回 `{ images }`，以及 `ctx.ai.generateVideo(prompt, options)` 返回视频 URL 等信息。这里的 `model` 应使用 `listModels` 返回的原始 `value`，不要自己拼接渠道名。`audio` 可用于模型分类，宿主目前没有提供插件 `generateAudio` 方法。插件自己的异步作业、任务恢复和取消状态需要由插件实现，不能假定任意插件调用都会自动跨重启恢复。
+还可使用 `ctx.ai.generateImage(prompt, options)` 返回 `{ images }`，以及 `ctx.ai.generateVideo(prompt, options)` 返回视频 URL 等信息。这里的 `model` 应使用 `listModels` 返回的原始 `value`，不要自己拼接渠道名；`label` 显示渠道与模型名称。可选的 `ctx.ai.isModelReady?.(model, 'text')` 检查该模型的分类及 Key／接口是否已配置，不代表上游已授权该模型或在线可用。`audio` 可用于模型分类，宿主目前没有提供插件 `generateAudio` 方法。插件自己的异步作业、任务恢复和取消状态需要由插件实现，不能假定任意插件调用都会自动跨重启恢复。
 
 ## 使用 TypeScript / TSX SDK
 

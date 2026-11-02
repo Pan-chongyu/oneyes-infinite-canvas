@@ -17,7 +17,7 @@ export type EditSource = {
 export type EditAnalysis = { fingerprint: string; sources: EditSource[] };
 export type SmartEditSettings = {
     sourceIds?: string[];
-    mode?: "silence" | "scenes" | "text" | "ai";
+    mode?: "manual" | "silence" | "scenes" | "text" | "ai";
     instruction?: string;
     model?: string;
     speechModel?: string;
