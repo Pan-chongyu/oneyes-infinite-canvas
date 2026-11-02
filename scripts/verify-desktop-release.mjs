@@ -9,6 +9,7 @@ const require=createRequire(import.meta.url),{filename,deltaFilename,platformKey
 const {readManifest}=require('../desktop/update-policy.cjs');
 const {fileHash,validateFile}=require('../desktop/updater.cjs');
 const {applyDelta}=require('../desktop/update-delta.cjs');
+const {readBlockmap}=require('../desktop/update-blockmap.cjs');
 const publicKey=process.env.CANVAS_OTA_TEST_PUBLIC_KEY||require('../desktop/update-key.cjs');
 const root=resolve(process.argv[2]), files=(await readdir(root)).filter(v=>/\.(exe|dmg|zip|AppImage|deb|rpm)$/.test(v)).sort();
 const version=JSON.parse(await readFile('package.json','utf8')).version;
@@ -33,9 +34,17 @@ const sums=await Promise.all(files.map(async name=>{
   return hash.digest('hex')+'  '+name;
 }));
 const hashes=new Map(sums.map(line=>[line.slice(66),line.slice(0,64)])),platforms={};
+const blockSums=[];
 for(const {platform,arch,format} of selectedTargets){
   const file=filename(version,platform,arch,format),{size}=await stat(join(root,file));
   platforms[platformKey({platform,arch,format})]={file,url:`${RELEASE_ROOT}/download/v${version}/${file}`,size,sha256:hashes.get(file)};
+  if(platform==='win32'){
+    const mapFile=file+'.blockmap',mapPath=join(root,mapFile);
+    await readBlockmap(mapPath,size);
+    const sha256=await fileHash(mapPath),mapSize=(await stat(mapPath)).size;
+    platforms[platformKey({platform,arch,format})].blockmap={file:mapFile,url:`${RELEASE_ROOT}/download/v${version}/${mapFile}`,size:mapSize,sha256};
+    blockSums.push(`${sha256}  ${mapFile}`);
+  }
 }
 const changelog=await readFile('CHANGELOG.md','utf8'),section=changelog.split(`## v${version}`)[1]?.split('\n## ')[0]?.trim()||'';
 const deltas={},deltaSums=[];
@@ -89,6 +98,7 @@ if(deltaTarget){
 }else{
 const privateKey=createPrivateKey(process.env.CANVAS_OTA_PRIVATE_KEY||'');
 await writeFile(join(root,'SHA256SUMS.txt'),sums.join('\n')+'\n');
+await writeFile(join(root,'SHA256SUMS-blockmaps.txt'),blockSums.join('\n')+'\n');
 if(deltaSums.length)await writeFile(join(root,'SHA256SUMS-deltas.txt'),deltaSums.join('\n')+'\n');
 else await rm(join(root,'SHA256SUMS-deltas.txt'),{force:true});
 const text=JSON.stringify({schema:1,version,notes:section.replace(/^\+\s*/gm,''),platforms,...(Object.keys(deltas).length?{deltas}: {})},null,2)+'\n';

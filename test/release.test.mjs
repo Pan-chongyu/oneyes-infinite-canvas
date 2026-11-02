@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {generateKeyPairSync,verify,sign,createHash} from 'node:crypto';
+import {gzipSync} from 'node:zlib';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url),{filename,platformKey,RELEASE_ROOT,readManifest}=require('../desktop/update-policy.cjs');
 test('release requires all twelve native installers and hashes RPM architecture aliases',async()=>{
@@ -17,6 +18,7 @@ test('release requires all twelve native installers and hashes RPM architecture 
     for(const suffix of ['Windows-x64-Setup.exe','Windows-arm64-Setup.exe','macOS-x64.dmg','macOS-x64.zip','macOS-arm64.dmg','macOS-arm64.zip','Linux-x86_64.AppImage','Linux-amd64.deb','Linux-x86_64.rpm','Linux-arm64.AppImage','Linux-arm64.deb','Linux-aarch64.rpm']) {
       const name=`OneYes-Canvas-${version}-${suffix}`;
       await writeFile(join(dir,name),currentPayload);files.push(name);
+      if(name.endsWith('.exe'))await writeFile(join(dir,name+'.blockmap'),gzipSync(JSON.stringify({version:'2',files:[{name:'file',offset:0,sizes:[currentPayload.length],checksums:[createHash('sha256').update(currentPayload).digest('hex')]}]})));
     }
     const keys=generateKeyPairSync('ed25519'),publicKey=keys.publicKey.export({format:'pem',type:'spki'}),privateKey=keys.privateKey.export({format:'pem',type:'pkcs8'});
     const run=()=>spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8',env:{...process.env,CANVAS_OTA_PRIVATE_KEY:privateKey,CANVAS_OTA_TEST_PUBLIC_KEY:publicKey}});
@@ -26,6 +28,8 @@ test('release requires all twelve native installers and hashes RPM architecture 
     const text=await readFile(join(dir,'canvas-latest.json'),'utf8'),signature=await readFile(join(dir,'canvas-latest.json.sig'),'utf8');
     assert.ok(verify(null,Buffer.from(text),publicKey,Buffer.from(signature.trim(),'base64')));
     assert.equal(Object.keys(JSON.parse(text).platforms).length,10);
+    assert.equal(JSON.parse(text).platforms['win32-x64-nsis'].blockmap.file,filename(version,'win32','x64','nsis')+'.blockmap');
+    assert.equal((await readFile(join(dir,'SHA256SUMS-blockmaps.txt'),'utf8')).trim().split('\n').length,2);
     assert.ok(JSON.parse(text).platforms['linux-arm64-rpm'].file.endsWith('Linux-aarch64.rpm'));
     const baseDir=await mkdtemp(join(tmpdir(),'canvas-release-base-'));
     try {
@@ -54,6 +58,7 @@ test('release requires all twelve native installers and hashes RPM architecture 
       try{
         const target={platform:'win32',arch:'x64',format:'nsis'},file=filename(version,target.platform,target.arch,target.format);
         await copyFile(join(dir,file),join(independent,file));
+        await copyFile(join(dir,file+'.blockmap'),join(independent,file+'.blockmap'));
         const env={...process.env,CANVAS_OTA_PRIVATE_KEY:'',CANVAS_OTA_TEST_PUBLIC_KEY:publicKey,CANVAS_OTA_BASE_DIR:baseDir,CANVAS_OTA_BSDIFF:'',CANVAS_OTA_DELTA_TARGET:platformKey(target)};
         const generated=spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',independent],{encoding:'utf8',env});
         assert.equal(generated.status,0,generated.stderr);

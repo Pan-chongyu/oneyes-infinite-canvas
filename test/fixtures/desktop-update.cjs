@@ -55,6 +55,55 @@ async function nativeResume() {
         console.log('NATIVE_OTA_RESUME_OK: Electron HTTP socket interruption, restored prefix, Range/If-Range, complete-file hash before installation');
     } finally { updater.close(); restarted.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
 }
+async function nativeBlockResume() {
+    const { createServer } = require('node:http'), { gzipSync } = require('node:zlib');
+    const { generateKeyPairSync, sign, createHash } = require('node:crypto');
+    const { mkdir, writeFile, readFile } = require('node:fs/promises');
+    const { createUpdater } = require('../../desktop/updater.cjs');
+    const { filename, RELEASE_ROOT } = require('../../desktop/update-policy.cjs');
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519'), hash = bytes => createHash('sha256').update(bytes).digest('hex');
+    const base = Buffer.concat([Buffer.alloc(64, 1), Buffer.alloc(64, 2)]), next = Buffer.concat([Buffer.alloc(64, 2), Buffer.alloc(64, 3)]);
+    const map = bytes => gzipSync(JSON.stringify({ version: '2', files: [{ name: 'file', offset: 0, sizes: [64, 64], checksums: [hash(bytes.subarray(0, 64)), hash(bytes.subarray(64))] }] }));
+    const release = (version, bytes) => {
+        const file = filename(version, 'win32', 'x64', 'nsis'), url = `${RELEASE_ROOT}/download/v${version}/${file}`, blockmap = map(bytes);
+        const entry = { file, url, size: bytes.length, sha256: hash(bytes), blockmap: { file: file + '.blockmap', url: url + '.blockmap', size: blockmap.length, sha256: hash(blockmap) } };
+        const text = JSON.stringify({ schema: 1, version, notes: 'native blocks', platforms: { 'win32-x64-nsis': entry } });
+        return { entry, text, signature: sign(null, Buffer.from(text), privateKey).toString('base64'), blockmap };
+    };
+    const old = release('1.0.0', base), current = release('1.0.1', next), ranges = [];
+    let pending, first = true, installs = 0;
+    const server = createServer((request, response) => {
+        if (request.url === '/probe') { response.end(); return; }
+        if (request.url.endsWith('.sig')) { response.end(current.signature); return; }
+        if (request.url.endsWith('.json')) { response.end(current.text); return; }
+        if (request.url.endsWith('.blockmap')) { response.end(request.url.includes('/v1.0.0/') ? old.blockmap : current.blockmap); return; }
+        ranges.push(request.headers.range);
+        if (first) {
+            first = false; pending = response;
+            response.writeHead(206, { ETag: '"native-blocks"', 'Content-Range': 'bytes 64-127/128', 'Content-Length': 64, 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }); response.write(next.subarray(64, 71));
+        } else {
+            assert.equal(request.headers.range, 'bytes=71-127'); assert.equal(request.headers['if-range'], '"native-blocks"');
+            response.writeHead(206, { ETag: '"native-blocks"', 'Content-Range': 'bytes 71-127/128', 'Content-Length': 57 }); response.end(next.subarray(71));
+        }
+    });
+    for (;;) {
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        try { await (await fetch(`http://127.0.0.1:${server.address().port}/probe`)).arrayBuffer(); break; }
+        catch (error) { await new Promise(resolve => server.close(resolve)); if (error.cause?.message !== 'bad port') throw error; }
+    }
+    const directory = join(app.getPath('userData'), 'native-blocks'), folder = join(directory, 'ota/base-1.0.0'); await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, old.entry.file), base); await writeFile(join(folder, 'canvas-latest.json'), old.text); await writeFile(join(folder, 'canvas-latest.json.sig'), old.signature);
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const options = { currentVersion: '1.0.0', directory, publicKey, target: async () => ({ platform: 'win32', arch: 'x64', format: 'nsis' }), fetcher: (url, init) => net.fetch(origin + new URL(url).pathname, init),
+        install: async plan => { assert.deepEqual(await readFile(plan.file), next); installs++; }, changed: state => { if (state.downloaded === 7 && pending) { pending.destroy(); pending = null; } } };
+    const updater = createUpdater(options), restarted = createUpdater(options);
+    try {
+        await updater.check(); assert.equal(updater.state().status, 'error'); updater.close();
+        await restarted.check(); assert.equal(restarted.state().status, 'ready'); assert.equal(restarted.state().mode, 'delta');
+        await restarted.apply(); assert.equal(installs, 1); assert.deepEqual(ranges, ['bytes=64-127', 'bytes=71-127']);
+        console.log('NATIVE_BLOCK_OTA_OK: actual Electron socket interruption, copied blocks, range resume and signed full-file validation');
+    } finally { updater.close(); restarted.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+}
 app.whenReady().then(async () => {
     const win = new BrowserWindow({ show: false, width: 1000, height: 720, webPreferences: { contextIsolation: true, nodeIntegration: false } });
     win.webContents.on('console-message', details => { if (details.level >= 2) console.error(details.message); });
@@ -62,6 +111,7 @@ app.whenReady().then(async () => {
     const wait = async condition => { const end = Date.now() + 20000; while (!await js(condition)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
     try {
         await nativeResume();
+        await nativeBlockResume();
         await win.loadURL(process.argv[2]);
         await wait('window.updateTest && document.querySelector("[aria-expanded]")');
         await js('document.querySelector("[aria-expanded]").click()');

@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 const require = createRequire(import.meta.url), run = promisify(execFile);
 const { prepareInstall } = require('../desktop/update-install.cjs');
+const { downloadBlocks, readBlockmap } = require('../desktop/update-blockmap.cjs');
 
 test('Windows helper waits for its parent, installs real NSIS in Unicode paths, verifies the version and reopens', { skip: process.platform !== 'win32' }, async t => {
     const root = await mkdtemp(join(tmpdir(), 'canvas-win-ota-'));
@@ -31,6 +32,25 @@ test('Windows helper waits for its parent, installs real NSIS in Unicode paths, 
         const file = join(folder, 'setup.exe'), nsi = join(folder, 'fixture.nsi');
         await writeFile(nsi, '\ufeff' + `Unicode true\nName "Canvas OTA isolated test"\nOutFile ${quote(file)}\nRequestExecutionLevel user\nSilentInstall silent\nSection\n${scenario === 'installer' ? 'SetErrorLevel 2' : scenario === 'version' ? '' : `SetOutPath "$INSTDIR"\nFile "/oname=OneYes Canvas.exe" ${quote(next)}`}\nSectionEnd\n`);
         await run(nsis.path, ['/V2', nsi], { env: { ...process.env, ...nsis.env }, windowsHide: true });
+        if (scenario === 'success') {
+            const baseFile = join(folder, 'base-setup.exe'), baseNsi = join(folder, 'base.nsi');
+            await writeFile(baseNsi, '\ufeff' + `Unicode true\nName "Canvas OTA base"\nOutFile ${quote(baseFile)}\nRequestExecutionLevel user\nSilentInstall silent\nSection\nSetOutPath "$INSTDIR"\nFile "/oname=OneYes Canvas.exe" ${quote(old)}\nSectionEnd\n`);
+            await run(nsis.path, ['/V2', baseNsi], { env: { ...process.env, ...nsis.env }, windowsHide: true });
+            const { buildBlockMap } = require('app-builder-lib/out/targets/blockmap/blockmap');
+            for (const path of [baseFile, file]) await buildBlockMap(path, 'gzip', path + '.blockmap');
+            const baseBytes = await readFile(baseFile), nextBytes = await readFile(file), outputFile = join(folder, 'reconstructed.exe');
+            await readBlockmap(file + '.blockmap', nextBytes.length);
+            const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+            const info = { size: nextBytes.length, sha256: sha(nextBytes), blockmap: { sha256: sha(await readFile(file + '.blockmap')) }, url: 'https://invalid.test/setup.exe' };
+            const progress = [];
+            await downloadBlocks({ baseFile, oldMapFile: baseFile + '.blockmap', newMapFile: file + '.blockmap', base: { size: baseBytes.length, sha256: sha(baseBytes), blockmap: { sha256: sha(await readFile(baseFile + '.blockmap')) } }, entry: info, outputFile,
+                changed: state => progress.push(state), fetcher: async (_url, init) => {
+                    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(init.headers.Range);
+                    return new Response(nextBytes.subarray(Number(start), Number(end) + 1), { status: 206, headers: { 'content-range': `bytes ${start}-${end}/${nextBytes.length}` } });
+                } });
+            assert.ok(progress.at(-1).reused > 0, 'real NSIS and builder block maps must reuse bytes');
+            assert.equal(sha(await readFile(outputFile)), info.sha256); await copyFile(outputFile, file);
+        }
         const sha256 = scenario === 'integrity' ? 'a'.repeat(64) : createHash('sha256').update(await readFile(file)).digest('hex');
         const plan = { platform: 'win32', format: 'nsis', root: folder, folder, destination, executable, file, version: '0.21.0', sha256 };
         if (scenario === 'prepare') plan.file = join(folder, 'missing.exe');

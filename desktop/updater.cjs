@@ -4,6 +4,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { FEED, CHECK_INTERVAL, readManifest, newer } = require('./update-policy.cjs');
 const { applyDelta } = require('./update-delta.cjs');
+const { downloadBlocks } = require('./update-blockmap.cjs');
 
 async function fileHash(file) {
     const hash = createHash('sha256');
@@ -16,7 +17,7 @@ async function validateFile(file, entry) {
 }
 function createUpdater({ currentVersion, directory, target, fetcher, install, changed = () => {}, onError = () => {}, onRecovered = () => {}, publicKey, enabled = true, feed = FEED }) {
     const root = path.join(directory, 'ota');
-    let state = { status: 'idle', currentVersion, version: '', progress: 0, downloaded: 0, total: 0, notes: '', error: '', supported: enabled, mode: 'full', phase: '' };
+    let state = { status: 'idle', currentVersion, version: '', progress: 0, downloaded: 0, total: 0, notes: '', error: '', supported: enabled, mode: 'full', phase: '', reused: 0 };
     let selected, entry, saved, operation, installation, checking, timer, closed = false;
     const controller = new AbortController();
     const recovered = (stage, operation) => { try { onRecovered(stage, operation); } catch {} };
@@ -83,7 +84,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         if (!result.ok) { await result.body?.cancel(); throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status }); }
         return result;
     }
-    async function downloadBytes(url, file, size, sha256) {
+    async function downloadBytes(url, file, size, sha256, notify = true) {
         const partial = file + '.part', receipt = partial + '.json';
         const discard = async () => { await fs.rm(partial, { force: true }); await fs.rm(receipt, { force: true }); };
         try { await validateFile(file, { size, sha256 }); return; } catch {}
@@ -115,14 +116,14 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             if (offset) for await (const chunk of createReadStream(partial)) hash.update(chunk);
             const handle = await fs.open(partial, offset ? 'a' : 'w', 0o600);
             let bytes = offset;
-            emit({ downloaded: bytes, progress: Math.floor(bytes / size * 100) });
+            if (notify) emit({ downloaded: bytes, progress: Math.floor(bytes / size * 100) });
             try {
                 for await (const chunk of result.body) {
                     bytes += chunk.length;
                     if (bytes > size) { invalid = true; throw new Error('更新包长度无效，请重试'); }
                     hash.update(chunk); await handle.writeFile(chunk);
                     const progress = Math.floor(bytes / size * 100);
-                    if (progress !== state.progress) emit({ downloaded: bytes, progress });
+                    if (notify && progress !== state.progress) emit({ downloaded: bytes, progress });
                 }
             } finally { try { await handle.sync(); } finally { await handle.close(); } }
             if (bytes < size) throw new Error('更新包下载中断，重试后将继续下载');
@@ -135,20 +136,20 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             throw error;
         }
     }
-    async function findBase(delta) {
-        if (!delta || delta.from !== currentVersion) return null;
+    async function findBase(delta, blockmap = false) {
+        if (!blockmap && (!delta || delta.from !== currentVersion)) return null;
         const folder = path.join(root, `base-${currentVersion}`);
         try {
             const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(file => fs.readFile(path.join(folder, file), 'utf8')));
             const savedBase = readManifest(text, signature, await chooseTarget(), publicKey);
-            if (savedBase.version !== currentVersion || savedBase.file !== delta.baseFile || savedBase.size !== delta.baseSize || savedBase.sha256 !== delta.baseSha256) return null;
+            if (savedBase.version !== currentVersion || (blockmap ? !savedBase.blockmap : savedBase.file !== delta.baseFile || savedBase.size !== delta.baseSize || savedBase.sha256 !== delta.baseSha256)) return null;
             const file = path.join(folder, savedBase.file);
             await validateFile(file, savedBase);
-            return file;
+            return blockmap ? { file, folder, entry: savedBase } : file;
         } catch { return null; }
     }
     async function downloadFull() {
-        emit({ status: 'downloading', mode: 'full', phase: '', error: '', progress: 0, downloaded: 0, total: entry.size });
+        emit({ status: 'downloading', mode: 'full', phase: '', error: '', progress: 0, downloaded: 0, total: entry.size, reused: 0 });
         await downloadBytes(entry.url, path.join(saved.folder, entry.file), entry.size, entry.sha256);
     }
     async function download() {
@@ -156,8 +157,27 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         await fs.mkdir(saved.folder, { recursive: true, mode: 0o700 });
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json'), saved.text, { mode: 0o600 });
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json.sig'), saved.signature, { mode: 0o600 });
-        const base = await findBase(entry.delta);
-        if (base && entry.delta.size < entry.size) {
+        const windowsBase = entry.blockmap ? await findBase(undefined, true) : null;
+        const base = windowsBase ? null : await findBase(entry.delta);
+        if (windowsBase) {
+            const output = path.join(saved.folder, entry.file + '.blocks.part');
+            emit({ status: 'downloading', mode: 'delta', phase: 'planning', error: '', progress: 0, downloaded: 0, total: 0, reused: 0 });
+            try {
+                const oldMap = windowsBase.entry.blockmap, newMap = entry.blockmap;
+                const oldMapFile = path.join(windowsBase.folder, oldMap.file), newMapFile = path.join(saved.folder, newMap.file);
+                await downloadBytes(oldMap.url, oldMapFile, oldMap.size, oldMap.sha256, false);
+                await downloadBytes(newMap.url, newMapFile, newMap.size, newMap.sha256, false);
+                await downloadBlocks({ baseFile: windowsBase.file, oldMapFile, newMapFile, base: windowsBase.entry, entry, outputFile: output, fetcher, signal: controller.signal, changed: emit });
+                emit({ phase: 'reconstructing' });
+                await validateFile(output, entry);
+                await fs.rename(output, path.join(saved.folder, entry.file));
+                await fs.rm(output + '.json', { force: true });
+            } catch (error) {
+                if (closed || error.resumableDownload || ['ENOSPC', 'EACCES', 'EPERM', 'EIO'].includes(error.code)) throw error;
+                await fs.rm(output, { force: true }); await fs.rm(output + '.json', { force: true });
+                await downloadFull();
+            }
+        } else if (base && entry.delta.size < entry.size) {
             try {
                 const delta = entry.delta, patch = path.join(saved.folder, delta.file), output = path.join(saved.folder, entry.file + '.delta.part');
                 emit({ status: 'downloading', mode: 'delta', phase: '', error: '', progress: 0, downloaded: 0, total: delta.size });

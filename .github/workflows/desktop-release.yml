@@ -136,6 +136,7 @@ jobs:
           name: OneYes-Canvas-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             desktop-dist/*.exe
+            desktop-dist/*.exe.blockmap
             desktop-dist/*.dmg
             desktop-dist/*.zip
             desktop-dist/*.AppImage

@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.92",
+  "version": "0.20.93",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -49,6 +49,7 @@
       "desktop/**/*.ps1",
       "desktop/**/*.sh",
       "node_modules/bsdiff-wasm/**/*",
+      "node_modules/electron-updater/**/*",
       "canvas-proxy/transport.js",
       "canvas-proxy/package.json",
       "web/dist/**/*",
@@ -64,6 +65,7 @@
       "artifactName": "OneYes-Canvas-${version}-Windows-${arch}-Setup.${ext}"
     },
     "nsis": {
+      "differentialPackage": true,
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -148,6 +150,7 @@
   "dependencies": {
     "@iarna/toml": "2.2.5",
     "bsdiff-wasm": "0.1.4",
+    "electron-updater": "6.8.11",
     "http-proxy-agent": "7.0.2",
     "https-proxy-agent": "7.0.6",
     "node-fetch": "3.3.2",
