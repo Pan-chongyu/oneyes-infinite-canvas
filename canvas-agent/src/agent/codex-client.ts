@@ -13,7 +13,7 @@ import type { AgentEmit, AgentPermissionMode } from "./types.js";
 import { prepareWindowsMcp, type WindowsMcpSettings } from "./windows-mcp.js";
 
 type AgentEvent = JsonRecord & { type: string; usage?: unknown };
-type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; silent?: boolean };
+type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; silent?: boolean; method?: CodexRequestMethod };
 type ActiveTurn = PendingRequest & { threadId: string; turnId: string; prompt: string; messageText?: string };
 type ItemDeltaParams = { threadId: string; turnId: string; itemId: string; delta: string; summaryIndex?: number };
 type PendingDelta = { delta: string; itemType: string; params: ItemDeltaParams; timer: ReturnType<typeof setTimeout> };
@@ -29,6 +29,16 @@ const SKILL_DRAFT_INSTRUCTIONS = "你只负责根据已提供的对话或画布�
 /** 表示错误已经通过 app-server 终态或进程事件通知过网页。 */
 export class CodexReportedError extends Error {
     override name = "CodexReportedError";
+}
+
+/** Preserve only stable RPC classification, never RPC data or request parameters. */
+export function codexRequestError(value: unknown, method = "") {
+    const rpcCode = Number(field(value, "code"));
+    const code = ({ [-32700]: 'ERR_AGENT_RPC_PARSE', [-32600]: 'ERR_AGENT_RPC_PARAMS', [-32601]: 'ERR_AGENT_RPC_METHOD', [-32602]: 'ERR_AGENT_RPC_PARAMS' } as Record<number, string>)[rpcCode] || 'ERR_AGENT_RPC';
+    const upstream = Number(field(field(value, 'data'), 'httpStatusCode'));
+    const status = upstream >= 400 && upstream <= 599 ? upstream : code === 'ERR_AGENT_RPC' ? 500 : 400;
+    const diagnosticOperation = method === 'initialize' ? 'agent-initialize' : method.startsWith('model/') ? 'agent-models' : method.startsWith('thread/') ? 'agent-thread' : method.startsWith('turn/') ? 'agent-turn' : method.startsWith('skills/') ? 'agent-skills' : /mcp/i.test(method) ? 'agent-mcp' : undefined;
+    return Object.assign(new Error(String(field(value, 'message') || 'Codex request failed')), { code, status, diagnosticOperation });
 }
 
 /** 封装 Codex app-server 的 JSON-RPC 通信与事件转换。 */
@@ -377,7 +387,7 @@ export class CodexAppClient {
         if (this.failing) return Promise.reject(new CodexReportedError(this.failureMessage || "Codex app-server 已停止")) as Promise<CodexRequestResult<Method>>;
         const id = this.nextId++;
         this.write({ id, method, params }, silent);
-        return new Promise<CodexRequestResult<Method>>((resolve, reject) => this.pending.set(id, { resolve: (result) => resolve(result as CodexRequestResult<Method>), reject, silent }));
+        return new Promise<CodexRequestResult<Method>>((resolve, reject) => this.pending.set(id, { resolve: (result) => resolve(result as CodexRequestResult<Method>), reject, silent, method }));
     }
 
     /** 发送无需响应的 JSON-RPC 通知。 */
@@ -419,7 +429,7 @@ export class CodexAppClient {
                 if (/not materialized yet.*includeTurns/i.test(error)) logger.debug("Codex thread has no messages yet", { id });
                 else logger.warn("Codex request failed", { id, error });
             }
-            return this.reject(id, error);
+            return this.reject(id, message.error);
         }
         if (this.pending.has(id)) return this.resolve(id, message.result);
         if (typeof message.method === "string" && "id" in message) return this.answerServerRequest(message);
@@ -748,9 +758,9 @@ export class CodexAppClient {
     }
 
     /** 拒绝指定 JSON-RPC 请求。 */
-    private reject(id: number, message: string) {
+    private reject(id: number, error: unknown) {
         const pending = this.pending.get(id);
-        if (pending) (this.pending.delete(id), pending.reject(new Error(message)));
+        if (pending) (this.pending.delete(id), pending.reject(codexRequestError(error, pending.method)));
     }
 
     /** 拒绝进程退出时仍未完成的请求与 turn。 */

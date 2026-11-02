@@ -6,6 +6,7 @@ import {inspect} from "node:util";
 import winston, {format, transports, type Logger as WinstonLogger} from "winston";
 
 import {formatDateForFilename} from "./date.js";
+import {diagnosticError} from "./diagnostic-error.js";
 
 /** 管理 Canvas Agent 的终端与文件 Debug 日志。 */
 export class Logger {
@@ -52,7 +53,7 @@ export class Logger {
         if (process.env.ONEYES_DESKTOP_AGENT === '1' && process.connected && process.send) {
             const nested = details && typeof details === 'object' && 'error' in details ? details.error : null;
             const error = details instanceof Error ? details : nested instanceof Error ? nested : new Error(message);
-            try { process.send({ type: 'diagnostic', error: { name: error.name, message: error.message, stack: error.stack } }, () => {}); } catch {}
+            try { process.send({ type: 'diagnostic', error: diagnosticError(error) }, () => {}); } catch {}
         }
         if (details === undefined) this.logger.error(message);
         else this.logger.error(message, {details: sanitize(details)});

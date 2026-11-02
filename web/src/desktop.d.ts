@@ -8,7 +8,10 @@ declare global {
                 release(id: string): Promise<void>;
                 subscribe(callback: (state: { id: string; stage: string; progress?: number }) => void): () => void;
             };
-            diagnostics?: { report(input: { component: string; stage: string; error: { name: string; message: string; stack: string; code: string; status: number } }): Promise<void> };
+            diagnostics?: {
+                report(input: { component: string; stage: string; operation?: string; error?: Record<string, unknown> }): Promise<void>;
+                recover(input: { component: string; stage: string; operation: string }): Promise<void>;
+            };
             windowChrome?: {
                 platform: string;
                 theme(theme: 'light' | 'dark'): Promise<void>;

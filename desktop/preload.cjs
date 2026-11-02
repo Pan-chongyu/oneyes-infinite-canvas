@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('oneYesDesktop', {
             return () => ipcRenderer.removeListener('media:state', listener);
         },
     },
-    diagnostics: { report: input => ipcRenderer.invoke('diagnostics:report', input) },
+    diagnostics: { report: input => ipcRenderer.invoke('diagnostics:report', input), recover: input => ipcRenderer.invoke('diagnostics:recover', input) },
     windowChrome: {
         platform: process.platform,
         theme: theme => ipcRenderer.invoke('window:theme', theme),

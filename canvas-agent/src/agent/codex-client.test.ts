@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CodexAppClient, canRecoverWindowsMcp } from "./codex-client.js";
+import { CodexAppClient, canRecoverWindowsMcp, codexRequestError } from "./codex-client.js";
 import { assertDraftHasNoSensitiveValues, canvasSkillSource } from "./codex.js";
 
 type TestClient = {
@@ -18,6 +18,18 @@ type TestClient = {
 };
 
 const emptyEventHistory = { record: () => Promise.resolve(), recordTurn: () => Promise.resolve() };
+
+test('RPC errors preserve method classification and upstream status without retaining RPC data', async () => {
+    const error = codexRequestError({ code: -32602, message: 'Invalid params', data: { prompt: 'PRIVATE', token: 'SECRET' } }, 'model/list');
+    assert.equal(error.code, 'ERR_AGENT_RPC_PARAMS'); assert.equal(error.status, 400); assert.equal(error.diagnosticOperation, 'agent-models');
+    assert.doesNotMatch(JSON.stringify(error), /PRIVATE|SECRET/);
+    assert.equal(codexRequestError({ code: -32000, data: { httpStatusCode: 429 } }, 'turn/start').status, 429);
+    const writes: Array<Record<string, unknown>> = [];
+    const client = Reflect.construct(CodexAppClient, [{ stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } }, () => {}, emptyEventHistory]) as CodexAppClient;
+    const result = client.listModels();
+    (client as unknown as TestClient).handle({ id: writes[0].id, error: { code: -32601, message: 'method unavailable' } });
+    await assert.rejects(result, (value: Error) => 'code' in value && value.code === 'ERR_AGENT_RPC_METHOD' && 'diagnosticOperation' in value && value.diagnosticOperation === 'agent-models');
+});
 
 test("model discovery follows every cursor and rejects incomplete repeated-cursor results", async () => {
     const writes: Array<Record<string, unknown>> = [];

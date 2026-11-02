@@ -502,7 +502,9 @@ export function startHttpServer() {
     app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
         logger.error("HTTP request failed", { method: req.method, path: req.path, error });
         if (error instanceof SkillStoreError || error instanceof CodexSkillLookupError) return void res.status(error.statusCode).json({ ok: false, error: error.message });
-        res.status(500).json({ ok: false, error: error.message });
+        const detail = error as Error & { status?: number; code?: string; diagnosticOperation?: string };
+        const status = Number.isInteger(detail.status) && detail.status! >= 400 && detail.status! <= 599 ? detail.status! : 500;
+        res.status(status).json({ ok: false, error: error.message, code: detail.code, diagnosticOperation: detail.diagnosticOperation });
     });
 
     const server = app.listen(port, "127.0.0.1", (error?: Error) => {

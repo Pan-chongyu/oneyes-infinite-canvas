@@ -16,7 +16,7 @@ const { prepareInstall } = require('./update-install.cjs');
 const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
-let diagnostics = { report: async () => {}, close: async () => {} };
+let diagnostics = { report: async () => {}, recover: async () => {}, close: async () => {} };
 const report = (component, stage, error) => { void diagnostics.report({ component, stage, error }); };
 const smoke = process.argv.includes('--smoke-test');
 if (smoke) app.setPath('userData', join(app.getPath('temp'), 'oneyes-canvas-smoke-' + process.pid));
@@ -41,7 +41,9 @@ app.whenReady().then(async () => {
     process.on('uncaughtExceptionMonitor', error => report('app', 'crash', error));
     const saved = await vault.read(); // Refuse to overwrite an unreadable vault.
     const network = await createNetwork((...args) => net.fetch(...args));
-    const media = createMediaTools({ directory: app.getPath('userData'), binaries: app.isPackaged ? join(process.resourcesPath, 'media-bin') : join(__dirname, 'media-bin'), changed: state => { if (window && !window.isDestroyed()) window.webContents.send('media:state', state); } });
+    const media = createMediaTools({ directory: app.getPath('userData'), binaries: app.isPackaged ? join(process.resourcesPath, 'media-bin') : join(__dirname, 'media-bin'),
+        onError: (error, stage, operation) => { void diagnostics.report({ component: 'media', stage, operation, error }); },
+        changed: state => { if (window && !window.isDestroyed()) window.webContents.send('media:state', state); } });
     network.configure(saved ? JSON.parse(saved).state?.config : {});
     const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: network.fetch });
     const listModels = createModelCatalog(network.fetch);
@@ -55,7 +57,9 @@ app.whenReady().then(async () => {
         ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
     const updater = createUpdater({ currentVersion: app.getVersion(), directory: app.getPath('userData'), target: () => updateTarget(), fetcher: network.fetch,
         enabled: app.isPackaged && !smoke,
-        changed: state => { if (state.status === 'error') report('update', 'install', new Error(state.error)); if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
+        onError: (error, stage, operation) => { void diagnostics.report({ component: 'update', stage, operation, error }); },
+        onRecovered: (stage, operation) => { void diagnostics.recover({ component: 'update', stage, operation }); },
+        changed: state => { if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
         install: async plan => { const apply = await prepareInstall(plan); await apply(); app.quit(); } });
     let diagnosticsClosed = false;
     app.on('before-quit', event => {
@@ -109,6 +113,7 @@ app.whenReady().then(async () => {
     ipcMain.handle('media:start', async (event, id) => { trusted(event); try { return { data: await media.start(id) }; } catch (error) { return { error: error.message }; } });
     ipcMain.handle('media:release', (event, id) => { trusted(event); return media.release(id); });
     ipcMain.handle('diagnostics:report', (event, input) => { trusted(event); return diagnostics.report(input); });
+    ipcMain.handle('diagnostics:recover', (event, input) => { trusted(event); return diagnostics.recover(input); });
     ipcMain.handle('window:theme', (event, theme) => { trusted(event); syncWindowTheme(window, nativeTheme, theme); });
     ipcMain.handle('window:fullscreen', event => { trusted(event); return window.isFullScreen(); });
     ipcMain.handle('config:read', event => { trusted(event); return vault.read(); });

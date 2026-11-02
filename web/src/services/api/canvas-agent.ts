@@ -1,4 +1,4 @@
-import { reportError } from "../diagnostics";
+import { reportError, reportRecovery } from "../diagnostics";
 import i18n from "@/i18n";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { AgentReasoningEffort } from "@/stores/use-agent-store";
@@ -15,9 +15,13 @@ export async function desktopCodexConnection(operation: 'setup' | 'restore') {
 }
 
 export class AgentApiError<T = unknown> extends Error {
-    constructor(readonly status: number, readonly response: T & { code?: string; error?: string; msg?: string }) {
+    readonly code?: string;
+    readonly diagnosticOperation?: string;
+    constructor(readonly status: number, readonly response: T & { code?: string; diagnosticOperation?: string; error?: string; msg?: string }) {
         super(response.error || response.msg || i18n.t("agent.state.requestFailed"));
         this.name = "AgentApiError";
+        this.code = response.code;
+        this.diagnosticOperation = response.diagnosticOperation;
     }
 }
 
@@ -133,8 +137,11 @@ export async function fetchAgentJson<T>(endpoint: string, token: string, path: s
         })) as T & { error?: string; msg?: string };
         if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error(i18n.t("agent.state.requestFailed"));
         if (!res.ok) throw new AgentApiError(res.status, data);
+        // Model discovery has no thread/task-specific scope. Its successful
+        // response can retire only previous model-list failures on this install.
+        if (path === '/agent/codex/models') reportRecovery('agent', 'request', 'agent-models');
         return data;
-    } catch (error) { reportError("agent", "request", error); throw error; }
+    } catch (error) { reportError("agent", "request", error, path === '/agent/codex/models' ? 'agent-models' : undefined); throw error; }
 }
 
 export async function discoverAgentConfig(endpoint: string) {

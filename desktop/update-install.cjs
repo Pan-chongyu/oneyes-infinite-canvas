@@ -9,7 +9,7 @@ async function launch(command, args, { cwd, ready = false } = {}) {
     // DETACHED_PROCESS can exit 0 without executing PowerShell at all.
     const child = spawn(command, args, { cwd, detached: !ready, stdio: ready ? ['ignore', 'pipe', 'ignore'] : 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => {
-        const failed = () => reject(new Error('无法启动 Windows 更新助手，请检查安全软件或系统权限后重试；当前应用未关闭'));
+        const failed = error => reject(new Error('无法启动 Windows 更新助手，请检查安全软件或系统权限后重试；当前应用未关闭', { cause: error instanceof Error ? error : undefined }));
         child.once('error', ready ? failed : reject);
         if (!ready) { child.once('spawn', resolve); return; }
         child.once('exit', failed);
@@ -51,7 +51,7 @@ async function prepareInstall(plan, { parentPid = process.pid, command = run, st
             await command('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle]);
             await fs.access(path.join(bundle, 'Contents/MacOS/OneYes Canvas'), fs.constants.X_OK);
             return () => start('/bin/sh', [helper, 'mac', String(parentPid), destination, bundle, errorFile, executable, path.join(root, `installed-${version}.ok`)]);
-        } catch (error) { await fs.rm(stage, { recursive: true, force: true }); throw new Error(/^(更新)/.test(error.message) ? error.message : '无法准备 macOS 更新。请将应用移到“应用程序”并确认目录可写后重试'); }
+        } catch (error) { await fs.rm(stage, { recursive: true, force: true }); throw new Error(/^(更新)/.test(error.message) ? error.message : '无法准备 macOS 更新。请将应用移到“应用程序”并确认目录可写后重试', { cause: error }); }
     }
     if (platform === 'linux' && format === 'AppImage') {
         await fs.access(path.dirname(destination), fs.constants.W_OK);

@@ -14,13 +14,18 @@ async function validateFile(file, entry) {
     const info = await fs.lstat(file);
     if (!info.isFile() || info.size !== entry.size || await fileHash(file) !== entry.sha256) throw new Error('更新包校验失败，已停止安装。请重新下载');
 }
-function createUpdater({ currentVersion, directory, target, fetcher, install, changed = () => {}, publicKey, enabled = true, feed = FEED }) {
+function createUpdater({ currentVersion, directory, target, fetcher, install, changed = () => {}, onError = () => {}, onRecovered = () => {}, publicKey, enabled = true, feed = FEED }) {
     const root = path.join(directory, 'ota');
     let state = { status: 'idle', currentVersion, version: '', progress: 0, downloaded: 0, total: 0, notes: '', error: '', supported: enabled, mode: 'full', phase: '' };
     let selected, entry, saved, operation, installation, checking, timer, closed = false;
     const controller = new AbortController();
+    const recovered = (stage, operation) => { try { onRecovered(stage, operation); } catch {} };
     const emit = patch => { state = { ...state, ...patch }; changed({ ...state }); };
-    const failure = error => emit({ status: 'error', error: error.userMessage || (/^(更新|未找到|当前|无法识别|请将)/.test(error.message) ? error.message : '连接更新服务失败，请检查网络或代理后重试') });
+    const failure = error => {
+        const stage = state.status === 'installing' ? 'install' : state.status === 'downloading' ? 'download' : 'check';
+        try { onError(error, stage, stage === 'install' ? 'update-installer' : stage === 'check' ? 'update-feed' : state.mode === 'delta' ? 'update-delta' : 'update-package'); } catch {}
+        emit({ status: 'error', error: error.userMessage || (/^(更新|未找到|当前|无法识别|请将)/.test(error.message) ? error.message : '连接更新服务失败，请检查网络或代理后重试') });
+    };
     const serial = action => {
         if (operation) return operation;
         operation = action().catch(error => {
@@ -65,6 +70,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                 await validateFile(path.join(folder, candidate.file), candidate);
                 entry = candidate; saved = { text, signature, folder };
                 await cleanup(name);
+                recovered('download', 'update-package');
                 emit({ status: 'ready', version: entry.version, notes: entry.notes, progress: 100, downloaded: entry.size, total: entry.size, mode: 'full' });
                 return true;
             } catch {}
@@ -74,7 +80,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
     }
     async function response(url, init = {}) {
         const result = await fetcher(url, { ...init, signal: checking ? AbortSignal.any([controller.signal, checking.signal]) : controller.signal, cache: 'no-store' });
-        if (!result.ok) throw new Error('连接更新服务失败，请检查网络或代理后重试');
+        if (!result.ok) { await result.body?.cancel(); throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status }); }
         return result;
     }
     async function downloadBytes(url, file, size, sha256) {
@@ -100,7 +106,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                 await result.body?.cancel(); await discard(); offset = 0;
                 result = await fetcher(url, { signal: controller.signal, cache: 'no-store' });
             } else if (result.status === 200) offset = 0;
-            if (!result.ok) { resumable = false; throw new Error('连接更新服务失败，请检查网络或代理后重试'); }
+            if (!result.ok) { resumable = false; await result.body?.cancel(); throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status }); }
             if (result.status !== 200 && !(validRange && offset)) { invalid = true; await result.body?.cancel(); throw new Error('更新包续传响应无效，请重试'); }
             if (!result.body) throw new Error('更新包下载失败，请重试');
             const etag = result.headers.get('etag');
@@ -175,6 +181,8 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         }
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json'), saved.text, { mode: 0o600 });
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json.sig'), saved.signature, { mode: 0o600 });
+        recovered('download', 'update-package');
+        if (state.mode === 'delta') recovered('download', 'update-delta');
         emit({ status: 'ready', downloaded: state.total, progress: 100, phase: '' });
     }
     return {
@@ -193,6 +201,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             } catch (error) { if (restored) return; throw error; }
             if (check.signal.aborted || closed) return;
             const candidate = readManifest(text, signature, destination, publicKey, currentVersion);
+            recovered('check', 'update-feed');
             if (restored && !newer(candidate.version, entry.version)) return;
             if (!newer(candidate.version, currentVersion)) { emit({ status: 'current', version: '', notes: '', progress: 0 }); return; }
             entry = candidate; saved = { text, signature, folder: path.join(root, entry.version) };
@@ -230,9 +239,14 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                         'windows-version': 'Windows 安装程序未替换为新版本，请检查安装目录权限后重试',
                         'windows-launch': '更新已安装但未能重新打开，请重新启动 OneYes Canvas',
                     }[error.trim()];
-                    emit({ status: 'error', error: detail || '上次更新未完成，请点击重试；Windows 请检查系统授权或安全软件，macOS 请确认应用位于“应用程序”，Linux 请完成系统授权' });
+                    const message = detail || '上次更新未完成，请点击重试；Windows 请检查系统授权或安全软件，macOS 请确认应用位于“应用程序”，Linux 请完成系统授权';
+                    emit({ status: 'installing' });
+                    failure(Object.assign(new Error(message), { userMessage: message, diagnosticOperation: 'update-installer' }));
                 }
             } catch {}
+            if (state.status !== 'error') {
+                try { await fs.access(path.join(root, `installed-${currentVersion}.ok`)); recovered('install', 'update-installer'); } catch {}
+            }
             if (state.status !== 'error') await this.check();
             timer = setInterval(() => void this.check(), CHECK_INTERVAL); timer.unref?.();
         },

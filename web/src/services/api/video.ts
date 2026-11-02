@@ -194,8 +194,8 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
         return { id: created.id, provider: "openai", model };
     } catch (error) {
 
-        reportError("video", "request", error);
-        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+        reportError("video", "submit", error, "video-openai");
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
     }
 }
 
@@ -228,12 +228,13 @@ async function createGrokVideoTask(config: AiConfig, model: string, prompt: stri
         return { id, provider: "openai", model };
     } catch (error) {
 
-        reportError("video", "request", error);
-        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+        reportError("video", "submit", error, "video-grok");
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
     }
 }
 
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    let stage: "poll" | "download" = "poll";
     try {
         const taskPath = `/videos/${encodeURIComponent(task.id)}`;
         const response = await axios.get<ApiVideoResponse>(aiApiUrl(config, taskPath), { headers: aiHeaders(config), signal: options?.signal });
@@ -247,6 +248,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         const contentPath = `${taskPath}/content`;
         if (url && !isVideoContentRelay(url, config.baseUrl, contentPath)) return { status: "completed", result: await videoResultFromUrl(url, options) };
         if (url || video.status === "completed") {
+            stage = "download";
             const content = await axios.get<Blob>(aiApiUrl(config, contentPath), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
@@ -255,8 +257,8 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         return { status: "pending" };
     } catch (error) {
 
-        reportError("video", "request", error);
-        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
+        reportError("video", stage, error, stage === "download" ? "video-content" : "video-openai");
+        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")), { cause: error });
     }
 }
 
@@ -267,7 +269,7 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
         return { blob: response.data };
     } catch (error) {
 
-        reportError("video", "request", error);
+        reportError("video", "download", error, "video-content");
         if (axios.isCancel(error) || options?.signal?.aborted) throw error;
         return { url, mimeType: "video/mp4" };
     }
@@ -302,8 +304,8 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
         return { id: created.name, provider: "gemini", model };
     } catch (error) {
 
-        reportError("video", "request", error);
-        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+        reportError("video", "submit", error, "video-gemini");
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
     }
 }
 
@@ -318,8 +320,8 @@ async function pollGeminiVideoTask(config: AiConfig, task: VideoGenerationTask, 
         return { status: "completed", result: await videoResultFromUrl(url, options) };
     } catch (error) {
 
-        reportError("video", "request", error);
-        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
+        reportError("video", "poll", error, "video-gemini");
+        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")), { cause: error });
     }
 }
 
@@ -370,7 +372,7 @@ async function referenceMediaToFile(item: { name: string; type?: string; url?: s
             blob = await (await fetch(url, { signal: options?.signal })).blob();
         } catch (error) {
 
-            reportError("video", "request", error);
+            reportError("video", "load", error, "video-reference");
             if (error instanceof DOMException && error.name === "AbortError") throw error;
             throw new Error(apiText(errorKey));
         }

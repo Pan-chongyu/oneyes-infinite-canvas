@@ -72,17 +72,20 @@ app.whenReady().then(async () => {
             const copy = (await clips())[2].id;
             await js('document.querySelector("[aria-label=片段3上移]").click()'); assert.equal((await clips())[1].id, copy);
             // Native mouse events exercise pointer capture, frame-snapped trim and a single undo entry.
-            win.showInactive();
+            win.show(); win.focus();
+            await wait('document.hasFocus()');
             await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+            await js('window.editPointer=null;for(const type of ["pointerdown","pointermove","pointerup"])document.addEventListener(type,e=>{window.editPointer={type:e.type,id:e.pointerId,x:e.clientX,label:e.target?.getAttribute("aria-label")}},true)');
             const handle = await js('(()=>{const e=document.querySelector("[aria-label=时间线片段2出点]"),r=e.getBoundingClientRect(),t=document.querySelector("[data-edit-sequence]").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),delta:Math.round(t.width/4*.25)}})()');
             assert.equal(await js(`document.elementFromPoint(${handle.x},${handle.y})?.getAttribute('aria-label')`),'时间线片段2出点');
             win.webContents.sendInputEvent({type:'mouseMove',x:handle.x,y:handle.y});
             win.webContents.sendInputEvent({type:'mouseDown',x:handle.x,y:handle.y,button:'left',clickCount:1});
-            await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+            await wait('window.editPointer?.type==="pointerdown"');
+            assert.equal(await js('window.editPointer.label'),'时间线片段2出点');
+            await wait('document.querySelector("[aria-label=时间线片段2出点]").hasPointerCapture(window.editPointer.id)');
             win.webContents.sendInputEvent({type:'mouseMove',x:handle.x+handle.delta,y:handle.y,button:'left',modifiers:['leftButtonDown']});
-            await wait('document.querySelector("[data-timeline-clip]") !== null');
-            await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
             win.webContents.sendInputEvent({type:'mouseUp',x:handle.x+handle.delta,y:handle.y,button:'left',clickCount:1});
+            await wait('window.editPointer?.type==="pointerup"');
             await wait('editTest.state().nodes.find(n=>n.id==="tool").metadata.smartEdit.clips[1].end > 1.5');
             assert.ok(Math.abs((await clips())[1].end-1.75)<.001);
             await js('document.querySelector("[aria-label=撤销片段编辑]").click()'); assert.equal((await clips())[1].end,1.5);

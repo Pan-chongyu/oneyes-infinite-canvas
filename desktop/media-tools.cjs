@@ -8,7 +8,7 @@ const { pipeline, finished } = require('node:stream/promises');
 const { validateSmartEdit, processSmartEdit } = require('./smart-edit.cjs');
 
 // Structured commands and opaque job IDs only. Renderer input never becomes a path or shell command.
-function createMediaTools({ directory, binaries, changed = () => {} }) {
+function createMediaTools({ directory, binaries, changed = () => {}, onError = () => {} }) {
     const jobs = new Map();
     const root = join(directory, 'media-work');
     const ready = rm(root, { recursive: true, force: true }).then(() => mkdir(root, { recursive: true }));
@@ -31,8 +31,8 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
         child.on('close', code => {
             if (pending) line(pending);
             if (job.controller.signal.aborted) return reject(new Error('已取消本地处理'));
-            if (error?.code === 'ENOENT') return reject(new Error('本地媒体组件缺失，请重新安装最新版 OneYes Canvas'));
-            if (error || code !== 0) return reject(new Error('无法处理该媒体，请检查文件是否完整及编码是否受支持'));
+            if (error?.code === 'ENOENT') return reject(new Error('本地媒体组件缺失，请重新安装最新版 OneYes Canvas', { cause: error }));
+            if (error || code !== 0) return reject(Object.assign(new Error('无法处理该媒体，请检查文件是否完整及编码是否受支持', { cause: error }), { code: error?.code || 'ERR_MEDIA_PROCESS' }));
             resolve(stdout);
         });
     });
@@ -162,7 +162,10 @@ function createMediaTools({ directory, binaries, changed = () => {} }) {
             jobs.set(id, { id, path, operation, count, options, uploads: new Map(), received: new Set(), outputs: new Map(), reads: new Set(), controller: new AbortController() });
             return id;
         },
-        async start(id) { const job = get(id); if (!job.running) job.running = processJob(job); return job.running; },
+        async start(id) { const job = get(id); if (!job.running) job.running = processJob(job).catch(error => {
+            if (!job.controller.signal.aborted) { try { onError(error, 'request', job.operation === 'editAnalyze' ? 'media-analyze' : job.operation === 'editRender' ? 'media-render' : 'media-process'); } catch {} }
+            throw error;
+        }); return job.running; },
         async release(id) { const job = jobs.get(id); if (!job) return; job.controller.abort(); await Promise.allSettled([...job.uploads.values(), ...job.reads, ...(job.running ? [job.running] : [])]); jobs.delete(id); await rm(job.path, { recursive: true, force: true }); },
         async close() { await Promise.allSettled([...jobs.keys()].map(id => this.release(id))); },
         async request(request) {

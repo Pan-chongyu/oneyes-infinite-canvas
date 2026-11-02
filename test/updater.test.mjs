@@ -33,6 +33,23 @@ async function fixture(t, extra = {}) {
     const updater = createUpdater(options); t.after(() => updater.close());
     return { updater, options, directory, installs, requests, setRelease: value => { current = value; }, corrupt: value => { corrupt = value; }, offline: value => { offline = value; } };
 }
+test('diagnostics preserve real check/download/install stages, HTTP causes and verified recovery', async t => {
+    const errors = [], recoveries = [];
+    const f = await fixture(t, { onError: (error, stage, operation) => errors.push({ error, stage, operation }), onRecovered: (stage, operation) => recoveries.push({ stage, operation }) });
+    f.offline(true); await f.updater.check();
+    assert.equal(errors.at(-1).stage, 'check'); assert.equal(errors.at(-1).operation, 'update-feed');
+    f.offline(false); await f.updater.check();
+    assert.ok(recoveries.some(item => item.stage === 'check' && item.operation === 'update-feed'));
+    assert.ok(recoveries.some(item => item.stage === 'download' && item.operation === 'update-package'));
+    const failInstall = Object.assign(new Error('permission'), { code: 'EPERM' });
+    const install = createUpdater({ ...f.options, install: async () => { throw failInstall; } }); t.after(() => install.close());
+    await install.check(); await install.apply();
+    assert.equal(errors.at(-1).stage, 'install'); assert.equal(errors.at(-1).error, failInstall);
+    const http = createUpdater({ ...f.options, directory: join(f.directory, 'http'), fetcher: async () => new Response('{}', { status: 503 }) }); t.after(() => http.close());
+    await http.check(); assert.equal(errors.at(-1).error.status, 503); assert.equal(errors.at(-1).stage, 'check');
+    const download = createUpdater({ ...f.options, directory: join(f.directory, 'download'), fetcher: async url => url.endsWith('.json') ? new Response(release().text) : url.endsWith('.sig') ? new Response(release().signature) : new Response('', { status: 404 }) }); t.after(() => download.close());
+    await download.check(); assert.equal(errors.at(-1).error.status, 404); assert.equal(errors.at(-1).stage, 'download');
+});
 test('manifest pins signatures, stable versions, release destination, native arch and independent formats', () => {
     const r = release(); assert.equal(readManifest(r.text, r.signature, target, publicKey).version, '0.21.0');
     assert.throws(() => readManifest(r.text + ' ', r.signature, target, publicKey), /签名/);
@@ -44,6 +61,19 @@ test('manifest pins signatures, stable versions, release destination, native arc
     assert.ok(newer('1.2.0', '1.1.9')); assert.ok(!newer('1.0.0', '2.0.0'));
     assert.match(filename('1.2.3', 'linux', 'arm64', 'rpm'), /aarch64\.rpm$/);
     assert.match(filename('1.2.3', 'linux', 'x64', 'deb'), /amd64\.deb$/);
+});
+
+test('installer preparation retains OS causes, and recovery requires a successful installed-version marker', async t => {
+    const f = await fixture(t), root = join(f.directory, 'ota');
+    await mkdir(root);
+    const cause = Object.assign(new Error('PRIVATE path'), { code: 'EPERM' });
+    await assert.rejects(prepareInstall({ platform: 'darwin', folder: root, root, version: '0.21.0', destination: join(f.directory, 'OneYes Canvas.app') }, { command: async () => { throw cause; } }), error => error.cause === cause && /macOS/.test(error.message));
+    const recovered = [], options = { ...f.options, onRecovered: (stage, operation) => recovered.push({ stage, operation }) };
+    const first = createUpdater(options); t.after(() => first.close()); await first.start();
+    assert.ok(!recovered.some(item => item.stage === 'install'));
+    await writeFile(join(root, 'installed-0.20.20.ok'), 'ready');
+    const restarted = createUpdater(options); t.after(() => restarted.close()); await restarted.start();
+    assert.ok(recovered.some(item => item.stage === 'install' && item.operation === 'update-installer'));
 });
 test('download persists verified bytes, restores offline after restart, revalidates before install, cleans prior versions', async t => {
     const f = await fixture(t);

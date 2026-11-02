@@ -62,18 +62,23 @@ export function SmartEditTimeline({
         onSelect(c.id);
         setDrag(c);
     };
-    const move = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const trimmed = (x: number) => {
         const g = gesture.current,
             source = analysis.sources.find((s) => s.id === g?.clip.sourceId);
         if (!g || !source) return;
-        const delta = Math.round(((event.clientX - g.x) / g.scale) * source.fps) / source.fps;
+        const delta = Math.round(((x - g.x) / g.scale) * source.fps) / source.fps;
         const start = g.edge === "start" ? Math.max(0, Math.min(g.clip.end - 1 / source.fps, g.clip.start + delta)) : g.clip.start;
         const end = g.edge === "end" ? Math.min(source.duration, Math.max(g.clip.start + 1 / source.fps, g.clip.end + delta)) : g.clip.end;
-        setDrag(trimEditClip(g.clip, start, end, source));
+        return trimEditClip(g.clip, start, end, source);
+    };
+    const move = (event: React.PointerEvent<HTMLButtonElement>) => {
+        const next = trimmed(event.clientX);
+        if (next) setDrag(next);
     };
     const finish = (event: React.PointerEvent<HTMLButtonElement>, commit: boolean) => {
         event.stopPropagation();
-        if (commit && drag && gesture.current && JSON.stringify(drag) !== JSON.stringify(gesture.current.clip)) onEdit(clips.map((c) => (c.id === drag.id ? drag : c)));
+        const next = commit ? trimmed(event.clientX) : undefined;
+        if (next && gesture.current && JSON.stringify(next) !== JSON.stringify(gesture.current.clip)) onEdit(clips.map((c) => (c.id === next.id ? next : c)));
         gesture.current = null;
         setDrag(null);
         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
