@@ -25,11 +25,7 @@ const previewListeners = new Set<() => void>();
 let previewRevision = 0;
 let previewQueue: Promise<unknown> = Promise.resolve();
 const IMAGE_PREVIEW_VERSION = 1;
-const IMAGE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
-const IMAGE_REMOTE_LOAD_TIMEOUT_MS = 10 * 60_000;
-const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 const IMAGE_RESPONSE_ERROR = "ImageResponseError";
-const IMAGE_TIMEOUT_ERROR = "ImageTimeoutError";
 
 type StoredImagePreview = { version: number; blob?: Blob };
 
@@ -42,8 +38,8 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
     try {
         blob = await fetchImageBlob(input, options);
     } catch (error) {
-        if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR) || !/^https?:\/\//i.test(input)) throw error;
-        const meta = await loadImageMeta(input, options, IMAGE_REMOTE_LOAD_TIMEOUT_MS);
+        if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || !/^https?:\/\//i.test(input)) throw error;
+        const meta = await loadImageMeta(input, options);
         if (!meta) throw error;
         return { url: input, width: meta.width, height: meta.height, bytes: 0, mimeType: "" };
     }
@@ -70,33 +66,20 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
 }
 
 export async function fetchImageBlob(url: string, options?: ImageReadOptions) {
-    const controller = new AbortController();
-    let timedOut = false;
-    const abort = () => controller.abort();
-    if (options?.signal?.aborted) abort();
-    else options?.signal?.addEventListener("abort", abort, { once: true });
-    const timer = window.setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-    }, IMAGE_DOWNLOAD_TIMEOUT_MS);
     try {
         const target = window.oneYesDesktop && /^https:\/\//i.test(url)
             ? `oneyes-canvas://app/image-download?url=${encodeURIComponent(url)}`
             : withLocalProxy(url);
-        const response = await fetch(target, { signal: controller.signal, credentials: "omit" });
+        const response = await fetch(target, { signal: options?.signal, credentials: "omit" });
         if (!response.ok) throw Object.assign(namedError(IMAGE_RESPONSE_ERROR), { status: response.status });
         return await response.blob();
     } catch (error) {
-        if (timedOut) throw namedError(IMAGE_TIMEOUT_ERROR);
         if (options?.signal?.aborted) throw abortReason(options.signal);
         throw error;
-    } finally {
-        window.clearTimeout(timer);
-        options?.signal?.removeEventListener("abort", abort);
     }
 }
 
-function loadImageMeta(url: string, options?: ImageReadOptions, timeoutMs = IMAGE_DECODE_TIMEOUT_MS) {
+function loadImageMeta(url: string, options?: ImageReadOptions) {
     return new Promise<{ width: number; height: number } | null>((resolve, reject) => {
         if (options?.signal?.aborted) return reject(abortReason(options.signal));
         const image = new Image();
@@ -104,7 +87,6 @@ function loadImageMeta(url: string, options?: ImageReadOptions, timeoutMs = IMAG
         const finish = (value: { width: number; height: number } | null) => {
             if (settled) return;
             settled = true;
-            window.clearTimeout(timer);
             options?.signal?.removeEventListener("abort", abort);
             image.onload = null;
             image.onerror = null;
@@ -113,12 +95,11 @@ function loadImageMeta(url: string, options?: ImageReadOptions, timeoutMs = IMAG
         const abort = () => {
             if (settled) return;
             settled = true;
-            window.clearTimeout(timer);
+            options?.signal?.removeEventListener("abort", abort);
             image.onload = null;
             image.onerror = null;
             reject(abortReason(options!.signal!));
         };
-        const timer = window.setTimeout(() => finish(null), timeoutMs);
         options?.signal?.addEventListener("abort", abort, { once: true });
         image.onload = () => finish(image.naturalWidth && image.naturalHeight ? { width: image.naturalWidth, height: image.naturalHeight } : null);
         image.onerror = () => finish(null);

@@ -12,9 +12,55 @@ const { defaultConfig } = await import('@/stores/use-config-store');
 const { isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, usesGrokVideoReferences } = await import('@/lib/video-capabilities');
 const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: 'fixture-key' }], model: 'default::grok-imagine-video', videoSeconds: '5', size: '1:1', vquality: '480' };
 const original = axios.defaults.adapter;
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 function adapter(handle: (request: AxiosRequestConfig) => { data: unknown; status?: number }) {
     axios.defaults.adapter = async request => ({ status: 200, ...handle(request), statusText: 'OK', headers: {}, config: request });
 }
+
+test('video waits past the old 120-poll limit and retries only the original GET after transient failures', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const task = { id: 'long-running', provider: 'openai' as const, model: config.model };
+    const controller = new AbortController();
+    let queries = 0, downloads = 0;
+    try {
+        axios.defaults.adapter = async request => {
+            assert.equal(request.method, 'get'); assert.equal(request.timeout, 0);
+            if (request.url?.includes('storage.example')) {
+                assert.equal(request.headers?.Authorization, undefined);
+                if (++downloads === 1) throw new AxiosError('download disconnected', 'ERR_NETWORK', request);
+                return { data: new Blob(['video'], { type: 'video/mp4' }), status: 200, statusText: '', headers: {}, config: request };
+            }
+            assert.ok(request.url?.endsWith('/videos/long-running'));
+            queries++;
+            if (queries === 3) throw new AxiosError('offline', 'ERR_NETWORK', request);
+            if (queries === 4) throw new AxiosError('temporary', 'ERR_BAD_RESPONSE', request, undefined, { data: {}, status: 504, statusText: '', headers: {}, config: request });
+            return { data: queries <= 130 ? { status: 'processing' } : { status: 'completed', url: 'https://storage.example/clip.mp4' }, status: 200, statusText: '', headers: {}, config: request };
+        };
+        const waiting = waitForVideoGenerationTask(config, task, { signal: controller.signal });
+        for (let n = 0; n < 140; n++) { await turn(); t.mock.timers.tick(2500); }
+        assert.equal((await waiting).blob?.size, 5);
+        assert.equal(queries, 132); assert.equal(downloads, 2);
+        const events = await import('node:events') as unknown as { getEventListeners(target: EventTarget, type: string): unknown[] };
+        assert.equal(events.getEventListeners(controller.signal, 'abort').length, 0);
+    } finally { controller.abort(); axios.defaults.adapter = original; t.mock.timers.reset(); }
+});
+
+test('indefinite video waiting still stops on cancellation or authentication failure without resubmitting', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const task = { id: 'pending', provider: 'openai' as const, model: config.model };
+    let calls = 0;
+    try {
+        adapter(request => { calls++; assert.equal(request.method, 'get'); return { data: { status: 'pending' } }; });
+        const controller = new AbortController();
+        const waiting = waitForVideoGenerationTask(config, task, { signal: controller.signal });
+        const canceled = assert.rejects(waiting, error => (error as Error).name === 'AbortError');
+        await turn(); controller.abort(); await canceled;
+        assert.equal(calls, 1);
+        axios.defaults.adapter = async request => { calls++; throw new AxiosError('authentication', 'ERR_BAD_REQUEST', request, undefined, { data: {}, status: 401, statusText: '', headers: {}, config: request }); };
+        await assert.rejects(waitForVideoGenerationTask(config, task));
+        assert.equal(calls, 2);
+    } finally { axios.defaults.adapter = original; t.mock.timers.reset(); }
+});
 
 test('Grok video uses canonical JSON and request_id, while other models retain multipart', async () => {
     try {

@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 app.setPath('userData', mkdtempSync(join(tmpdir(), 'canvas-video-protocol-')));
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 app.whenReady().then(async () => {
-    const posts = [], gets = []; let polls = 0;
+    const posts = [], gets = []; let polls = 0, longPolls = 0;
     protocol.handle('oneyes-canvas', async request => {
         const url = new URL(request.url);
         if (url.pathname === '/proxy') {
@@ -20,6 +20,12 @@ app.whenReady().then(async () => {
             }
             gets.push(target.pathname);
             if (target.pathname.endsWith('/content')) return new Response('video', { headers: { 'Content-Type': 'video/mp4' } });
+            if (target.pathname.endsWith('/long-running')) {
+                longPolls++;
+                if (longPolls === 3) return new Response(null, { status: 503 });
+                return Response.json(longPolls <= 130 ? { status: 'pending' } : { status: 'completed' });
+            }
+            if (target.pathname.endsWith('/cancel-wait')) return Response.json({ status: 'pending' });
             if (++polls === 1) return new Response(null, { status: 202 });
             return Response.json({ status: 'done', video: { url: '/v1/videos/task-1/content', respect_moderation: true } });
         }
@@ -59,6 +65,8 @@ app.whenReady().then(async () => {
         }
         assert.deepEqual(gets, ['/v1/videos/task-1', '/v1/videos/task-1', '/v1/videos/task-1/content']);
         assert.equal(await win.webContents.executeJavaScript('videoSettingsTest()'), 'GROK_VIDEO_SETTINGS_OK');
+        assert.equal(await win.webContents.executeJavaScript('videoWaitTest()'), 'VIDEO_LONG_WAIT_OK');
+        assert.equal(longPolls, 131, 'native waiting must survive the previous poll limit and transient gateway failure');
         assert.equal(posts.length, 12, 'settings changes never submit requests');
         console.log('GROK_VIDEO_NATIVE_OK: JSON, Seedance booleans, id/request_id, frames, references, audio, edit, Worker MIME, 202/done, authenticated content, no duplicate POST');
         app.exit(0);

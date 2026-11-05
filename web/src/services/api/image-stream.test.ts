@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { requestImageStream, isOneYes } from './image-stream';
-const options = { timeoutMs: 600000 }, original = globalThis.fetch;
+const options = {}, original = globalThis.fetch;
 function stream(value: string) {
     const bytes = new TextEncoder().encode(value);
     let index=0;
@@ -11,7 +11,7 @@ test('OneYes JSON and multipart requests stream previews and only retain complet
     try {
         const partial: string[]=[];let calls=0;
         globalThis.fetch=async(_url,init)=>{
-            calls++; assert.equal(new Headers(init?.headers).get('accept'),'text/event-stream');
+            calls++; assert.equal(new Headers(init?.headers).get('accept'),'text/event-stream');assert.equal(init?.signal, undefined);
             if(init?.body instanceof FormData) { assert.equal(init.body.get('stream'),'true');assert.equal(init.body.get('partial_images'),'2');assert.ok(init.body.get('image') instanceof Blob);assert.equal(new Headers(init.headers).has('content-type'),false); }
             else { const data=JSON.parse(String(init?.body)); assert.equal(data.stream,true);assert.equal(data.partial_images,2);assert.equal(data.n,1); }
             return stream(': 心跳\r\n\r\nevent: image_generation.partial_image\r\ndata: {"b64_json":"preview"}\r\n\r\nevent: image_generation.completed\r\ndata: {"b64_json":"final","output_index":0}\r\n\r\ndata: [DONE]\r\n\r\n');

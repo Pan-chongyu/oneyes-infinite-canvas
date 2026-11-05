@@ -1,6 +1,5 @@
 import { reportError } from "../diagnostics";
 import { isOneYes } from "./image-stream";
-import { IMAGE_REQUEST_TIMEOUT_MS } from "./media-request-policy";
 import { requestDurableImage, type AsyncImageOptions, type GeneratedImageResult } from "@/stores/use-image-task-store";
 import axios from "axios";
 
@@ -676,7 +675,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
             ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
             contents: [{ role: "user", parts }],
         },
-        { headers: geminiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
+        { headers: geminiHeaders(config), signal: options?.signal, timeout: 0 },
     );
     return parseGeminiImagePayload(response.data);
 }
@@ -749,7 +748,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         const url = aiApiUrl(requestConfig, "/images/generations");
         const headers = aiHeaders(requestConfig, "application/json");
         if (isOneYes(requestConfig.baseUrl)) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/generations/async", requestBody, options);
-        const payload = (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
+        const payload = (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: 0 })).data;
         const images = await parseImagePayload(payload);
         return images;
     } catch (error) {
@@ -826,7 +825,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     try {
         const url = aiApiUrl(requestConfig, "/images/edits"), headers = aiHeaders(requestConfig);
         if (isOneYes(requestConfig.baseUrl)) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/edits/async", formData, options, references);
-        const payload = (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data;
+        const payload = (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: 0 })).data;
         const images = await parseImagePayload(payload);
         return images;
     } catch (error) {

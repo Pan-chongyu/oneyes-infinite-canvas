@@ -1,7 +1,7 @@
 import { createParser } from "eventsource-parser";
 
 export type ImagePayload = { data: Array<Record<string, unknown>> };
-type Options = { signal?: AbortSignal; timeoutMs: number; onPartial?: (image: string) => void };
+type Options = { signal?: AbortSignal; onPartial?: (image: string) => void };
 export function isOneYes(baseUrl: string) {
     try { return ["https://oneyes.ai", "https://api.oneyes.ai"].includes(new URL(baseUrl).origin); } catch { return false; }
 }
@@ -14,12 +14,11 @@ function failure(status: number) {
 // Image generation must never be replayed automatically: a disconnected request
 // may already have been billed. Only completed events become persisted results.
 export async function requestImageStream(url: string, body: Record<string, unknown> | FormData, headers: Record<string, string>, options: Options): Promise<ImagePayload> {
-    const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(options.timeoutMs)]);
     const multipart = body instanceof FormData;
     if (multipart) { body.set("stream", "true"); body.set("partial_images", "2"); }
     const response = await fetch(url, {
         method: "POST", headers: { ...headers, Accept: "text/event-stream", ...(!multipart ? { "Content-Type": "application/json" } : {}) },
-        body: multipart ? body : JSON.stringify({ ...body, stream: true, partial_images: 2 }), signal, redirect: "error",
+        body: multipart ? body : JSON.stringify({ ...body, stream: true, partial_images: 2 }), signal: options.signal, redirect: "error",
     });
     if (!response.ok) { await response.body?.cancel(); throw new Error(failure(response.status)); }
     const contentType = response.headers.get("content-type") || "";

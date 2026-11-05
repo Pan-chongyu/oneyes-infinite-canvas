@@ -1,5 +1,5 @@
 import { reportError } from "../diagnostics";
-import { MEDIA_POLL_INTERVAL_MS, IMAGE_REQUEST_TIMEOUT_MS } from "./media-request-policy";
+import { MEDIA_POLL_INTERVAL_MS } from "./media-request-policy";
 import type { ReferenceImage } from "../../types/image";
 
 export type ImageTaskTarget = { projectId: string; nodeId: string; imageId?: string };
@@ -160,10 +160,6 @@ export class ImageTaskManager {
                 await this.put({ ...task, status: "waiting", error: "网络已断开，联网后自动继续取图" });
                 return;
             }
-            if (task.expiresAt && Date.now() >= task.expiresAt && !task.expectedImages) {
-                await this.put({ ...task, status: "failed", error: "服务端任务已超过保留期，无法继续取图。已取回的图片仍保存在本机。" });
-                return;
-            }
             if (!task.expectedImages || task.images.length < task.expectedImages) {
                 const key = await this.deps.credentials(task);
                 if (!key) { await this.put({ ...task, status: "credentials", error: "请恢复提交此任务时使用的 API Key，再继续取图。" }); return; }
@@ -171,9 +167,9 @@ export class ImageTaskManager {
                 if (this.removed.has(id)) return;
                 if ((value.task_id || value.id) && (value.task_id || value.id) !== task.remoteId) throw new Error("任务编号不一致");
                 task = { ...task, pollMs: pollMs || task.pollMs, ...(value.expires_at ? { expiresAt: value.expires_at * 1000 } : {}) };
-                if (value.status === "failed") {
+                if (["failed", "cancelled", "expired"].includes(value.status || "")) {
                     reportError("image", "poll", new Error(typeof value.error === "string" ? value.error : value.error?.message || ""));
-                    await this.put({ ...task, status: "failed", error: typeof value.error === "string" ? value.error : value.error?.message || "服务端生图失败，请查看用量后再决定是否重新生成。" });
+                    await this.put({ ...task, status: "failed", error: typeof value.error === "string" ? value.error : value.error?.message || (value.status === "expired" ? "服务端确认任务已过期，无法继续取图。已保存的图片仍保留在本机。" : value.status === "cancelled" ? "服务端已取消生图任务，不会自动重新生成。" : "服务端生图失败，请查看用量后再决定是否重新生成。") });
                     return;
                 }
                 if (value.status !== "completed") { await this.put({ ...task, status: "processing", error: undefined }); return; }
@@ -231,7 +227,7 @@ export class ImageTaskManager {
 /** Only fixed OneYes paths are used; never follow a poll_url to another host with the Key. */
 export async function imageTaskRequest(url: string, key: string, body?: Record<string, unknown> | FormData): Promise<ImageTaskReply> {
     const multipart = body instanceof FormData;
-    const response = await fetch(url, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", ...(body && !multipart ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: multipart ? body : JSON.stringify(body) } : {}), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS) });
+    const response = await fetch(url, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", ...(body && !multipart ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: multipart ? body : JSON.stringify(body) } : {}), redirect: "error", cache: "no-store" });
     let value;
     try { value = await response.json(); } catch { throw new ImageTaskHttpError(response.status, `OneYes 异步生图响应无效（HTTP ${response.status}）`); }
     if (!response.ok) throw new ImageTaskHttpError(response.status, value.error?.message || `OneYes 异步生图失败（HTTP ${response.status}）`);

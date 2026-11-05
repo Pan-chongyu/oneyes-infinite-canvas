@@ -1,3 +1,2 @@
-// Preserve the existing video polling cadence and image request timeout.
+// Pending media tasks have no client deadline. Keep the existing polling cadence.
 export const MEDIA_POLL_INTERVAL_MS = 2500;
-export const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;

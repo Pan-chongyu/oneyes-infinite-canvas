@@ -3,7 +3,7 @@ import axios, { type AxiosRequestConfig } from "axios";
 import i18n from "@/i18n";
 import { buildApiUrl, withLocalProxy, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; unlimited?: boolean };
 
 export type PluginHttpOptions = {
     headers?: Record<string, string>;
@@ -55,6 +55,7 @@ function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHtt
             headers: pluginHeaders({ Authorization: `Bearer ${config.apiKey}`, ...opts?.headers }, method === "post" && !isForm && body !== undefined),
             responseType: opts?.responseType || "json",
             signal: options?.signal,
+            ...(options?.unlimited ? { timeout: 0 } : {}),
         });
         return response.data;
     };
@@ -68,7 +69,7 @@ function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHtt
 /** Raw request with no automatic auth header — the script controls method, url, headers, body entirely. */
 function createPluginRequest(config: AiConfig, options?: RequestOptions) {
     return async (requestConfig: AxiosRequestConfig & { url: string }) => {
-        const response = await axios.request({ ...requestConfig, url: pluginUrl(config, requestConfig.url), signal: options?.signal });
+        const response = await axios.request({ ...requestConfig, url: pluginUrl(config, requestConfig.url), signal: options?.signal, ...(options?.unlimited ? { timeout: 0 } : {}) });
         return response.data;
     };
 }
@@ -79,23 +80,17 @@ function sleep(ms: number, signal?: AbortSignal) {
             reject(new DOMException("Aborted", "AbortError"));
             return;
         }
-        const timer = setTimeout(resolve, ms);
-        signal?.addEventListener(
-            "abort",
-            () => {
-                clearTimeout(timer);
-                reject(new DOMException("Aborted", "AbortError"));
-            },
-            { once: true },
-        );
+        const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+        const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms);
+        signal?.addEventListener("abort", abort, { once: true });
     });
 }
 
-function createPoll(signal?: AbortSignal) {
+function createPoll(signal?: AbortSignal, unlimited = false) {
     return async function poll<T, R>(request: () => Promise<T>, extract: (value: T) => R | null | undefined | false, options?: PluginPollOptions): Promise<R> {
         const intervalMs = options?.intervalMs ?? 2500;
         const timeoutMs = options?.timeoutMs ?? 300000;
-        const deadline = performance.now() + timeoutMs;
+        const deadline = unlimited ? Infinity : performance.now() + timeoutMs;
         for (;;) {
             if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const result = extract(await request());
@@ -112,9 +107,10 @@ function createPoll(signal?: AbortSignal) {
  */
 export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<T> {
     const { config } = args;
-    const http = createPluginHttp(config, { signal: args.signal });
-    const request = createPluginRequest(config, { signal: args.signal });
-    const poll = createPoll(args.signal);
+    const unlimited = args.capability === "image" || args.capability === "video";
+    const http = createPluginHttp(config, { signal: args.signal, unlimited });
+    const request = createPluginRequest(config, { signal: args.signal, unlimited });
+    const poll = createPoll(args.signal, unlimited);
     const runner = new Function(
         "prompt",
         "images",
@@ -538,7 +534,7 @@ async function generateVideo({
       return null;
     },
     (result) => result,
-    { intervalMs: 2500, timeoutMs: 300000 },
+    { intervalMs: 2500 },
   );
 }
 
@@ -698,7 +694,7 @@ async function generateVideo({
       const separator = uri.includes("?") ? "&" : "?";
       return { url: uri + separator + "key=" + apiKey };
     },
-    { intervalMs: 5000, timeoutMs: 300000 },
+    { intervalMs: 5000 },
   );
 }
 

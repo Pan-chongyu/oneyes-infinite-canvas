@@ -1,6 +1,6 @@
 import { defaultConfig, useConfigStore } from '@/stores/use-config-store';
 import { initializeDesktopTransport } from '@/services/api/desktop-transport';
-import { createVideoGenerationTask, pollVideoGenerationTask } from '@/services/api/video';
+import { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } from '@/services/api/video';
 import { uploadImage } from '@/services/image-storage';
 import type { ReferenceImage } from '@/types/image';
 import '@/i18n';
@@ -97,4 +97,20 @@ Object.assign(window, { videoSettingsTest: async () => {
         check(current!.vquality === '1080' && !fullHd().disabled, 'text-only generation keeps full HD even with reference mode selected');
         return 'GROK_VIDEO_SETTINGS_OK';
     } finally { flushSync(() => root.unmount()); }
+} });
+
+Object.assign(window, { videoWaitTest: async () => {
+    const setTimer = window.setTimeout;
+    // Accelerate the unchanged production cadence; no real model is called.
+    window.setTimeout = ((handler: TimerHandler, ms?: number, ...args: unknown[]) => setTimer(handler, ms === 2500 ? 0 : ms, ...args)) as typeof window.setTimeout;
+    try {
+        const result = await waitForVideoGenerationTask(config, { id: 'long-running', provider: 'openai', model: config.model });
+        check(result.blob?.size === 5, 'pending tasks past 120 queries must still download their result');
+        const controller = new AbortController();
+        const waiting = waitForVideoGenerationTask(config, { id: 'cancel-wait', provider: 'openai', model: config.model }, { signal: controller.signal });
+        const canceled = waiting.then(() => false, () => controller.signal.aborted);
+        controller.abort();
+        check(await canceled, 'unbounded polling remains cancelable');
+        return 'VIDEO_LONG_WAIT_OK';
+    } finally { window.setTimeout = setTimer; }
 } });

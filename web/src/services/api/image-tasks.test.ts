@@ -134,14 +134,36 @@ test("overlapping refreshes are coalesced and pause/removal win over an in-fligh
     assert.equal(g.saved.size, 0); assert.equal(g.manager.tasks.size, 0);
 });
 
-test("offline recovery keeps the task and server expiry is terminal", async () => {
+test("offline recovery and an elapsed receipt expiry still query the server instead of discarding results", async () => {
     const f = fixture(new Map([["local", processing()]]), { online: () => false });
     await f.manager.initialize(); await f.manager.refresh("local"); assert.equal(f.calls.polls, 0);
     assert.equal(f.saved.get("local")?.status, "waiting");
     f.deps.online = () => true; await f.manager.resumeAll(); assert.equal(f.saved.get("local")?.status, "completed");
     const g = fixture(new Map([["local", { ...processing(), expiresAt: Date.now() - 1 }]]));
     await g.manager.initialize(); await g.manager.refresh("local");
-    assert.equal(g.saved.get("local")?.status, "failed"); assert.equal(g.calls.polls + g.calls.submits, 0);
+    assert.equal(g.saved.get("local")?.status, "completed"); assert.equal(g.calls.polls, 1); assert.equal(g.calls.submits, 0);
+    for (const status of ["expired", "cancelled"]) {
+        const h = fixture(new Map([["local", processing()]]), { poll: async () => ({ value: { status } }) });
+        await h.manager.initialize(); await h.manager.refresh("local");
+        assert.equal(h.saved.get("local")?.status, "failed");
+        assert.equal(h.calls.submits + h.calls.saves.length, 0);
+    }
+});
+
+test("old image tasks survive prolonged processing, a restart and a download interruption without another POST", async () => {
+    const saved = new Map([["local", { ...processing(), createdAt: 1, expiresAt: 2 }]]);
+    const f = fixture(saved, { poll: async () => ({ value: { status: "processing" } }) });
+    await f.manager.initialize();
+    for (let n = 0; n < 150; n++) await f.manager.refresh("local");
+    assert.equal(saved.get("local")?.status, "processing");
+    f.manager.close();
+    const interrupted = fixture(saved, { saveImage: async () => { throw new TypeError("download disconnected"); } });
+    await interrupted.manager.initialize(); await interrupted.manager.refresh("local"); interrupted.manager.close();
+    assert.equal(saved.get("local")?.status, "waiting");
+    const restored = fixture(saved);
+    await restored.manager.initialize(); await restored.manager.resumeAll();
+    assert.equal(saved.get("local")?.status, "completed");
+    assert.equal(f.calls.submits + interrupted.calls.submits + restored.calls.submits, 0);
 });
 
 test("JSON and multipart use the real async protocol and obey server Retry-After without enabling SSE", async () => {
@@ -155,6 +177,7 @@ test("JSON and multipart use the real async protocol and obey server Retry-After
         assert.equal(JSON.parse(String(seen[0].body)).stream, undefined);
         assert.equal(new Headers(seen[1].headers).has("content-type"), false); assert.ok(seen[1].body instanceof FormData);
         assert.equal(seen[1].redirect, "error"); assert.equal(seen[1].cache, "no-store");
+        assert.ok(seen.every(request => !request.signal), "submission and polling must not create a local timeout signal");
         globalThis.fetch = async () => Response.json({ error: { message: "异步接口未开启" } }, { status: 404 });
         await assert.rejects(imageTaskRequest("https://oneyes.ai/v1/images/generations/async", "private", {}), /异步接口未开启/);
     } finally { globalThis.fetch = original; }

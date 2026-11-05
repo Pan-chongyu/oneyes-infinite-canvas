@@ -66,7 +66,8 @@ app.whenReady().then(async () => {
                     uploads.push(bytes);
                 }
                 writeFileSync(counter, String(posts() + 1));
-                return Response.json({ task_id: 'imgtask_restart', status: 'processing', expires_at: Math.floor(Date.now() / 1000) + 86400 }, { status: 202 });
+                // Even an old expiry hint must not block the real query on restart.
+                return Response.json({ task_id: 'imgtask_restart', status: 'processing', expires_at: 1 }, { status: 202 });
             }
             if (phase === 'submit') return new Response(null, { status: 502 });
             return Response.json({ task_id: 'imgtask_restart', status: 'completed', result: { data: [{ url: signedImage }] } });
