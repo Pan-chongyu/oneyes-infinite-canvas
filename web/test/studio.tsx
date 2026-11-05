@@ -85,7 +85,7 @@ function Fixture() {
     const ai: CanvasPluginAi = {
         generateText: async (prompt, options) => {
             requests.current.push({ prompt, references: options?.references, system: options?.system });
-            return { text: options?.system ? JSON.stringify([{ title: "镜头 1", picture: "雨夜跑车", dialogue: "出发", seconds: 5, camera: "低机位" }]) : "识别文字" };
+            return { text: options?.system?.includes("总编剧") ? JSON.stringify({ logline: "山海异闻", style: "国风水墨", characters: [{ name: "阿宁", appearance: "白衣少女，银簪", personality: "沉着", voice: "清亮" }], episodes: [{ title: "第一集", synopsis: "入山", script: "阿宁踏入雨雾。", cliffhanger: "山门无声合上。" }, { title: "第二集", synopsis: "问路", script: "阿宁望向山门。", cliffhanger: "门后传来脚步声。" }] }) : options?.system ? JSON.stringify([{ title: "镜头 1", picture: "雨夜跑车", dialogue: "出发", seconds: 5, camera: "低机位" }]) : "识别文字" };
         },
         generateImage: async () => ({ images: [] }),
         generateVideo: async () => ({ url: "", mimeType: "" }),
@@ -142,6 +142,7 @@ function Fixture() {
                 });
             },
             patch: (value: any) => updateMetadata("tool", value),
+            apply: applyOps,
             library: () => setLibrary(true),
             textSource: (text: string) => applyOps([{ type: "add_node", id: "words", nodeType: "text", metadata: { content: text } }]),
             batch: () => batch.start("tool").catch(() => {}),

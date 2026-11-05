@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Input, InputNumber, Select, Segmented, Slider } from "antd";
-import { BookOpen, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown, Plus, Trash2, GitBranch } from "lucide-react";
+import { BookOpen, Clapperboard, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown, Plus, Trash2, GitBranch } from "lucide-react";
 import { nanoid } from "nanoid";
 import { readFileAsDataUrl } from "@/lib/image-utils";
 import { saveAs } from "file-saver";
-import { studioTools, studioSources, studioAccepts, readShots, shotsToBatchText, batchPrompts, subtitleSrt } from "@/lib/canvas/studio";
+import { studioTools, studioSources, studioAccepts, readShots, readScreenplay, screenplayEpisodeText, shotVisualPrompt, shotVideoPrompt, shotsToBatchText, batchPrompts, subtitleSrt } from "@/lib/canvas/studio";
 import { SourceSummary } from "./source-summary";
 import { jevQuestion, jevSummary, requestJevDecision } from "@/services/api/jev";
 import { modelOptionLabel, resolveModelForCapability, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
@@ -19,7 +19,7 @@ import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import type { StudioTool, StudioSettings } from "@/types/studio";
 import type { CreatorArtifact } from "@/types/creator-tools";
 
-const icons = { storyboard: BookOpen, reference: Users, batch: Rows3, compare: Columns2, subtitles: Captions, ocr: ScanText, export: Download, decision: GitBranch };
+const icons = { screenplay: Clapperboard, storyboard: BookOpen, reference: Users, batch: Rows3, compare: Columns2, subtitles: Captions, ocr: ScanText, export: Download, decision: GitBranch };
 const referenceText = (node: CanvasNodeData) => {
     const s = node.metadata?.studio;
     return [s?.role && `角色：${s.role}`, s?.outfit && `服装与场景：${s.outfit}`, s?.style && `风格：${s.style}`].filter(Boolean).join("\n");
@@ -79,7 +79,7 @@ function Content({ ctx }: { ctx: CanvasNodeContext }) {
                 {busy
                     ? "正在处理…"
                     : ctx.node.metadata?.errorDetails ||
-                      (s?.decision ? jevSummary(s.decision) : s?.items ? `已完成 ${s.items.filter((i) => i.state === "done").length} / ${s.items.length} 项` : s?.shots ? `${s.shots.length} 个镜头` : s?.cues ? `${s.cues.length} 条字幕` : "连接素材，打开设置开始")}
+                      (s?.decision ? jevSummary(s.decision) : s?.screenplay ? `${s.screenplay.episodes.length} 集 · ${s.screenplay.characters.length} 个角色` : s?.items ? `已完成 ${s.items.filter((i) => i.state === "done").length} / ${s.items.length} 项` : s?.shots ? `${s.shots.length} 个镜头` : s?.cues ? `${s.cues.length} 条字幕` : "连接素材，打开设置开始")}
             </p>
             <Button type="text" size="small" className="self-start" icon={<Settings2 size={14} />} onPointerDown={(e) => e.stopPropagation()} onClick={ctx.openPanel}>
                 打开{tool === "compare" ? "对比" : "设置"}
@@ -193,13 +193,25 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                 const decision = await requestJevDecision(config, model, state, question, signal);
                 check();
                 patch({ decision, decisionInput: state });
-            } else if (tool === "storyboard") {
+            } else if (tool === "screenplay") {
                 const story = [s.text, ...sources.filter((n) => n.type === "text").map((n) => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n");
-                if (!story.trim()) throw Error("请填写故事或连接文本节点");
+                if (!story.trim()) throw Error("请填写故事梗概或连接文本节点");
                 const result = await ctx.ai.generateText(story, {
                     signal,
                     model: s.model,
-                    system: "你是分镜编剧。仅输出 JSON 数组，每项包含 title（镜头名）、picture（完整画面提示词）、dialogue（台词）、seconds（正数秒）、camera（运镜）。遵循用户故事，不在 JSON 外输出内容。",
+                    system: "你是中文竖屏漫剧总编剧。把故事扩写成适合连续短集的剧本，保持人物动机、关系、外形与服装连续。仅输出 JSON：{logline:string,style:string,characters:[{name,appearance,personality,voice}],episodes:[{title,synopsis,script,cliffhanger}]}。角色 appearance 写可用于图像模型的稳定外形与服装锚点；每集 script 写可拍摄的场景动作与对白；cliffhanger 写本集结尾钩子。不得改写故事核心设定，不得输出 JSON 以外内容。",
+                });
+                check();
+                patch({ screenplay: readScreenplay(result.text), episodeIndex: 0 });
+            } else if (tool === "storyboard") {
+                const textSources = sources.filter((n) => n.type === "text" || n.type === "studio:screenplay").map((n) => n.type === "studio:screenplay" && n.metadata?.studio?.screenplay ? screenplayEpisodeText(n.metadata.studio.screenplay, n.metadata.studio.episodeIndex) : n.metadata?.content || n.metadata?.prompt);
+                const story = [s.text, ...textSources].filter(Boolean).join("\n");
+                if (!story.trim()) throw Error("请填写故事或连接文本节点");
+                const referenceNotes = sources.filter((n) => n.type === "studio:reference").map(referenceText).filter(Boolean).join("\n");
+                const result = await ctx.ai.generateText(story, {
+                    signal,
+                    model: s.model,
+                    system: `你是竖屏漫剧分镜导演。按故事先后切成连续可拍的镜头，节奏明确，动作能衔接，人物外形、服装、道具和场景保持连续。picture 只写视觉画面，不把对白画成文字。仅输出 JSON 数组，每项包含 title、scene（场景与时间）、characters（出镜角色及固定外形锚点）、framing（景别与构图）、picture（完整画面提示词）、dialogue（原文台词，无台词留空）、seconds（正数秒）、camera（机位／运动）、continuity（与前后镜头衔接的服装、道具、朝向或动作）。${referenceNotes ? `\n角色与风格参考（严格遵守）：\n${referenceNotes}` : ""}`,
                 });
                 check();
                 patch({ shots: readShots(result.text) });
@@ -249,7 +261,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
         });
     const smallButton = "!px-2";
     const requestAction = () => {
-        const replacing = tool === "decision" && s.decision ? "决策" : tool === "storyboard" && s.shots?.length ? "分镜" : tool === "subtitles" && s.cues?.length ? "字幕" : "";
+        const replacing = tool === "decision" && s.decision ? "决策" : tool === "screenplay" && s.screenplay ? "剧本" : tool === "storyboard" && s.shots?.length ? "分镜" : tool === "subtitles" && s.cues?.length ? "字幕" : "";
         if (replacing) modal.confirm({ title: `重新生成${replacing}？`, content: `这会调用模型并替换当前${replacing}，已输出的节点保持不变。`, okText: "重新生成", cancelText: "保留当前内容", onOk: action });
         else action();
     };
@@ -333,7 +345,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     {s.decisionInput !== [s.text, ...sources.map(n => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n") ? <p role="alert">上游内容已改变，请重新运行决策。</p> : <Button type="text" size="small" disabled={disabled} onClick={() => ctx.applyOps(add("text", "JEV 决策结果", { content: `${jevSummary(s.decision!)}\n${JSON.stringify(s.decision, null, 2)}`, status: "success" }))}>输出结果文本</Button>}
                 </div>}
             </>}
-            {["storyboard", "batch", "ocr", "subtitles"].includes(tool) && (
+            {["screenplay", "storyboard", "batch", "ocr", "subtitles"].includes(tool) && (
                 <label className="block space-y-1 text-xs">
                     {tool === "subtitles" ? "语音识别模型（需支持时间戳）" : "模型"}
                     <Select
@@ -350,16 +362,43 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     {tool === "subtitles" && <Input size="small" aria-label="语音识别模型名称" placeholder="或填写准确的识别模型名称" value={s.model} disabled={disabled} onChange={(e) => patch({ model: e.target.value })} />}
                 </label>
             )}
-            {(tool === "storyboard" || tool === "batch") && (
+            {["screenplay", "storyboard", "batch"].includes(tool) && (
                 <Input.TextArea
-                    aria-label={tool === "batch" ? "批量提示词" : "故事内容"}
+                    aria-label={tool === "batch" ? "批量提示词" : tool === "screenplay" ? "故事梗概" : "故事内容"}
                     rows={4}
-                    placeholder={tool === "batch" ? "每行一条提示词；可同时连接参考图片" : "写下故事，也可以连接上游文本"}
+                    placeholder={tool === "batch" ? "每行一条提示词；可同时连接角色参考" : tool === "screenplay" ? "写下故事梗概，也可以连接上游文本节点" : "写下故事，或连接分集剧本与角色参考"}
                     value={s.text}
                     disabled={disabled || (tool === "batch" && Boolean(s.items?.length))}
                     onChange={(e) => patch({ text: e.target.value })}
                 />
             )}
+            {tool === "screenplay" && s.screenplay && (() => {
+                const index = Math.min(s.episodeIndex || 0, s.screenplay.episodes.length - 1);
+                const episode = s.screenplay.episodes[index];
+                const patchEpisode = (value: Partial<typeof episode>) => patch({ screenplay: { ...s.screenplay!, episodes: s.screenplay!.episodes.map((item, i) => i === index ? { ...item, ...value } : item) } });
+                return <div className="space-y-3 border-t pt-3" style={{ borderColor: ctx.theme.toolbar.border }}>
+                    <label className="block space-y-1 text-xs">分集
+                        <Select className="w-full" aria-label="选择分集" disabled={disabled} value={index} options={s.screenplay.episodes.map((item, i) => ({ value: i, label: item.title || `第${i + 1}集` }))} onChange={episodeIndex => patch({ episodeIndex })} />
+                    </label>
+                    <label className="block space-y-1 text-xs">本集剧本
+                        <Input.TextArea aria-label="本集剧本" rows={6} disabled={disabled} value={episode.script} onChange={e => patchEpisode({ script: e.target.value })} />
+                    </label>
+                    <label className="block space-y-1 text-xs">结尾钩子
+                        <Input.TextArea aria-label="结尾钩子" rows={2} disabled={disabled} value={episode.cliffhanger} onChange={e => patchEpisode({ cliffhanger: e.target.value })} />
+                    </label>
+                    <details className="text-xs">
+                        <summary className="cursor-pointer">角色设定 · {s.screenplay.characters.length}</summary>
+                        <div className="mt-2 space-y-2">
+                            {s.screenplay.characters.map((character, i) => <div key={`${character.name}-${i}`} className="space-y-1 rounded border p-2" style={{ borderColor: ctx.theme.toolbar.border }}>
+                                <Input size="small" aria-label={`角色${i + 1}姓名`} placeholder="角色姓名" disabled={disabled} value={character.name} onChange={e => patch({ screenplay: { ...s.screenplay!, characters: s.screenplay!.characters.map((item, n) => n === i ? { ...item, name: e.target.value } : item) } })} />
+                                <Input.TextArea aria-label={`角色${i + 1}外形设定`} rows={2} placeholder="固定外形与服装锚点" disabled={disabled} value={character.appearance} onChange={e => patch({ screenplay: { ...s.screenplay!, characters: s.screenplay!.characters.map((item, n) => n === i ? { ...item, appearance: e.target.value } : item) } })} />
+                                <Input size="small" aria-label={`角色${i + 1}声音设定`} placeholder="声音特点" disabled={disabled} value={character.voice} onChange={e => patch({ screenplay: { ...s.screenplay!, characters: s.screenplay!.characters.map((item, n) => n === i ? { ...item, voice: e.target.value } : item) } })} />
+                            </div>)}
+                        </div>
+                    </details>
+                    <Button type="text" size="small" disabled={disabled} onClick={() => ctx.applyOps(add("text", episode.title, { content: screenplayEpisodeText(s.screenplay!, index), status: "success" }))}>输出本集剧本文本</Button>
+                </div>;
+            })()}
             {tool === "reference" && (
                 <div className="space-y-2">
                     {(
@@ -400,6 +439,15 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                                     />
                                 </label>
                             ))}
+                            <details className="text-xs">
+                                <summary className="cursor-pointer">场景、人物与连续性</summary>
+                                <div className="mt-2 space-y-2">
+                                    {(["scene", "characters", "framing", "continuity"] as const).map((key) => <label key={key} className="block space-y-1">
+                                        <span>{{ scene: "场景与时间", characters: "出镜人物", framing: "景别与构图", continuity: "连续性提示" }[key]}</span>
+                                        <Input.TextArea aria-label={`镜头${index + 1}-${key}`} rows={2} autoSize disabled={disabled} value={shot[key] || ""} onChange={e => patch({ shots: s.shots!.map((item, i) => i === index ? { ...item, [key]: e.target.value } : item) })} />
+                                    </label>)}
+                                </div>
+                            </details>
                             <InputNumber aria-label={`镜头${index + 1}秒数`} min={0} value={shot.seconds} disabled={disabled} onChange={(seconds) => patch({ shots: s.shots!.map((item, i) => (i === index ? { ...item, seconds: seconds || 0 } : item)) })} />
                             <span className="ml-2 text-xs">秒</span>
                         </div>
@@ -418,16 +466,25 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                                         videoId = nanoid(),
                                         x = ctx.node.position.x + ctx.node.width + 100,
                                         y = ctx.node.position.y + index * 310,
-                                        prompt = `${shot.picture}\n运镜：${shot.camera}\n台词：${shot.dialogue}\n参考时长：${shot.seconds} 秒`;
+                                        imagePrompt = shotVisualPrompt(shot),
+                                        videoPrompt = shotVideoPrompt(shot),
+                                        referenceIds = sources.filter(source => source.type === "studio:reference").map(source => source.id);
                                     ops.push(
-                                        { type: "add_node", id: textId, nodeType: "text", title: shot.title, position: { x, y }, metadata: { content: prompt, status: "success" } },
-                                        { type: "add_node", id: imageId, nodeType: "image", title: `${shot.title} · 画面`, position: { x: x + 420, y }, metadata: { prompt: shot.picture } },
-                                        { type: "add_node", id: videoId, nodeType: "video", title: `${shot.title} · 视频`, position: { x: x + 840, y }, metadata: { prompt } },
+                                        { type: "add_node", id: textId, nodeType: "text", title: shot.title, position: { x, y }, metadata: { content: imagePrompt, status: "success" } },
+                                        { type: "add_node", id: imageId, nodeType: "image", title: `${shot.title} · 画面`, position: { x: x + 420, y }, metadata: { prompt: imagePrompt } },
+                                        { type: "add_node", id: videoId, nodeType: "video", title: `${shot.title} · 视频`, position: { x: x + 840, y }, metadata: { prompt: videoPrompt } },
                                         { type: "connect_nodes", fromNodeId: ctx.node.id, toNodeId: textId },
                                         { type: "connect_nodes", fromNodeId: textId, toNodeId: imageId },
                                         { type: "connect_nodes", fromNodeId: textId, toNodeId: videoId },
                                         { type: "connect_nodes", fromNodeId: imageId, toNodeId: videoId },
                                     );
+                                    if (shot.dialogue.trim()) {
+                                        const audioId = nanoid();
+                                        ops.push({ type: "add_node", id: audioId, nodeType: "audio", title: `${shot.title} · 台词`, position: { x: x + 1260, y }, metadata: { prompt: shot.dialogue } }, { type: "connect_nodes", fromNodeId: audioId, toNodeId: videoId });
+                                    }
+                                    for (const referenceId of referenceIds) {
+                                        ops.push({ type: "connect_nodes", fromNodeId: referenceId, toNodeId: imageId }, { type: "connect_nodes", fromNodeId: referenceId, toNodeId: videoId });
+                                    }
                                 });
                                 ctx.applyOps(ops);
                             } catch (error) {
@@ -441,7 +498,8 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                         try {
                             const text = shotsToBatchText(s.shots!);
                             const id = nanoid();
-                            ctx.applyOps([{ type: "add_node", id, nodeType: "studio:batch", title: "分镜批量任务", position: { x: ctx.node.position.x + ctx.node.width + 100, y: ctx.node.position.y }, metadata: { studio: { text, sourceIds: [] }, status: "idle" } }, { type: "select_nodes", ids: [id] }]);
+                            const referenceIds = sources.filter(source => source.type === "studio:reference").map(source => source.id);
+                            ctx.applyOps([{ type: "add_node", id, nodeType: "studio:batch", title: "分镜批量生图", position: { x: ctx.node.position.x + ctx.node.width + 100, y: ctx.node.position.y }, metadata: { studio: { text, sourceIds: referenceIds }, status: "idle" } }, ...referenceIds.map(fromNodeId => ({ type: "connect_nodes" as const, fromNodeId, toNodeId: id })), { type: "select_nodes", ids: [id] }]);
                         } catch (error) { ctx.updateMetadata({ errorDetails: (error as Error).message }); }
                     }}>转为批量任务</Button>
                     <p className="text-xs" style={{ color: ctx.theme.node.muted }}>可手动编排，也可用模型拆分。转为批量后需检查提示词并确认生成。</p>
@@ -572,7 +630,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
             )}
             <footer className="flex items-center justify-between border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
                 <span className="text-[11px]" style={{ color: ctx.theme.node.muted }}>
-                    {["storyboard", "ocr", "subtitles", "batch", "decision"].includes(tool) ? "模型调用按站点计费" : "本机处理 · 保留原素材"}
+                    {["screenplay", "storyboard", "ocr", "subtitles", "batch", "decision"].includes(tool) ? "模型调用按站点计费" : "本机处理 · 保留原素材"}
                 </span>
                 {batchBusy ? (
                     <Button type="text" size="small" onClick={() => ctx.batch?.pause(ctx.node.id)}>
@@ -595,7 +653,7 @@ export const studioPlugin: CanvasPlugin = {
     id: "studio",
     name: "创作工作流",
     version: "1.0.0",
-    description: "分镜、角色参考、批量生成、对比精选、字幕、OCR、JEV 决策和原始素材导出",
+    description: "漫剧分集剧本、角色参考、连续性分镜、逐镜画面／视频／配音节点、批量生成与后期工具",
     nodes: (Object.keys(studioTools) as StudioTool[]).map((tool) => {
         const Icon = icons[tool];
         return {
@@ -609,7 +667,7 @@ export const studioPlugin: CanvasPlugin = {
             renderOwnStatus: true,
             Content,
             Panel,
-            resource: tool === "reference" ? (node) => ({ kind: "text", text: referenceText(node) }) : undefined,
+            resource: tool === "reference" ? (node) => ({ kind: "text", text: referenceText(node) }) : tool === "screenplay" ? (node) => node.metadata?.studio?.screenplay ? ({ kind: "text", text: screenplayEpisodeText(node.metadata.studio.screenplay, node.metadata.studio.episodeIndex) }) : null : undefined,
             toolbar: (ctx) => [{ id: "studio-settings", title: "打开创作设置", label: "设置", icon: <Settings2 size={14} />, onClick: ctx.openPanel }],
         };
     }),

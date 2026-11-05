@@ -4,7 +4,7 @@ import type { CanvasAgentOp } from "./canvas-agent-ops";
 import type { Position } from "@/types/canvas";
 
 // UI guidance for bundled nodes; third-party nodes remain available under 扩展.
-export const nodeCategories = ["全部", "基础", "策划", "图片", "音视频", "交付", "扩展"] as const;
+export const nodeCategories = ["全部", "漫剧", "基础", "策划", "图片", "音视频", "交付", "扩展"] as const;
 type Category = (typeof nodeCategories)[number];
 const entries: Record<string, [Category, string, string?]> = {
     text: ["基础", "文字 → 提示词"],
@@ -13,10 +13,11 @@ const entries: Record<string, [Category, string, string?]> = {
     audio: ["基础", "提示词 → 音频"],
     config: ["基础", "统一生成参数"],
     group: ["基础", "整理画布素材"],
-    "studio:storyboard": ["策划", "故事文本 → 分镜脚本", "故事 脚本 镜头 storyboard"],
+    "studio:screenplay": ["漫剧", "故事梗概 → 分集剧本与角色设定", "漫剧 短剧 剧情 分集 角色 台词 screenplay"],
+    "studio:storyboard": ["漫剧", "分集剧本／角色参考 → 连续性分镜", "故事 脚本 镜头 景别 连戏 storyboard"],
     "studio:decision": ["策划", "文本／标准 → 选择、评分与判断", "jev typesafe 决策 分类 概率 判断 score choice noul"],
-    "studio:reference": ["策划", "图片／角色说明 → 生成参考", "角色 一致性 风格 reference"],
-    "studio:batch": ["策划", "多条提示词／参考图 → 图片", "批处理 队列 batch"],
+    "studio:reference": ["漫剧", "人物设定／参考图 → 角色一致性参考", "角色 一致性 服装 风格 reference"],
+    "studio:batch": ["漫剧", "多条镜头提示词／角色参考 → 图片", "批处理 队列 分镜 batch"],
     "studio:compare": ["图片", "多张原图 → 精选图片", "对照 滑动 compare"],
     "studio:ocr": ["图片", "图片 → 文字", "识字 ocr"],
     "studio:subtitles": ["音视频", "视频／音频 → SRT／字幕视频", "字幕 转写 captions srt"],
@@ -46,6 +47,12 @@ export function filterLibraryNodes(defs: CanvasNodeDefinition[], query: string, 
 }
 
 export const workflowTemplates = [
+    {
+        id: "manju", title: "漫剧制作", description: "梗概拆分集、整理角色设定，再生成可编辑分镜；不会自动生成或计费",
+        types: ["text", "studio:screenplay", "studio:reference", "studio:storyboard"],
+        positions: [[0, 0], [420, 0], [420, 330], [850, 0]],
+        links: [[0, 1], [1, 3], [2, 3]],
+    },
     {
         id: "smart-edit", title: "智能剪辑", description: "连接素材打开完整剪辑器，AI 草稿与手动精修共用时间线",
         types: ["video", "image", "audio", "smart-edit:editor"],

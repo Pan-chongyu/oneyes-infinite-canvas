@@ -1,12 +1,17 @@
 import type { JevQuestion, JevResult } from "@/services/api/jev";
-export type StudioTool = "storyboard" | "reference" | "batch" | "compare" | "subtitles" | "ocr" | "export" | "decision";
-export type StoryShot = { title: string; picture: string; dialogue: string; seconds: number; camera: string };
+export type StudioTool = "screenplay" | "storyboard" | "reference" | "batch" | "compare" | "subtitles" | "ocr" | "export" | "decision";
+export type ScreenplayCharacter = { name: string; appearance: string; personality: string; voice: string };
+export type ScreenplayEpisode = { title: string; synopsis: string; script: string; cliffhanger: string };
+export type Screenplay = { logline: string; style: string; characters: ScreenplayCharacter[]; episodes: ScreenplayEpisode[] };
+export type StoryShot = { title: string; picture: string; dialogue: string; seconds: number; camera: string; scene?: string; characters?: string; framing?: string; continuity?: string };
 export type SubtitleCue = { start: number; end: number; text: string; speaker?: string };
 export type BatchItem = { id: string; prompt: string; state: "pending" | "started" | "done" };
 export type StudioSettings = {
     sourceIds?: string[];
     text?: string;
     model?: string;
+    screenplay?: Screenplay;
+    episodeIndex?: number;
     shots?: StoryShot[];
     cues?: SubtitleCue[];
     items?: BatchItem[];

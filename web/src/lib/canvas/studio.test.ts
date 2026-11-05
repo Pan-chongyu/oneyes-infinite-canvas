@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readShots, subtitleSrt, studioSources, exportName, shotsToBatchText, batchPrompts } from "./studio";
+import { readShots, readScreenplay, screenplayEpisodeText, shotVideoPrompt, subtitleSrt, studioSources, exportName, shotsToBatchText, batchPrompts } from "./studio";
 import { filterLibraryNodes, createWorkflowOps, workflowTemplates } from "./node-library";
 import type { CanvasNodeDefinition } from "@/types/canvas-plugin";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -18,6 +18,20 @@ test("storyboards require real shot content and positive durations; subtitles pr
     assert.throws(() => subtitleSrt([{ start: 0, end: NaN, text: "a" }]));
     assert.throws(() => subtitleSrt([{ start: 0, end: 1, text: "" }]));
 });
+test("screenplays validate episode and character data and expose the selected episode as reusable text", () => {
+    const screenplay = readScreenplay(JSON.stringify({
+        logline: "山海异闻",
+        style: "国风水墨",
+        characters: [{ name: "阿宁", appearance: "白衣少女，银簪", personality: "沉着", voice: "清亮" }],
+        episodes: [{ title: "第一集", synopsis: "入山", script: "阿宁踏入雨雾。", cliffhanger: "山门无声合上。" }],
+    }));
+    const text = screenplayEpisodeText(screenplay, 99);
+    assert.match(text, /第一集/); assert.match(text, /白衣少女/); assert.match(text, /山门无声合上/);
+    assert.throws(() => readScreenplay('{"characters":[],"episodes":[]}'));
+    assert.throws(() => readScreenplay('{"characters":[{"name":"阿宁"}],"episodes":[{"title":"第一集","script":""}]}'));
+    assert.throws(() => readScreenplay('{"characters":[null],"episodes":[null]}'));
+    assert.throws(() => readScreenplay('[]'));
+});
 test("node library searches uses and input/output labels; templates create unique, connected drafts without paid execution", () => {
     const defs = [
         { type: "studio:ocr", title: "OCR 文字提取" },
@@ -27,6 +41,7 @@ test("node library searches uses and input/output labels; templates create uniqu
     assert.equal(filterLibraryNodes(defs, "图片 文字", "图片")[0].type, "studio:ocr");
     assert.equal(filterLibraryNodes(defs, "SrT", "全部")[0].type, "studio:subtitles");
     assert.equal(filterLibraryNodes(defs, "后期", "扩展")[0].type, "third:custom");
+    assert.equal(filterLibraryNodes([{ type: "studio:screenplay", title: "漫剧剧本" }] as CanvasNodeDefinition[], "剧本", "漫剧")[0].type, "studio:screenplay");
     assert.equal(filterLibraryNodes(defs, "OCR", "音视频").length, 0);
     const ids = new Set<string>();
     for (const template of workflowTemplates) {
@@ -50,8 +65,11 @@ test("studio rejects incompatible links before execution; batch consumes connect
     assert.throws(() => studioSources(tool, [node("video", "image")], []), /类型不匹配/);
     const batch = { ...node("batch", "studio:batch"), metadata: { studio: { text: "面板提示词" } } };
     assert.deepEqual(batchPrompts(batch, [node("text", "text", "第一张\n第二张"), node("img", "image", "not-a-prompt")]), ["面板提示词", "第一张", "第二张"]);
-    const text = shotsToBatchText([{ title: "一", picture: "雨夜\n街道", camera: "跟拍", dialogue: "出发", seconds: 5 }, { title: "二", picture: "晴天", camera: "", dialogue: "", seconds: 3 }]);
-    assert.deepEqual(text.split("\n"), ["雨夜 街道；运镜：跟拍；台词：出发", "晴天"]);
+    const shots = [{ title: "一", picture: "雨夜\n街道", camera: "跟拍", dialogue: "出发", seconds: 5, scene: "山门", characters: "白衣阿宁", framing: "近景", continuity: "银簪不变" }, { title: "二", picture: "晴天", camera: "", dialogue: "", seconds: 3 }];
+    const text = shotsToBatchText(shots);
+    assert.deepEqual(text.split("\n"), ["场景：山门；人物：白衣阿宁；景别：近景；雨夜 街道；连续性：银簪不变；运镜：跟拍", "晴天"]);
+    assert.match(shotVideoPrompt(shots[0]), /台词：出发/);
+    assert.match(shotVideoPrompt(shots[0]), /参考时长：5 秒/);
     assert.throws(() => shotsToBatchText([{ title: "空", picture: "", camera: "", dialogue: "", seconds: 5 }]));
 });
 test("studio sources retain order and reject deleted references; exported names cannot escape ZIP paths", () => {

@@ -161,10 +161,11 @@ app
       await js('studioTest.library()');
       await wait('document.querySelector("[data-node-library]")');
       await click("常用流程");
-      await wait('document.querySelector("[aria-label=常用流程列表]").querySelectorAll("button").length===4');
-      await js('document.querySelector("[aria-label=常用流程列表]").querySelector("button").click()');
+      await wait('document.querySelector("[aria-label=常用流程列表]").querySelectorAll("button").length===5');
+      await js('(()=>{const b=document.querySelector("[aria-label=常用流程列表]").querySelector("button");if(!b.textContent.includes("漫剧制作"))throw Error("漫剧模板不是首项");b.click()})()');
       await wait('!document.querySelector("[data-node-library]")');
-      assert.equal(await js('studioTest.state().connections.length'),2);
+      assert.equal(await js('studioTest.state().connections.length'),3);
+      assert.deepEqual(await js('studioTest.state().nodes.filter(n=>["studio:screenplay","studio:reference","studio:storyboard"].includes(n.type)).map(n=>n.type).sort()'),["studio:reference","studio:screenplay","studio:storyboard"]);
       assert.equal(await js('studioTest.calls().length+studioTest.requests().length'),0,"templates must never submit model requests");
       await js('studioTest.tool("storyboard",[],{shots:[{title:"手工镜头",picture:"街道",dialogue:"",camera:"",seconds:5},{title:"第二镜头",picture:"晴天",dialogue:"",camera:"",seconds:3}]})');
       await wait('document.querySelector("[data-studio-panel=storyboard]")');
@@ -181,6 +182,31 @@ app
       await wait('document.body.textContent.includes("保留当前内容")');
       await click("保留当前内容");
       assert.equal(await js('studioTest.requests().length'),0,"cancel replacement preserves the manual storyboard without a model request");
+      await js('studioTest.tool("screenplay",[],{text:"山海异闻，少女阿宁入山寻人"})');
+      await wait('document.querySelector("[data-studio-panel=screenplay]")');
+      await click("拆解漫剧剧本");
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.screenplay?.episodes.length===2');
+      assert.match(await js('document.body.textContent'), /模型调用按站点计费/);
+      await screenshot('-screenplay');
+      await click("输出本集剧本文本");
+      assert.match(await js('studioTest.state().nodes.find(n=>n.type==="text").metadata.content'), /白衣少女/);
+      assert.match(await js('studioTest.state().nodes.find(n=>n.type==="text").metadata.content'), /山门无声合上/);
+      await js('studioTest.apply([{type:"update_node",id:"tool",metadata:{studio:{...studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio,episodeIndex:1}}}])');
+      await click("输出本集剧本文本");
+      assert.match(await js('studioTest.state().nodes.filter(n=>n.type==="text").at(-1).metadata.content'), /第二集/);
+      const screenplayRequests = await js('studioTest.requests().length');
+      await click("拆解漫剧剧本");
+      await wait('document.body.textContent.includes("保留当前内容")');
+      await click("保留当前内容");
+      assert.equal(await js('studioTest.requests().length'),screenplayRequests,"cancel must preserve the edited screenplay without a new request");
+      await js('(()=>{const script=studioTest.state().nodes.find(n=>n.id==="tool");studioTest.tool("storyboard",["script-source","role-ref"]);studioTest.apply([{type:"add_node",id:"script-source",nodeType:"studio:screenplay",metadata:script.metadata},{type:"add_node",id:"role-ref",nodeType:"studio:reference",metadata:{studio:{role:"白衣阿宁",style:"国风水墨",sourceIds:["source0"]}}}])})()');
+      await click("生成分镜");
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.shots?.length===1');
+      assert.match(await js('studioTest.requests().at(-1).prompt'), /第二集/);
+      assert.match(await js('studioTest.requests().at(-1).system'), /白衣阿宁/);
+      await click("转为批量任务");
+      assert.deepEqual(await js('studioTest.state().nodes.find(n=>n.type==="studio:batch").metadata.studio.sourceIds'),["role-ref"]);
+      assert.equal(await js('studioTest.calls().length'),0,"screenplay and storyboard outputs must never start image/video tasks");
       await js('studioTest.tool("subtitles",[],{cues:[{start:0,end:1,text:"手工字幕"}]})');
       await wait('document.querySelector("[data-studio-panel=subtitles]")');
       await js('document.querySelector("[aria-label=删除字幕1]").click()');
@@ -194,11 +220,14 @@ app
       await wait('document.querySelector("[data-studio-panel=storyboard]")');
       await click("生成分镜");
       await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.shots?.length===1');
+      await js('studioTest.tool("storyboard",[],{shots:[{title:"配音测试",picture:"山门近景",dialogue:"快走",camera:"推进",seconds:5}]})');
       await click("输出镜头节点（不自动生成）");
       assert.equal(
         await js('studioTest.state().nodes.filter(n=>n.type==="video").length'),
         1,
       );
+      assert.equal(await js('studioTest.state().nodes.filter(n=>n.type==="audio").length'),1);
+      assert.equal(await js('studioTest.state().connections.some(c=>c.fromNodeId===studioTest.state().nodes.find(n=>n.type==="audio").id&&c.toNodeId===studioTest.state().nodes.find(n=>n.type==="video").id)'),true,"dialogue audio must feed the matching video node");
       assert.equal(await js("studioTest.calls().length"), 0);
       await js(
         'studioTest.tool("reference",["source0","source1"],{role:"角色 A",style:"电影"})',
@@ -320,7 +349,7 @@ app
       );
       await js("studioTest.persist()");
       console.log(
-        "STUDIO_UI_OK: editable shots, reference bundle, OCR originals, compare selection, exact-size image workers, dark theme, explicit batch confirmation, sequential completion and failure pause",
+          "STUDIO_UI_OK: screenplay episodes, character continuity, manual shots and audio/video links, reference-preserving batches, OCR originals, exact-size workers, dark theme, explicit paid confirmation and failure pause",
       );
       app.exit(0);
     } catch (error) {
