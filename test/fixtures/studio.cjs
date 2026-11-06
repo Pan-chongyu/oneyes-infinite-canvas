@@ -312,6 +312,17 @@ app
       await click('AI 整理角色');
       await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
       assert.equal(await js('studioTest.requests().length'),beforeUnavailable,'removed model is blocked without fallback');
+      await js('studioTest.tool("batch",["source0"],{})');
+      await click('AI 整理提示词');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.equal(await js('studioTest.requests().length'),beforeUnavailable,'image-only batch asks for a story before a paid text request');
+      await js('studioTest.tool("subtitles",[],{cues:[{start:2,end:1,text:"无效时间轴"}]})');
+      await click('AI 校对字幕');
+      await wait('document.body.textContent.includes("确认调用")');
+      await click('确认调用');
+      await wait('!document.querySelector(".ant-modal-confirm")');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.equal(await js('studioTest.requests().length'),beforeUnavailable,'invalid subtitle timing is blocked before a paid correction request');
       await js('studioTest.tool("reference",["words"],{});studioTest.textSource("最初剧本");studioTest.assistant({holdAi:true})');
       await click('AI 整理角色');
       await wait('studioTest.requests().length>'+beforeUnavailable);

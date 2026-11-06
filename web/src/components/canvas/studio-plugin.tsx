@@ -4,7 +4,7 @@ import { BookOpen, Clapperboard, Users, Rows3, Columns2, Captions, ScanText, Dow
 import { nanoid } from "nanoid";
 import { readFileAsDataUrl } from "@/lib/image-utils";
 import { saveAs } from "file-saver";
-import { studioTools, studioSources, studioAccepts, readShots, readScreenplay, screenplayEpisodeText, shotVisualPrompt, shotVideoPrompt, shotsToBatchText, batchPrompts, subtitleSrt } from "@/lib/canvas/studio";
+import { studioTools, studioSources, studioAccepts, readShots, readScreenplay, screenplayEpisodeText, shotVisualPrompt, shotVideoPrompt, shotsToBatchText, batchPrompts, subtitleSrt, validateCues } from "@/lib/canvas/studio";
 import { SourceSummary } from "./source-summary";
 import { studioModelChoice, studioReferenceText, studioSourceText, studioInputFingerprint, studioAdviceFingerprint, readReferenceDraft, readPromptDraft, readSelectionAdvice, readSubtitleCorrections, prepareStoryboarding } from "@/lib/canvas/studio-assistant";
 import { jevQuestion, jevSummary, requestJevDecision } from "@/services/api/jev";
@@ -282,9 +282,11 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
         if (sourceError) throw Error(sourceError);
         const model = ensureModel(true);
         if (tool === "subtitles" && !s.cues?.length) throw Error("请先识别或手动填写字幕");
+        if (tool === "subtitles") validateCues(s.cues!);
         if (tool === "compare" && !sources.length) throw Error("请先选择需要比较的图片");
         const text = [s.text, studioSourceText(sources), tool === "reference" && referenceText(ctx.node)].filter(Boolean).join("\n\n");
-        if ((tool === "reference" || tool === "batch") && !text.trim() && !sources.some(n => n.type === "image")) throw Error("请填写创作要求，或连接剧本、文本或参考图");
+        if (tool === "batch" && !text.trim()) throw Error("请先填写故事或连接文本、角色说明；参考图会在确认生图时使用");
+        if (tool === "reference" && !text.trim() && !sources.some(n => n.type === "image")) throw Error("请填写创作要求，或连接剧本、文本或参考图");
         const references: string[] = [];
         if (tool === "reference" || tool === "compare") for (const source of sources.filter(n => n.type === "image")) {
             const blob = await creatorSourceBlob(source, signal);
