@@ -71,7 +71,7 @@ app
     };
     const click = async (text) => {
       await js(
-        `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(text)}).click()`,
+        `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.replaceAll(' ','')===${JSON.stringify(text.replaceAll(' ', ''))}).click()`,
       );
     };
     const screenshot = async (suffix = "") => {
@@ -188,6 +188,12 @@ app
       await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.screenplay?.episodes.length===2');
       assert.match(await js('document.body.textContent'), /模型调用按站点计费/);
       await screenshot('-screenplay');
+      const beforeNext = await js('studioTest.requests().length');
+      await click('下一步：做分镜');
+      await click('下一步：做分镜');
+      assert.equal(await js('studioTest.state().nodes.filter(n=>n.type==="studio:storyboard").length'),1,'next step reuses the linked storyboard');
+      assert.equal(await js('studioTest.openedPanel()'),await js('studioTest.state().nodes.find(n=>n.type==="studio:storyboard").id'),'next step opens the correct node panel');
+      assert.equal(await js('studioTest.requests().length'),beforeNext,'next step never requests the model');
       await click("输出本集剧本文本");
       assert.match(await js('studioTest.state().nodes.find(n=>n.type==="text").metadata.content'), /白衣少女/);
       assert.match(await js('studioTest.state().nodes.find(n=>n.type==="text").metadata.content'), /山门无声合上/);
@@ -229,6 +235,8 @@ app
       assert.equal(await js('studioTest.state().nodes.filter(n=>n.type==="audio").length'),1);
       assert.equal(await js('studioTest.state().connections.some(c=>c.fromNodeId===studioTest.state().nodes.find(n=>n.type==="audio").id&&c.toNodeId===studioTest.state().nodes.find(n=>n.type==="video").id)'),true,"dialogue audio must feed the matching video node");
       assert.equal(await js("studioTest.calls().length"), 0);
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.type==="video").metadata.seconds'), '5');
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.type==="audio").metadata.model'), 'test');
       await js(
         'studioTest.tool("reference",["source0","source1"],{role:"角色 A",style:"电影"})',
       );
@@ -258,6 +266,69 @@ app
         await js("studioTest.image()").then((x) => [x.width, x.height]),
         [10, 8],
       );
+      await js('studioTest.tool("reference",["source0"],{text:"少女阿宁",assistantModel:"group-b/model"})');
+      await click('AI 整理角色');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.role==="白衣少女阿宁"');
+      assert.equal(await js('studioTest.requests().at(-1).model'),'group-b/model','assistant keeps the exact selected channel');
+      assert.match(await js('studioTest.requests().at(-1).references[0]'),/^data:image\/png;base64,/);
+      await screenshot('-simple-reference');
+      await js('studioTest.theme(true)');
+      await screenshot('-simple-reference-dark');
+      await js('studioTest.theme(false)');
+      await js('studioTest.assistant({aiReply:"invalid-json"})');
+      await click('AI 整理角色');
+      await wait('document.body.textContent.includes("确认调用")');
+      await click('确认调用');
+      await wait('!document.querySelector(".ant-modal-confirm")');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.role'),'白衣少女阿宁','invalid reply preserves existing role');
+      await js('studioTest.assistant({aiReply:null});studioTest.tool("compare",["source0","source1"],{selectedId:"source0"})');
+      await click('AI 帮我选');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.selectionAdvice?.sourceId==="source1"');
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.selectedId'),'source0','AI advice does not replace a manual selection');
+      await wait('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="采用建议")');
+      await click('采用建议');
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.selectedId'),'source1');
+      await js('studioTest.patch({studio:{...studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio,text:"新标准"}})');
+      assert.equal(await js('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="采用建议")'),false,'stale advice cannot be applied');
+      await js('studioTest.tool("subtitles",[],{cues:[{start:0.125,end:3.9,text:"校对前",speaker:"阿宁"}]})');
+      await click('AI 校对字幕');
+      await wait('document.body.textContent.includes("确认调用")');
+      await click('确认调用');
+      await wait('!document.querySelector(".ant-modal-confirm")');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.cues[0].text==="校对后的字幕。"');
+      assert.deepEqual(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.cues[0]'),{start:0.125,end:3.9,text:'校对后的字幕。',speaker:'阿宁'});
+      await js('studioTest.tool("batch",["words"],{});studioTest.textSource("这里是上游完整故事")');
+      await click('AI 整理提示词');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.preparedPrompts?.length===2');
+      await click('开始批量生成');
+      await wait('document.body.textContent.includes("本次最多提交 2 项")');
+      await click('取消');
+      assert.equal(await js('studioTest.calls().length'),0,'preparing prompts and canceling the batch never generates an image');
+      await js('studioTest.tool("reference",[],{text:"阿宁",assistantModel:"removed/model"})');
+      const beforeUnavailable = await js('studioTest.requests().length');
+      await click('AI 整理角色');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.equal(await js('studioTest.requests().length'),beforeUnavailable,'removed model is blocked without fallback');
+      await js('studioTest.tool("reference",["words"],{});studioTest.textSource("最初剧本");studioTest.assistant({holdAi:true})');
+      await click('AI 整理角色');
+      await wait('studioTest.requests().length>'+beforeUnavailable);
+      await js('studioTest.apply([{type:"update_node",id:"words",metadata:{content:"用户修改后的剧本"}}]);studioTest.releaseAi()');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.role'),undefined,'changed upstream never receives stale generated role');
+      await js('studioTest.tool("reference",[],{text:"补充说明",role:"原有角色"})');
+      const beforeCancel = await js('studioTest.requests().length');
+      await click('AI 整理角色');
+      await wait('document.body.textContent.includes("确认调用")');
+      await click('确认调用');
+      await wait('!document.querySelector(".ant-modal-confirm")');
+      await wait('studioTest.requests().length>'+beforeCancel);
+      await click('停止等待');
+      await wait('studioTest.state().nodes.find(n=>n.id==="tool").metadata.status==="error"');
+      assert.equal(await js('studioTest.state().nodes.find(n=>n.id==="tool").metadata.studio.role'),'原有角色');
+      assert.equal(await js('studioTest.requests().length'),beforeCancel+1,'canceling the assistant never replays the model request');
+      await js('studioTest.assistant({holdAi:false});studioTest.tool("compare",["source0","source1"],{selectedId:"source1"})');
+      console.log('STUDIO_ASSISTANTS_OK: exact model, original images, safe drafts, preserved subtitle timestamps, no automatic paid image tasks, unavailable and stale input rejection');
       await screenshot();
       const exported = await js("studioTest.export()");
       assert.equal(exported.identical, true);

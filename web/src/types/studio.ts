@@ -10,6 +10,12 @@ export type StudioSettings = {
     sourceIds?: string[];
     text?: string;
     model?: string;
+    assistantModel?: string;
+    imageModel?: string;
+    videoModel?: string;
+    audioModel?: string;
+    preparedPrompts?: string[];
+    selectionAdvice?: { sourceId: string; reason: string; inputFingerprint?: string };
     screenplay?: Screenplay;
     episodeIndex?: number;
     shots?: StoryShot[];

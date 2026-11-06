@@ -5,7 +5,7 @@ export const studioTools = {
     decision: { title: "JEV 决策", description: "判断文本、选择方案或按标准评分，查看概率与置信度", action: "运行决策" },
     screenplay: { title: "漫剧剧本", description: "故事梗概 → 分集、角色设定与结尾钩子", action: "拆解漫剧剧本" },
     storyboard: { title: "漫剧分镜", description: "分集剧本 → 场景、人物、景别和连续性分镜", action: "生成分镜" },
-    reference: { title: "角色与风格参考", description: "统一角色、服装、场景与参考图片", action: "保存角色设定" },
+    reference: { title: "角色与风格参考", description: "AI 整理人物与画风，连接参考图保持角色一致", action: "输出角色说明" },
     batch: { title: "分镜批量生图", description: "逐项生成画面，失败暂停，保留已有任务", action: "开始批量生成" },
     compare: { title: "结果对比与精选", description: "并排或滑动比较原图，选择结果传给下游", action: "输出精选图片" },
     subtitles: { title: "语音转字幕", description: "识别音视频，编辑时间轴，导出 SRT 或字幕视频", action: "识别字幕" },
@@ -15,6 +15,7 @@ export const studioTools = {
 export function studioAccepts(tool: StudioTool, type: string) {
     if (tool === "screenplay" || tool === "decision") return type === "text";
     if (tool === "storyboard") return ["text", "studio:screenplay", "studio:reference"].includes(type);
+    if (tool === "reference") return ["text", "image", "studio:screenplay"].includes(type);
     if (tool === "batch") return ["image", "text", "studio:reference"].includes(type);
     if (tool === "subtitles") return ["audio", "video"].includes(type);
     if (tool === "export") return ["image", "video", "audio", "text"].includes(type);
@@ -65,6 +66,7 @@ export function screenplayEpisodeText(screenplay: Screenplay, episodeIndex = 0) 
     return [screenplay.logline && `全剧梗概：${screenplay.logline}`, screenplay.style && `视觉风格：${screenplay.style}`, screenplay.characters.length && `角色设定：\n${screenplay.characters.map(item => `${item.name}：${item.appearance}${item.personality ? `；性格：${item.personality}` : ""}${item.voice ? `；声音：${item.voice}` : ""}`).join("\n")}`, `${episode.title}${episode.synopsis ? `：${episode.synopsis}` : ""}`, episode.script, episode.cliffhanger && `本集结尾钩子：${episode.cliffhanger}`].filter(Boolean).join("\n\n");
 }
 export function batchPrompts(node: CanvasNodeData, sources: CanvasNodeData[]) {
+    if (node.metadata?.studio?.preparedPrompts) return node.metadata.studio.preparedPrompts.map(line => line.trim()).filter(Boolean);
     return [node.metadata?.studio?.text, ...sources.filter(n => n.type === "text").map(n => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 }
 export function readShots(text: string): StoryShot[] {

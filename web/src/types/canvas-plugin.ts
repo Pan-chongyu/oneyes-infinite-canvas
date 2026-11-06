@@ -67,6 +67,8 @@ export type CanvasNodeContext = {
     ai: CanvasPluginAi;
     // Opens or closes the custom panel below this node; the definition must provide a Panel.
     openPanel: () => void;
+    // Opens another node as the next step of a local workflow.
+    openNodePanel?: (nodeId: string) => void;
     closePanel: () => void;
     // Plugin-private persistence isolated by namespace.
     storage: PluginStorage;

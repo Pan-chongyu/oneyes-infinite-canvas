@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Input, InputNumber, Select, Segmented, Slider } from "antd";
-import { BookOpen, Clapperboard, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown, Plus, Trash2, GitBranch } from "lucide-react";
+import { BookOpen, Clapperboard, Users, Rows3, Columns2, Captions, ScanText, Download, Settings2, Play, X, ArrowUp, ArrowDown, Plus, Trash2, GitBranch, Sparkles, LoaderCircle } from "lucide-react";
 import { nanoid } from "nanoid";
 import { readFileAsDataUrl } from "@/lib/image-utils";
 import { saveAs } from "file-saver";
 import { studioTools, studioSources, studioAccepts, readShots, readScreenplay, screenplayEpisodeText, shotVisualPrompt, shotVideoPrompt, shotsToBatchText, batchPrompts, subtitleSrt } from "@/lib/canvas/studio";
 import { SourceSummary } from "./source-summary";
+import { studioModelChoice, studioReferenceText, studioSourceText, studioInputFingerprint, studioAdviceFingerprint, readReferenceDraft, readPromptDraft, readSelectionAdvice, readSubtitleCorrections, prepareStoryboarding } from "@/lib/canvas/studio-assistant";
 import { jevQuestion, jevSummary, requestJevDecision } from "@/services/api/jev";
 import { modelOptionLabel, resolveModelForCapability, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { creatorSourceBlob, processNativeVideo } from "@/services/creator-media";
@@ -20,9 +21,17 @@ import type { StudioTool, StudioSettings } from "@/types/studio";
 import type { CreatorArtifact } from "@/types/creator-tools";
 
 const icons = { screenplay: Clapperboard, storyboard: BookOpen, reference: Users, batch: Rows3, compare: Columns2, subtitles: Captions, ocr: ScanText, export: Download, decision: GitBranch };
-const referenceText = (node: CanvasNodeData) => {
-    const s = node.metadata?.studio;
-    return [s?.role && `角色：${s.role}`, s?.outfit && `服装与场景：${s.outfit}`, s?.style && `风格：${s.style}`].filter(Boolean).join("\n");
+const referenceText = (node: CanvasNodeData) => studioReferenceText(node.metadata?.studio);
+const guides: Record<StudioTool, string> = {
+    screenplay: "写一句故事，AI 帮你拆分集和角色；满意后继续做分镜。",
+    storyboard: "连接剧本或直接写故事，AI 拆镜后可逐镜修改。",
+    reference: "连接剧本或放入参考图，AI 帮你整理人物与画风。",
+    batch: "每行一幅画面；也可让 AI 先整理，再确认开始生图。",
+    compare: "点击图片选中，或请 AI 给出建议；由你决定输出哪张。",
+    subtitles: "连接音视频后识别字幕；已有字幕可直接编辑或 AI 校对。",
+    ocr: "选择一张原图，使用支持看图的文本模型提取文字。",
+    export: "选择需要交付的素材，直接打包原件。",
+    decision: "写清问题和判断标准，JEV 帮你比较方案。",
 };
 const sourcesFor = (ctx: CanvasNodeContext) => studioSources(ctx.node, ctx.getNodes(), ctx.getConnections());
 function Original({ node, zoom = 1 }: { node: CanvasNodeData; zoom?: number }) {
@@ -79,10 +88,10 @@ function Content({ ctx }: { ctx: CanvasNodeContext }) {
                 {busy
                     ? "正在处理…"
                     : ctx.node.metadata?.errorDetails ||
-                      (s?.decision ? jevSummary(s.decision) : s?.screenplay ? `${s.screenplay.episodes.length} 集 · ${s.screenplay.characters.length} 个角色` : s?.items ? `已完成 ${s.items.filter((i) => i.state === "done").length} / ${s.items.length} 项` : s?.shots ? `${s.shots.length} 个镜头` : s?.cues ? `${s.cues.length} 条字幕` : "连接素材，打开设置开始")}
+                      (s?.decision ? jevSummary(s.decision) : s?.screenplay ? `${s.screenplay.episodes.length} 集 · ${s.screenplay.characters.length} 个角色` : s?.items ? `已完成 ${s.items.filter((i) => i.state === "done").length} / ${s.items.length} 项` : s?.shots ? `${s.shots.length} 个镜头` : s?.cues ? `${s.cues.length} 条字幕` : guides[tool])}
             </p>
             <Button type="text" size="small" className="self-start" icon={<Settings2 size={14} />} onPointerDown={(e) => e.stopPropagation()} onClick={ctx.openPanel}>
-                打开{tool === "compare" ? "对比" : "设置"}
+                {tool === "compare" ? "选择图片" : "开始制作"}
             </Button>
         </div>
     );
@@ -95,7 +104,9 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
     latest.current = ctx;
     const active = useRef<AbortController | null>(null),
         [busy, setBusy] = useState(false),
-        [zoom, setZoom] = useState(1);
+        [zoom, setZoom] = useState(1),
+        [stage, setStage] = useState(""),
+        [adviceCheck, setAdviceCheck] = useState({ input: "", digest: "" });
     const { modal } = App.useApp();
     const config = useConfigStore(state => state.config);
     useEffect(
@@ -104,7 +115,16 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
         },
         [ctx.projectId, ctx.node.id],
     );
-    const patch = (value: Partial<StudioSettings>) => ctx.updateMetadata({ studio: { ...s, ...(tool === "decision" ? { decision: undefined, decisionInput: undefined } : {}), ...value }, errorDetails: undefined });
+    const patch = (value: Partial<StudioSettings>) => latest.current.updateMetadata({ studio: { ...latest.current.node.metadata?.studio, ...(tool === "decision" ? { decision: undefined, decisionInput: undefined } : {}), ...value }, errorDetails: undefined });
+    const capability = tool === "batch" ? "image" : tool === "subtitles" ? "audio" : "text";
+    const modelChoice = studioModelChoice(ctx.ai, s.model, capability);
+    const assistantChoice = studioModelChoice(ctx.ai, s.assistantModel, "text");
+    const hasAssistant = ["reference", "compare", "batch", "subtitles"].includes(tool);
+    const ensureModel = (assistant = false) => {
+        const choice = assistant ? assistantChoice : modelChoice;
+        if (!choice.ready) throw Error("所选模型尚未配置或已不可用，请选择可用模型，或点击「配置模型」完成接入");
+        return choice.value;
+    };
     let sources: CanvasNodeData[] = [],
         sourceError = "";
     try {
@@ -119,6 +139,14 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
         .map((node) => ({ value: node.id, label: node.title }));
     const single = tool === "ocr" || tool === "subtitles";
     const ids = s.sourceIds ?? ctx.getConnections().filter(link => link.toNodeId === ctx.node.id).map(link => link.fromNodeId);
+    const adviceInput = tool === "compare" ? JSON.stringify([studioInputFingerprint(sources), s.text]) : "";
+    const adviceMatches = adviceCheck.input === adviceInput && s.selectionAdvice?.inputFingerprint === adviceCheck.digest;
+    useEffect(() => {
+        if (!adviceInput) return;
+        let current = true;
+        void studioAdviceFingerprint(adviceInput).then(digest => { if (current) setAdviceCheck({ input: adviceInput, digest }); }).catch(() => { if (current) setAdviceCheck({ input: "", digest: "" }); });
+        return () => { current = false; };
+    }, [adviceInput]);
     const add = (type: string, title: string, metadata: CanvasNodeMetadata, index = 0): CanvasAgentOp[] => {
         const id = nanoid();
         return [
@@ -126,20 +154,20 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
             { type: "connect_nodes", fromNodeId: ctx.node.id, toNodeId: id },
         ];
     };
-    const run = async (task: (signal: AbortSignal, check: () => void) => Promise<void>) => {
+    const run = async (task: (signal: AbortSignal, check: () => void) => Promise<void>, label = info.action) => {
         if (active.current) return;
         const controller = new AbortController();
         active.current = controller;
         setBusy(true);
+        setStage(label);
         ctx.updateMetadata({ status: "loading", errorDetails: undefined });
         const project = ctx.projectId,
             id = ctx.node.id;
-        const fingerprint = (inputs: CanvasNodeData[]) => JSON.stringify(inputs.map((n) => [n.id, n.type, n.metadata?.content, n.metadata?.storageKey, n.metadata?.primaryImageId, n.metadata?.images]));
-        const originalInputs = fingerprint(sources);
+        const originalInputs = studioInputFingerprint(sources);
         const check = () => {
             controller.signal.throwIfAborted();
             if (latest.current.projectId !== project || !latest.current.getNode(id)) throw new DOMException("画布或节点已关闭", "AbortError");
-            if (fingerprint(sourcesFor(latest.current)) !== originalInputs) throw Error("输入素材已更改，请重新确认后运行；已受理的模型请求请先检查用量");
+            if (studioInputFingerprint(sourcesFor(latest.current)) !== originalInputs) throw Error("输入素材已更改，请重新确认后运行；已受理的模型请求请先检查用量");
         };
         try {
             await task(controller.signal, check);
@@ -186,6 +214,8 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
     const action = () =>
         void run(async (signal, check) => {
             if (sourceError) throw Error(sourceError);
+            if (["screenplay", "storyboard", "ocr"].includes(tool)) ensureModel();
+            if (tool === "subtitles" && !s.model) throw Error("请先选择或填写支持时间戳的语音识别模型");
             if (tool === "decision") {
                 const state = [s.text, ...sources.map(n => n.metadata?.content || n.metadata?.prompt)].filter(Boolean).join("\n");
                 const question = jevQuestion(s.questionType || "noul", s.question || "", s.criteria);
@@ -198,7 +228,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                 if (!story.trim()) throw Error("请填写故事梗概或连接文本节点");
                 const result = await ctx.ai.generateText(story, {
                     signal,
-                    model: s.model,
+                    model: modelChoice.value,
                     system: "你是中文竖屏漫剧总编剧。把故事扩写成适合连续短集的剧本，保持人物动机、关系、外形与服装连续。仅输出 JSON：{logline:string,style:string,characters:[{name,appearance,personality,voice}],episodes:[{title,synopsis,script,cliffhanger}]}。角色 appearance 写可用于图像模型的稳定外形与服装锚点；每集 script 写可拍摄的场景动作与对白；cliffhanger 写本集结尾钩子。不得改写故事核心设定，不得输出 JSON 以外内容。",
                 });
                 check();
@@ -210,7 +240,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                 const referenceNotes = sources.filter((n) => n.type === "studio:reference").map(referenceText).filter(Boolean).join("\n");
                 const result = await ctx.ai.generateText(story, {
                     signal,
-                    model: s.model,
+                    model: modelChoice.value,
                     system: `你是竖屏漫剧分镜导演。按故事先后切成连续可拍的镜头，节奏明确，动作能衔接，人物外形、服装、道具和场景保持连续。picture 只写视觉画面，不把对白画成文字。仅输出 JSON 数组，每项包含 title、scene（场景与时间）、characters（出镜角色及固定外形锚点）、framing（景别与构图）、picture（完整画面提示词）、dialogue（原文台词，无台词留空）、seconds（正数秒）、camera（机位／运动）、continuity（与前后镜头衔接的服装、道具、朝向或动作）。${referenceNotes ? `\n角色与风格参考（严格遵守）：\n${referenceNotes}` : ""}`,
                 });
                 check();
@@ -230,7 +260,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                 const blob = await creatorSourceBlob(sources[0], signal);
                 const data = await readFileAsDataUrl(new File([blob], "reference", { type: blob.type }));
                 check();
-                const result = await ctx.ai.generateText("提取图片中的全部可见文字，保持原文、顺序与段落；无法辨认的内容标记[无法辨认]，不要补写或解释。", { signal, model: s.model, references: [data] });
+                const result = await ctx.ai.generateText("提取图片中的全部可见文字，保持原文、顺序与段落；无法辨认的内容标记[无法辨认]，不要补写或解释。", { signal, model: modelChoice.value, references: [data] });
                 check();
                 patch({ text: result.text });
                 ctx.applyOps(add("text", `文字 · ${sources[0].title}`, { content: result.text, status: "success" }));
@@ -247,6 +277,45 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                 saveAs(blob, "OneYes-创作素材.zip");
             }
         });
+    const assistLabel = { reference: "AI 整理角色", compare: "AI 帮我选", batch: "AI 整理提示词", subtitles: "AI 校对字幕" }[tool as "reference" | "compare" | "batch" | "subtitles"];
+    const assist = () => void run(async (signal, check) => {
+        if (sourceError) throw Error(sourceError);
+        const model = ensureModel(true);
+        if (tool === "subtitles" && !s.cues?.length) throw Error("请先识别或手动填写字幕");
+        if (tool === "compare" && !sources.length) throw Error("请先选择需要比较的图片");
+        const text = [s.text, studioSourceText(sources), tool === "reference" && referenceText(ctx.node)].filter(Boolean).join("\n\n");
+        if ((tool === "reference" || tool === "batch") && !text.trim() && !sources.some(n => n.type === "image")) throw Error("请填写创作要求，或连接剧本、文本或参考图");
+        const references: string[] = [];
+        if (tool === "reference" || tool === "compare") for (const source of sources.filter(n => n.type === "image")) {
+            const blob = await creatorSourceBlob(source, signal);
+            references.push(await readFileAsDataUrl(new File([blob], "reference", { type: blob.type })));
+            check();
+        }
+        const system = tool === "reference"
+            ? '你是漫剧角色设计师。结合剧本、用户说明与按顺序传入的参考原图整理稳定可复用的人物外形、服装场景和视觉风格，不捏造图中无法确认的身份信息。只输出 JSON：{"role":"人物外形、性格与声音设定","outfit":"服装、道具与场景","style":"画风、光线和配色"}。保留用户明确设定。'
+            : tool === "compare"
+              ? '你是创作图片审片师。按图片传入顺序比较主体完整性、构图、画面质量和用户标准。只输出 JSON：{"index":从1开始的推荐图片序号,"reason":"具体优点与需注意的问题"}。不得推荐不存在的图片。'
+              : tool === "batch"
+                ? '你是漫剧画面策划。把用户故事或镜头要求整理成按顺序可独立生图的提示词，保持人物、服装、场景连续，不把对白绘成文字。不生成图片。只输出 JSON：{"prompts":["每项一幅完整画面的提示词"]}。'
+                : '你是中文字幕校对。仅修正错别字和标点，不改写含义，不合并、删除或新增条目。按原顺序只输出 JSON：{"texts":["校对后文字"]}，数组长度必须和输入字幕一致。';
+        const prompt = tool === "subtitles" ? JSON.stringify(s.cues!.map(c => c.text)) : text || "请根据这些参考原图给出建议";
+        const result = await ctx.ai.generateText(prompt, { model, signal, system, ...(references.length ? { references } : {}) });
+        check();
+        if (JSON.stringify(latest.current.node.metadata?.studio || {}) !== JSON.stringify(s)) throw Error("当前设置已变化，原内容已保留；请重新确认后运行");
+        if (tool === "reference") patch(readReferenceDraft(result.text));
+        else if (tool === "compare") {
+            const advice = readSelectionAdvice(result.text, sources), inputFingerprint = await studioAdviceFingerprint(adviceInput);
+            check();
+            patch({ selectionAdvice: { ...advice, inputFingerprint } });
+        }
+        else if (tool === "batch") patch({ preparedPrompts: readPromptDraft(result.text) });
+        else patch({ cues: readSubtitleCorrections(result.text, s.cues!) });
+    }, assistLabel);
+    const requestAssist = () => {
+        const replacing = tool === "reference" && referenceText(ctx.node) || tool === "batch" && s.preparedPrompts?.length || tool === "subtitles" && s.cues?.length;
+        if (replacing) modal.confirm({ title: `${assistLabel}？`, content: "会调用所选文本模型并更新当前内容，失败保留原内容。模型调用按站点计费。", okText: "确认调用", cancelText: "保留当前内容", onOk: assist });
+        else assist();
+    };
     const batchBusy = ctx.batch?.active(ctx.node.id);
     const disabled = busy || batchBusy || (tool === "batch" && Boolean(s.items?.length));
     const confirmBatch = () =>
@@ -271,6 +340,10 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                 <span className="text-sm font-medium">{info.title}</span>
                 <Button type="text" size="small" aria-label="关闭设置" icon={<X size={14} />} onClick={onClose} />
             </header>
+            <p className="m-0 text-xs leading-5" style={{ color: ctx.theme.node.muted }}>{guides[tool]}</p>
+            <details className="text-xs" open={Boolean(sourceError) || !sources.length && ["ocr", "subtitles", "compare", "export"].includes(tool)}>
+                <summary className="cursor-pointer py-1">{sources.length ? `已连接 ${sources.length} 份素材 · 更换或排序` : "选择素材（也可直接连线）"}</summary>
+                <div className="mt-2 space-y-2">
             <label className="block space-y-1 text-xs">
                 {single ? "选择素材" : "素材顺序"}
                 <Select
@@ -318,6 +391,8 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     ))}
                 </div>
             )}
+                </div>
+            </details>
             {tool === "decision" && <>
                 <label className="block space-y-1 text-xs">决策模型
                     <Select className="w-full" aria-label="决策模型" value={resolveModelForCapability(config, s.model, "decision") || undefined} disabled={disabled}
@@ -353,25 +428,40 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                         aria-label="创作模型"
                         showSearch={{ optionFilterProp: "label" }}
                         allowClear
-                        value={s.model}
-                        options={ctx.ai.listModels(tool === "batch" ? "image" : tool === "subtitles" ? "audio" : "text")}
-                        placeholder={tool === "subtitles" ? "选择已开通的语音识别模型" : "使用当前默认模型"}
+                        value={tool === "subtitles" ? s.model : modelChoice.value || undefined}
+                        options={modelChoice.options}
+                        placeholder={tool === "subtitles" ? "选择支持时间戳的识别模型" : "选择模型"}
                         disabled={disabled || (tool === "batch" && Boolean(s.items?.length))}
                         onChange={(model) => patch({ model })}
                     />
                     {tool === "subtitles" && <Input size="small" aria-label="语音识别模型名称" placeholder="或填写准确的识别模型名称" value={s.model} disabled={disabled} onChange={(e) => patch({ model: e.target.value })} />}
                 </label>
             )}
+            {(["screenplay", "storyboard", "batch", "ocr"].includes(tool) && !modelChoice.ready || tool === "subtitles" && !s.model) && <div className="flex flex-wrap items-center justify-between gap-2 text-xs" role="status"><span>请先选择可用模型，手动编辑仍可使用。</span><Button type="text" size="small" onClick={() => useConfigStore.getState().openConfigDialog(false, "channels")}>配置模型</Button></div>}
             {["screenplay", "storyboard", "batch"].includes(tool) && (
+                <label className="block space-y-1 text-xs">
+                    {tool === "batch" ? "画面要求（每行一张）" : tool === "screenplay" ? "你想讲什么故事？" : "故事或补充要求"}
                 <Input.TextArea
                     aria-label={tool === "batch" ? "批量提示词" : tool === "screenplay" ? "故事梗概" : "故事内容"}
                     rows={4}
                     placeholder={tool === "batch" ? "每行一条提示词；可同时连接角色参考" : tool === "screenplay" ? "写下故事梗概，也可以连接上游文本节点" : "写下故事，或连接分集剧本与角色参考"}
-                    value={s.text}
+                    value={tool === "batch" && s.preparedPrompts ? s.preparedPrompts.join("\n") : s.text}
                     disabled={disabled || (tool === "batch" && Boolean(s.items?.length))}
-                    onChange={(e) => patch({ text: e.target.value })}
+                    onChange={(e) => patch(tool === "batch" && s.preparedPrompts ? { preparedPrompts: e.target.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean) } : { text: e.target.value })}
                 />
+                </label>
             )}
+            {hasAssistant && <div className="space-y-2 border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs">{tool === "subtitles" ? "文字校对" : "AI 助手"}</span>
+                    <Button type="text" size="small" icon={busy && stage === assistLabel ? <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" /> : <Sparkles size={14} />} disabled={disabled || Boolean(sourceError) || tool === "subtitles" && !s.cues?.length} onClick={requestAssist}>{assistLabel}</Button>
+                </div>
+                <Select className="w-full" aria-label="AI 助手模型" showSearch={{ optionFilterProp: "label" }} allowClear value={assistantChoice.value || undefined} options={assistantChoice.options} disabled={disabled} placeholder="选择已接入的文本模型" onChange={assistantModel => patch({ assistantModel })} />
+                {!assistantChoice.ready && <Button type="text" size="small" onClick={() => useConfigStore.getState().openConfigDialog(false, "channels")}>配置模型</Button>}
+                {(tool === "compare" || tool === "reference") && <label className="block space-y-1 text-xs">{tool === "compare" ? "你更看重什么？" : "角色要求"}<Input.TextArea aria-label="AI 助手要求" rows={2} value={s.text} disabled={disabled} placeholder={tool === "compare" ? "例如：人物清晰、服装一致、构图适合竖屏" : "例如：白衣少女，银簪，国风水墨；也可直接连接剧本"} onChange={e => patch({ text: e.target.value })} /></label>}
+                <p className="m-0 text-xs leading-5" style={{ color: ctx.theme.node.muted }}>{tool === "compare" || tool === "reference" ? "会将所选原图和说明交给文本模型，请选支持看图的模型；点击后才调用。" : tool === "batch" ? "只整理提示词，检查后再确认生图。" : "只校对文字，保留字幕条数和原时间轴。"} 模型调用按站点计费。</p>
+                {tool === "batch" && s.preparedPrompts && <div className="flex flex-wrap items-center justify-between gap-2 text-xs"><span role="status">已整理 {s.preparedPrompts.length} 条，不重复附加上游文本</span><Button type="text" size="small" disabled={disabled} onClick={() => patch({ preparedPrompts: undefined })}>恢复原始提示词</Button></div>}
+            </div>}
             {tool === "screenplay" && s.screenplay && (() => {
                 const index = Math.min(s.episodeIndex || 0, s.screenplay.episodes.length - 1);
                 const episode = s.screenplay.episodes[index];
@@ -397,10 +487,17 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                         </div>
                     </details>
                     <Button type="text" size="small" disabled={disabled} onClick={() => ctx.applyOps(add("text", episode.title, { content: screenplayEpisodeText(s.screenplay!, index), status: "success" }))}>输出本集剧本文本</Button>
+                    <Button type="text" size="small" disabled={disabled} icon={<BookOpen size={14} />} onClick={() => {
+                        const { ops, boardId } = prepareStoryboarding(ctx.node, ctx.getNodes(), ctx.getConnections());
+                        ctx.applyOps(ops);
+                        ctx.openNodePanel?.(boardId);
+                    }}>下一步：做分镜</Button>
                 </div>;
             })()}
             {tool === "reference" && (
                 <div className="space-y-2">
+                    {s.role && <p className="m-0 line-clamp-3 text-xs leading-5" role="status">{s.role}{s.style ? ` · ${s.style}` : ""}</p>}
+                    <details className="text-xs"><summary className="cursor-pointer py-1">{s.role ? "修改角色设定" : "手动填写角色设定"}</summary><div className="mt-2 space-y-2">
                     {(
                         [
                             ["role", "角色特征"],
@@ -413,20 +510,35 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                             <Input.TextArea aria-label={label} rows={2} value={s[key]} disabled={disabled} onChange={(e) => patch({ [key]: e.target.value })} />
                         </label>
                     ))}
+                    </div></details>
                     <p className="text-xs" style={{ color: ctx.theme.node.muted }}>
                         将此节点连到生成节点，可传递说明和已选择的参考图；角色一致性取决于所用模型。
                     </p>
+                    <Button type="text" size="small" disabled={disabled || !referenceText(ctx.node)} onClick={() => {
+                        const ops = add("image", "角色定妆图", { prompt: `${referenceText(ctx.node)}\n角色定妆图，清晰展示外形与服装，保持人物设定。`, model: s.imageModel || ctx.ai.defaultModel("image") });
+                        ctx.applyOps(ops);
+                        const id = ops[0].type === "add_node" ? ops[0].id : undefined;
+                        if (id) ctx.openNodePanel?.(id);
+                    }}>下一步：做角色图</Button>
                 </div>
             )}
+            {(tool === "storyboard" || tool === "reference") && <details className="text-xs">
+                <summary className="cursor-pointer py-1">更多设置 · 下游生成模型</summary>
+                <div className="mt-2 space-y-2">{(tool === "reference" ? ["image"] as const : ["image", "video", "audio"] as const).map(mode => {
+                    const key = `${mode}Model` as "imageModel" | "videoModel" | "audioModel", choice = studioModelChoice(ctx.ai, s[key], mode);
+                    return <label key={mode} className="block space-y-1">{{ image: "画面", video: "视频", audio: "配音" }[mode]}模型<Select className="w-full" aria-label={`${mode}输出模型`} showSearch={{ optionFilterProp: "label" }} allowClear value={choice.value || undefined} options={choice.options} disabled={disabled} onChange={value => patch({ [key]: value })} /></label>;
+                })}<p style={{ color: ctx.theme.node.muted }}>沿用当前默认模型；这里只配置和连接，不会自动生成。</p></div>
+            </details>}
             {tool === "storyboard" && (
                 <div className="max-h-80 space-y-3 overflow-auto">
                     {(s.shots || []).map((shot, index) => (
-                        <div key={index} className="space-y-2 border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
+                        <details key={index} className="space-y-2 border-t pt-2 text-xs" open={index === 0} style={{ borderColor: ctx.theme.toolbar.border }}>
+                            <summary className="cursor-pointer py-1">镜头 {index + 1} · {shot.title || "未命名"} · {shot.seconds} 秒</summary>
                             <div className="flex items-center gap-1 text-xs"><span className="flex-1">镜头 {index + 1}</span>
                                 {[-1, 1].map(offset => <Button key={offset} type="text" size="small" aria-label={`镜头${index + 1}${offset < 0 ? "上移" : "下移"}`} disabled={disabled || index + offset < 0 || index + offset >= (s.shots?.length || 0)} icon={offset < 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />} onClick={() => { const shots = [...s.shots!]; [shots[index], shots[index + offset]] = [shots[index + offset], shots[index]]; patch({ shots }); }} />)}
                                 <Button type="text" size="small" aria-label={`删除镜头${index + 1}`} icon={<Trash2 size={12} />} disabled={disabled} onClick={() => patch({ shots: s.shots!.filter((_, i) => i !== index) })} />
                             </div>
-                            {(["title", "picture", "dialogue", "camera"] as const).map((key) => (
+                            {(["title", "picture", "dialogue"] as const).map((key) => (
                                 <label key={key} className="block space-y-1 text-xs">
                                     <span>{{ title: "镜头标题", picture: "画面提示词", dialogue: "台词", camera: "运镜" }[key]}</span>
                                     <Input.TextArea
@@ -440,17 +552,17 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                                 </label>
                             ))}
                             <details className="text-xs">
-                                <summary className="cursor-pointer">场景、人物与连续性</summary>
+                                <summary className="cursor-pointer">更多设置 · 场景、人物与运镜</summary>
                                 <div className="mt-2 space-y-2">
-                                    {(["scene", "characters", "framing", "continuity"] as const).map((key) => <label key={key} className="block space-y-1">
-                                        <span>{{ scene: "场景与时间", characters: "出镜人物", framing: "景别与构图", continuity: "连续性提示" }[key]}</span>
+                                    {(["scene", "characters", "framing", "camera", "continuity"] as const).map((key) => <label key={key} className="block space-y-1">
+                                        <span>{{ scene: "场景与时间", characters: "出镜人物", framing: "景别与构图", camera: "运镜", continuity: "连续性提示" }[key]}</span>
                                         <Input.TextArea aria-label={`镜头${index + 1}-${key}`} rows={2} autoSize disabled={disabled} value={shot[key] || ""} onChange={e => patch({ shots: s.shots!.map((item, i) => i === index ? { ...item, [key]: e.target.value } : item) })} />
                                     </label>)}
                                 </div>
                             </details>
                             <InputNumber aria-label={`镜头${index + 1}秒数`} min={0} value={shot.seconds} disabled={disabled} onChange={(seconds) => patch({ shots: s.shots!.map((item, i) => (i === index ? { ...item, seconds: seconds || 0 } : item)) })} />
                             <span className="ml-2 text-xs">秒</span>
-                        </div>
+                        </details>
                     ))}
                     <Button type="text" size="small" disabled={disabled} icon={<Plus size={13} />} onClick={() => patch({ shots: [...(s.shots || []), { title: `镜头 ${(s.shots?.length || 0) + 1}`, picture: "", dialogue: "", camera: "", seconds: 5 }] })}>添加镜头</Button>
                     <Button
@@ -471,8 +583,8 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                                         referenceIds = sources.filter(source => source.type === "studio:reference").map(source => source.id);
                                     ops.push(
                                         { type: "add_node", id: textId, nodeType: "text", title: shot.title, position: { x, y }, metadata: { content: imagePrompt, status: "success" } },
-                                        { type: "add_node", id: imageId, nodeType: "image", title: `${shot.title} · 画面`, position: { x: x + 420, y }, metadata: { prompt: imagePrompt } },
-                                        { type: "add_node", id: videoId, nodeType: "video", title: `${shot.title} · 视频`, position: { x: x + 840, y }, metadata: { prompt: videoPrompt } },
+                                        { type: "add_node", id: imageId, nodeType: "image", title: `${shot.title} · 画面`, position: { x: x + 420, y }, metadata: { prompt: imagePrompt, model: s.imageModel || ctx.ai.defaultModel("image"), count: 1 } },
+                                        { type: "add_node", id: videoId, nodeType: "video", title: `${shot.title} · 视频`, position: { x: x + 840, y }, metadata: { prompt: videoPrompt, model: s.videoModel || ctx.ai.defaultModel("video"), seconds: String(shot.seconds) } },
                                         { type: "connect_nodes", fromNodeId: ctx.node.id, toNodeId: textId },
                                         { type: "connect_nodes", fromNodeId: textId, toNodeId: imageId },
                                         { type: "connect_nodes", fromNodeId: textId, toNodeId: videoId },
@@ -480,7 +592,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                                     );
                                     if (shot.dialogue.trim()) {
                                         const audioId = nanoid();
-                                        ops.push({ type: "add_node", id: audioId, nodeType: "audio", title: `${shot.title} · 台词`, position: { x: x + 1260, y }, metadata: { prompt: shot.dialogue } }, { type: "connect_nodes", fromNodeId: audioId, toNodeId: videoId });
+                                        ops.push({ type: "add_node", id: audioId, nodeType: "audio", title: `${shot.title} · 台词`, position: { x: x + 1260, y }, metadata: { prompt: shot.dialogue, model: s.audioModel || ctx.ai.defaultModel("audio") } }, { type: "connect_nodes", fromNodeId: audioId, toNodeId: videoId });
                                     }
                                     for (const referenceId of referenceIds) {
                                         ops.push({ type: "connect_nodes", fromNodeId: referenceId, toNodeId: imageId }, { type: "connect_nodes", fromNodeId: referenceId, toNodeId: videoId });
@@ -499,7 +611,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                             const text = shotsToBatchText(s.shots!);
                             const id = nanoid();
                             const referenceIds = sources.filter(source => source.type === "studio:reference").map(source => source.id);
-                            ctx.applyOps([{ type: "add_node", id, nodeType: "studio:batch", title: "分镜批量生图", position: { x: ctx.node.position.x + ctx.node.width + 100, y: ctx.node.position.y }, metadata: { studio: { text, sourceIds: referenceIds }, status: "idle" } }, ...referenceIds.map(fromNodeId => ({ type: "connect_nodes" as const, fromNodeId, toNodeId: id })), { type: "select_nodes", ids: [id] }]);
+                            ctx.applyOps([{ type: "add_node", id, nodeType: "studio:batch", title: "分镜批量生图", position: { x: ctx.node.position.x + ctx.node.width + 100, y: ctx.node.position.y }, metadata: { studio: { text, sourceIds: referenceIds, model: s.imageModel || ctx.ai.defaultModel("image"), assistantModel: s.model || ctx.ai.defaultModel("text") }, status: "idle" } }, ...referenceIds.map(fromNodeId => ({ type: "connect_nodes" as const, fromNodeId, toNodeId: id })), { type: "select_nodes", ids: [id] }]);
                         } catch (error) { ctx.updateMetadata({ errorDetails: (error as Error).message }); }
                     }}>转为批量任务</Button>
                     <p className="text-xs" style={{ color: ctx.theme.node.muted }}>可手动编排，也可用模型拆分。转为批量后需检查提示词并确认生成。</p>
@@ -508,10 +620,11 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
             {tool === "compare" && (
                 <div className="space-y-2">
                     <label className="block text-xs">
-                        同步放大 · {Math.round(zoom * 100)}%<Slider aria-label="同步放大" min={1} max={4} step={0.1} value={zoom} onChange={setZoom} />
+                        同步放大 · {Math.round(zoom * 100)}%<Slider aria-label="同步放大" min={1} max={4} step={0.1} value={zoom} disabled={disabled} onChange={setZoom} />
                     </label>
                     <Segmented
                         size="small"
+                        disabled={disabled}
                         value={s.comparison || "side"}
                         options={[
                             { value: "side", label: "并排对比" },
@@ -528,6 +641,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                                     key={node.id}
                                     aria-label={`精选 ${node.title}`}
                                     aria-pressed={s.selectedId === node.id}
+                                    disabled={disabled}
                                     onClick={() => patch({ selectedId: node.id })}
                                     className={`overflow-hidden rounded border ${s.comparison === "wipe" ? "absolute inset-0" : "h-48"}`}
                                     style={{
@@ -541,11 +655,12 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                     </div>
                     {s.comparison === "wipe" && (
                         <>
-                            <Slider aria-label="对比滑块" value={s.wipe ?? 50} onChange={(wipe) => patch({ wipe })} />
-                            <Select className="w-full" aria-label="精选结果" placeholder="选择要输出的原图" options={sources.map((n) => ({ value: n.id, label: n.title }))} value={s.selectedId} onChange={(selectedId) => patch({ selectedId })} />
+                            <Slider aria-label="对比滑块" value={s.wipe ?? 50} disabled={disabled} onChange={(wipe) => patch({ wipe })} />
+                            <Select className="w-full" aria-label="精选结果" disabled={disabled} placeholder="选择要输出的原图" options={sources.map((n) => ({ value: n.id, label: n.title }))} value={s.selectedId} onChange={(selectedId) => patch({ selectedId })} />
                             <p className="text-xs">滑动对比使用前两张图片，按各自比例完整显示。</p>
                         </>
                     )}
+                    {s.selectionAdvice && <div className="space-y-1 text-xs" role="status"><p className="m-0 leading-5">AI 建议：{sources.find(n => n.id === s.selectionAdvice?.sourceId)?.title || "原图已移除"}。{s.selectionAdvice.reason}</p>{!adviceMatches ? <p>素材或比较要求已变化，请重新比较。</p> : <Button type="text" size="small" disabled={disabled} onClick={() => patch({ selectedId: s.selectionAdvice!.sourceId })}>采用建议</Button>}</div>}
                 </div>
             )}
             {tool === "ocr" && s.text && <Input.TextArea aria-label="识别文字" rows={5} disabled={disabled} value={s.text} onChange={(e) => patch({ text: e.target.value })} />}
@@ -629,8 +744,8 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                 </p>
             )}
             <footer className="flex items-center justify-between border-t pt-2" style={{ borderColor: ctx.theme.toolbar.border }}>
-                <span className="text-[11px]" style={{ color: ctx.theme.node.muted }}>
-                    {["screenplay", "storyboard", "ocr", "subtitles", "batch", "decision"].includes(tool) ? "模型调用按站点计费" : "本机处理 · 保留原素材"}
+                <span className="flex items-center gap-1 text-xs" role="status" aria-live="polite" style={{ color: ctx.theme.node.muted }}>
+                    {busy ? <><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" />{stage}中…</> : ["screenplay", "storyboard", "ocr", "subtitles", "batch", "decision"].includes(tool) ? "模型调用按站点计费" : hasAssistant ? "由你确认输出" : "本机处理 · 保留原素材"}
                 </span>
                 {batchBusy ? (
                     <Button type="text" size="small" onClick={() => ctx.batch?.pause(ctx.node.id)}>
@@ -641,7 +756,7 @@ function Panel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () => void }
                         停止等待
                     </Button>
                 ) : (
-                    <Button className={smallButton} type="text" size="small" icon={<Play size={14} />} disabled={Boolean(sourceError) || (tool === "batch" && !ctx.batch)} onClick={tool === "batch" ? () => confirmBatch() : requestAction}>
+                    <Button className={smallButton} type="text" size="small" icon={<Play size={14} />} disabled={Boolean(sourceError) || (tool === "batch" && !ctx.batch)} onClick={tool === "batch" ? () => { if (!modelChoice.ready) { ctx.updateMetadata({ errorDetails: "请先选择可用的生图模型，或点击「配置模型」" }); return; } confirmBatch(); } : requestAction}>
                         {tool === "batch" && s.items ? "继续批量任务" : info.action}
                     </Button>
                 )}

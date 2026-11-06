@@ -46,9 +46,10 @@ function Fixture() {
     const [library, setLibrary] = useState(false);
     const [dark, setDark] = useState(false),
         [project, setProject] = useState("A");
-    const settings = useRef({ failSave: false, failGenerate: false, hold: false, release: () => {} });
+    const settings = useRef({ failSave: false, failGenerate: false, hold: false, release: () => {}, aiReply: null as string | null, holdAi: false, releaseAi: () => {} });
     const calls = useRef<string[]>([]),
-        requests = useRef<any[]>([]);
+        requests = useRef<any[]>([]),
+        opened = useRef("");
     const set = (value: typeof ref.current) => {
         ref.current = value;
         flushSync(() => render((n) => n + 1));
@@ -84,13 +85,24 @@ function Fixture() {
     const processing = useCreatorProcessing({ projectId: project, ...ref.current, applyOps, updateMetadata });
     const ai: CanvasPluginAi = {
         generateText: async (prompt, options) => {
-            requests.current.push({ prompt, references: options?.references, system: options?.system });
+            requests.current.push({ prompt, references: options?.references, system: options?.system, model: options?.model });
+            if (settings.current.holdAi) await new Promise<void>((resolve, reject) => {
+                settings.current.releaseAi = resolve;
+                options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+            });
+            options?.signal?.throwIfAborted();
+            if (settings.current.aiReply !== null) return { text: settings.current.aiReply };
+            if (options?.system?.includes("角色设计师")) return { text: JSON.stringify({ role: "白衣少女阿宁", outfit: "银簪与青靴", style: "国风水墨" }) };
+            if (options?.system?.includes("审片师")) return { text: JSON.stringify({ index: 2, reason: "主体完整，构图清晰" }) };
+            if (options?.system?.includes("画面策划")) return { text: JSON.stringify({ prompts: ["白衣阿宁站在山门", "同一白衣阿宁穿过山门"] }) };
+            if (options?.system?.includes("中文字幕校对")) return { text: JSON.stringify({ texts: ["校对后的字幕。"] }) };
             return { text: options?.system?.includes("总编剧") ? JSON.stringify({ logline: "山海异闻", style: "国风水墨", characters: [{ name: "阿宁", appearance: "白衣少女，银簪", personality: "沉着", voice: "清亮" }], episodes: [{ title: "第一集", synopsis: "入山", script: "阿宁踏入雨雾。", cliffhanger: "山门无声合上。" }, { title: "第二集", synopsis: "问路", script: "阿宁望向山门。", cliffhanger: "门后传来脚步声。" }] }) : options?.system ? JSON.stringify([{ title: "镜头 1", picture: "雨夜跑车", dialogue: "出发", seconds: 5, camera: "低机位" }]) : "识别文字" };
         },
         generateImage: async () => ({ images: [] }),
         generateVideo: async () => ({ url: "", mimeType: "" }),
-        listModels: () => [{ value: "test", label: "测试模型" }],
+        listModels: () => [{ value: "test", label: "测试模型" }, { value: "group-b/model", label: "另一分组／同名模型" }],
         defaultModel: () => "test",
+        isModelReady: model => model === "test" || model === "group-b/model",
     };
     const host: CanvasPluginHost = {
         projectId: project,
@@ -105,7 +117,7 @@ function Fixture() {
         applyOps,
         updateMetadata,
         updateNode: () => {},
-        openPanel: () => {},
+        openPanel: id => { opened.current = id; },
         closePanel: () => {},
     };
     const node = ref.current.nodes.find((n) => n.id === "tool"),
@@ -115,6 +127,8 @@ function Fixture() {
         Content = definition?.Content;
     Object.assign(window, {
         studioTest: {
+            assistant: (value: Partial<typeof settings.current>) => { Object.assign(settings.current, value); },
+            releaseAi: () => settings.current.releaseAi(),
             configureJev: () => {
                 window.oneYesDesktop = {} as NonNullable<Window["oneYesDesktop"]>;
                 useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [...defaultConfig.channels, { id: "oneyes-typesafe", name: "JEV", baseUrl: "https://oneyes.ai", apiKey: "fixture-jev-key", apiFormat: "openai", models: [{ name: "jev-latest", capability: "decision" }] }] });
@@ -122,6 +136,7 @@ function Fixture() {
             saveJev: () => localforage.setItem("jev-result", ref.current.nodes.find(n => n.id === "tool")),
             restoredJev: () => localforage.getItem("jev-result"),
             state: () => ref.current,
+            openedPanel: () => opened.current,
             calls: () => calls.current,
             requests: () => requests.current,
             tool: (name: string, sourceIds: string[], extra = {}) => {

@@ -4,6 +4,8 @@ import { readShots, readScreenplay, screenplayEpisodeText, shotVideoPrompt, subt
 import { filterLibraryNodes, createWorkflowOps, workflowTemplates } from "./node-library";
 import type { CanvasNodeDefinition } from "@/types/canvas-plugin";
 import type { CanvasNodeData } from "@/types/canvas";
+import { studioModelChoice, readReferenceDraft, readPromptDraft, readSelectionAdvice, readSubtitleCorrections, prepareStoryboarding } from "./studio-assistant";
+import type { CanvasPluginAi } from "@/types/canvas-plugin";
 test("storyboards require real shot content and positive durations; subtitles preserve Unicode and reject invalid timing", () => {
     assert.equal(readShots('```json\n[{"picture":"雨夜","seconds":5}]\n```')[0].title, "镜头 1");
     assert.throws(() => readShots('[{"picture":"雨夜","seconds":0}]'));
@@ -81,4 +83,46 @@ test("studio sources retain order and reject deleted references; exported names 
     );
     assert.throws(() => studioSources(tool, [node("a")], []));
     assert.equal(exportName("../../坏:文件\\x"), "_.._坏_文件_x");
+});
+
+test("studio assistants validate model drafts without changing timeline or accepting a fabricated image", () => {
+    assert.deepEqual(readReferenceDraft('```json\n{"role":"白衣少女", "outfit":"银簪", "style":"水墨"}\n```'), { role: "白衣少女", outfit: "银簪", style: "水墨" });
+    assert.throws(() => readReferenceDraft('{"role":{},"outfit":"","style":""}'));
+    assert.deepEqual(readPromptDraft('{"prompts":["雨夜\\n街道","同一角色"]}'), ["雨夜 街道", "同一角色"]);
+    assert.throws(() => readPromptDraft('{"prompts":["有效",null]}'));
+    assert.throws(() => readPromptDraft('{"prompts":[]}'));
+    const sources = [{ id: "a" }, { id: "b" }] as CanvasNodeData[];
+    assert.deepEqual(readSelectionAdvice('{"index":2,"reason":"主体完整"}', sources), { sourceId: "b", reason: "主体完整" });
+    assert.throws(() => readSelectionAdvice('{"index":3,"reason":"不存在"}', sources));
+    const cues = [{ start: 0.125, end: 3.9, text: "原字", speaker: "甲" }];
+    assert.deepEqual(readSubtitleCorrections('{"texts":["文字"],"start":99}', cues), [{ ...cues[0], text: "文字" }]);
+    assert.equal(cues[0].text, "原字");
+    assert.throws(() => readSubtitleCorrections('{"texts":["一","二"]}', cues));
+    assert.throws(() => readSubtitleCorrections('{"texts":[""]}', cues));
+});
+
+test("studio preserves exact selected channel and never switches an unavailable model", () => {
+    const ai = { defaultModel: () => "group-a/model", listModels: () => [{ value: "group-a/model", label: "A" }, { value: "group-b/model", label: "B" }], isModelReady: (model: string) => model !== "removed/model" } as unknown as CanvasPluginAi;
+    assert.equal(studioModelChoice(ai, undefined, "text").value, "group-a/model");
+    assert.equal(studioModelChoice(ai, "group-b/model", "text").value, "group-b/model");
+    const removed = studioModelChoice(ai, "removed/model", "text");
+    assert.equal(removed.value, "removed/model"); assert.equal(removed.ready, false);
+    assert.match(removed.options.at(-1)!.label, /未配置/);
+    const tool = { metadata: { studio: { text: "不要重复追加", preparedPrompts: ["第一镜", "第二镜"] } } } as CanvasNodeData;
+    assert.deepEqual(batchPrompts(tool, [{ type: "text", metadata: { content: "上游整篇故事" } }] as CanvasNodeData[]), ["第一镜", "第二镜"]);
+});
+
+test("screenplay next step reuses connected storyboard without changing edited shots or paying for generation", () => {
+    const source = { id: "script", position: { x: 0, y: 0 }, width: 320, metadata: { studio: { screenplay: readScreenplay('{"characters":[{"name":"阿宁","appearance":"白衣"}],"episodes":[{"script":"走入山门"}]}'), model: "group-b/model" } } } as CanvasNodeData;
+    const first = prepareStoryboarding(source, [source], []);
+    assert.equal(first.ops.filter(op => op.type === "add_node").length, 2);
+    const reference = first.ops.find(op => op.type === "add_node" && op.nodeType === "studio:reference")!;
+    assert.ok(reference.type === "add_node"); assert.match(reference.metadata!.studio!.role!, /白衣/);
+    assert.ok(first.ops.every(op => op.type !== "run_generation"));
+    const edited = { id: "board", type: "studio:storyboard", metadata: { studio: { sourceIds: ["existing"], shots: [{ title: "保留", picture: "雨夜", seconds: 5, camera: "", dialogue: "" }] } } } as CanvasNodeData;
+    const next = prepareStoryboarding(source, [source, edited], [{ fromNodeId: "script", toNodeId: "board" }]);
+    assert.equal(next.boardId, "board");
+    const patch = next.ops.find(op => op.type === "update_node");
+    assert.deepEqual(patch?.metadata?.studio?.shots, edited.metadata?.studio?.shots);
+    assert.ok(patch?.metadata?.studio?.sourceIds?.includes("script"));
 });
