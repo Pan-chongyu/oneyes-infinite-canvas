@@ -19,7 +19,9 @@ test('video upscale preserves VFR, last frame duration, rotation, all audio and 
     const put = (id, path, bytes) => engine.request(new Request(`oneyes-canvas://app/media-tools/${id}/${path}`, { method:'PUT',body:bytes }));
     try {
         const source = join(dir,'source.mp4');
-        await exec(binary('ffmpeg'), ['-nostdin','-y','-f','lavfi','-i','testsrc2=s=32x24:r=5:d=0.6','-f','lavfi','-i','sine=frequency=440:duration=1.2','-f','lavfi','-i','sine=frequency=880:duration=1.2','-map','0:v','-map','1:a','-map','2:a','-vf',"setpts='if(eq(N,2),3,N)/(5*TB)'",'-fps_mode:v','passthrough','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',source]);
+        const timeline=join(dir,'timeline.mp4');
+        await exec(binary('ffmpeg'), ['-nostdin','-y','-f','lavfi','-i','testsrc2=s=32x24:r=5','-frames:v','3','-vf',"setpts='if(eq(N,2),3,N)/(5*TB)'",'-fps_mode:v','passthrough','-c:v','libx264','-pix_fmt','yuv420p',timeline]);
+        await exec(binary('ffmpeg'), ['-nostdin','-y','-i',timeline,'-f','lavfi','-i','sine=frequency=440:duration=1.2','-f','lavfi','-i','sine=frequency=880:duration=1.2','-map','0:v','-map','1:a','-map','2:a','-c:v','copy','-c:a','aac',source]);
         const bytes = await readFile(source), expected = await frames(source);
         assert.equal(expected.length,3);
         const execute = async (file, scale) => {
