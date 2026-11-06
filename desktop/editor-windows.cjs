@@ -21,7 +21,7 @@ function createEditorWindows({ BrowserWindow, dialog, mainWindow, directory, chr
             if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key)) throw new Error('无效剪辑项目');
             const existing = windows.get(key);
             if (existing && !existing.isDestroyed()) { existing.restore(); existing.show(); existing.focus(); return; }
-            const w = new BrowserWindow({ width: 1440, height: 920, minWidth: 960, minHeight: 640, show: false, title: 'OneYes 智能剪辑', backgroundColor: '#181715', ...chrome(), icon: join(directory, 'resources/icon.png'), webPreferences: { preload: join(directory, 'editor-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+            const w = new BrowserWindow({ width: 1440, height: 920, minWidth: 960, minHeight: 640, show: false, title: 'OneYes 智能剪辑', backgroundColor: '#181715', ...chrome(), icon: join(directory, process.platform === 'win32' ? 'resources/icon.ico' : 'resources/icon.png'), webPreferences: { preload: join(directory, 'editor-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
             windows.set(key, w);
             w.setMenuBarVisibility(false);
             w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

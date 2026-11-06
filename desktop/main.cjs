@@ -176,7 +176,7 @@ app.whenReady().then(async () => {
     });
     let updateStarted = false;
     function createWindow() {
-        window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#0a0a0a', ...windowChromeOptions(), icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+        window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#0a0a0a', ...windowChromeOptions(), icon: join(__dirname, process.platform === 'win32' ? 'resources/icon.ico' : 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         for (const name of ['enter-full-screen', 'leave-full-screen']) window.on(name, () => window.webContents.send('window:fullscreen', window.isFullScreen()));
         window.on('close', closeToTray(() => window, () => quitting, () => Boolean(tray)));
         window.webContents.on('render-process-gone', (_event, details) => { editors.disconnectHost(); void collaboration.close(); if (details.reason !== 'clean-exit') void diagnostics.report({ component:'app', stage:'crash', reason:'runtime' }); });
