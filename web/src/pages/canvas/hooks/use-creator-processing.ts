@@ -77,7 +77,7 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
                     if(settings.matchId&&!reference)throw Error('调色参考图已删除，请重新选择');
                     const results = tool === 'board'||tool==='color' ? await studioImages(tool,sources,settings,signal,reference)
                         : tool === "compose" ? await composeImages(sources, settings, signal)
-                        : tool === "analyze" || tool === "concat" || tool==='mix' ? await processNativeVideo(tool, sources, settings, signal, progress)
+                        : tool === "analyze" || tool === "concat" || tool==='mix' || tool === "videoSuperResolution" ? await processNativeVideo(tool, sources, settings, signal, progress)
                         : await processLocalAi(tool, await creatorSourceBlob(sources[0], signal), signal, progress);
                     check();
                     stage = "save";
@@ -112,7 +112,7 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
                     update({ status: "success", creatorSettings: { ...settings, resultCount: results.length } });
                 } catch (error) {
                     update({ status: signal.aborted ? "idle" : "error", errorDetails: signal.aborted ? undefined : error instanceof Error ? error.message : "本地处理失败，请重试" });
-                    if (!signal.aborted) { reportError(tool === "concat" || tool === "analyze" || tool === 'mix' ? "video" : "image", stage, error); throw error; }
+                    if (!signal.aborted) { reportError(tool === "concat" || tool === "analyze" || tool === 'mix' || tool === "videoSuperResolution" ? "video" : "image", stage, error); throw error; }
                 } finally {
                     if (!committed) await Promise.allSettled([deleteStoredImages(imageKeys), deleteStoredMedia(mediaKeys)]);
                     if (jobs.current.get(id) === task) {

@@ -10,7 +10,24 @@ const models = {
     cutout: { file: "u2netp.onnx", sha256: "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8" },
     superResolution: { file: "espcn-3x.onnx", sha256: "85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e" },
 };
+const sessions = new Map<keyof typeof models, Promise<ort.InferenceSession>>();
 const progress = (stage: string, value?: number) => self.postMessage({ stage, progress: value });
+async function loadModel(operation: keyof typeof models) {
+    const current = sessions.get(operation);
+    if (current) return current;
+    const pending = (async () => {
+        progress("正在加载本地 AI 模型");
+        const model = models[operation];
+        const response = await fetch(new URL(`${import.meta.env.BASE_URL}models/${model.file}`, self.location.origin));
+        if (!response.ok) throw new Error("本地 AI 模型缺失，请重新安装最新版");
+        const bytes = await response.arrayBuffer();
+        const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), value => value.toString(16).padStart(2, "0")).join("");
+        if (digest !== model.sha256) throw new Error("本地 AI 模型校验失败，请重新安装最新版");
+        return ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+    })();
+    sessions.set(operation, pending);
+    try { return await pending; } catch (error) { sessions.delete(operation); throw error; }
+}
 function surface(width: number, height: number) {
     const canvas = new OffscreenCanvas(width, height), ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) throw new Error("当前设备无法创建原尺寸图像，请关闭部分应用释放内存后重试");
@@ -97,22 +114,15 @@ async function superResolution(bitmap: ImageBitmap, session: ort.InferenceSessio
     return result.canvas.convertToBlob({ type: "image/png" });
 }
 
-self.onmessage = async ({ data }: MessageEvent<{ operation: keyof typeof models; blob: Blob }>) => {
-    let bitmap: ImageBitmap | undefined, session: ort.InferenceSession | undefined;
+self.onmessage = async ({ data }: MessageEvent<{ id: number; operation: keyof typeof models; blob: Blob }>) => {
+    let bitmap: ImageBitmap | undefined;
     try {
-        const model = models[data.operation];
-        if (!model) throw new Error("未知的本地图像处理方式");
-        progress("正在加载本地 AI 模型");
-        const response = await fetch(new URL(`${import.meta.env.BASE_URL}models/${model.file}`, self.location.origin));
-        if (!response.ok) throw new Error("本地 AI 模型缺失，请重新安装最新版");
-        const bytes = await response.arrayBuffer();
-        const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), value => value.toString(16).padStart(2, "0")).join("");
-        if (digest !== model.sha256) throw new Error("本地 AI 模型校验失败，请重新安装最新版");
-        session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+        if (!models[data.operation]) throw new Error("未知的本地图像处理方式");
+        const session = await loadModel(data.operation);
         bitmap = await createImageBitmap(data.blob);
         const blob = data.operation === "cutout" ? await cutout(bitmap, session) : await superResolution(bitmap, session);
-        self.postMessage({ blob });
+        self.postMessage({ id: data.id, blob });
     } catch (error) {
-        self.postMessage({ error: error instanceof Error ? error.message : "本地 AI 处理失败，请释放内存后重试" });
-    } finally { bitmap?.close(); await session?.release(); }
+        self.postMessage({ id: data.id, error: error instanceof Error ? error.message : "本地 AI 处理失败，请释放内存后重试" });
+    } finally { bitmap?.close(); }
 };

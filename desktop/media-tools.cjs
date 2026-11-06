@@ -1,11 +1,12 @@
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { join, basename } = require('node:path');
-const { mkdir, rm, readdir, writeFile, stat, copyFile } = require('node:fs/promises');
+const { mkdir, rm, readdir, writeFile, stat, copyFile, open } = require('node:fs/promises');
 const { createWriteStream, createReadStream } = require('node:fs');
 const { Readable } = require('node:stream');
 const { pipeline, finished } = require('node:stream/promises');
 const { validateSmartEdit, processSmartEdit } = require('./smart-edit.cjs');
+const { prepareUpscale, finishUpscale } = require('./video-upscale.cjs');
 
 // Structured commands and opaque job IDs only. Renderer input never becomes a path or shell command.
 function createMediaTools({ directory, binaries, changed = () => {}, onError = () => {} }) {
@@ -43,7 +44,7 @@ function createMediaTools({ directory, binaries, changed = () => {}, onError = (
         const rotation = Number(video.side_data_list?.find(item => item.rotation !== undefined)?.rotation ?? video.tags?.rotate ?? 0);
         const rotated = Math.abs(rotation % 180) === 90;
         const [numerator, denominator = 1] = String(video.avg_frame_rate).split('/').map(Number);
-        return { video, audios: data.streams.filter(stream => stream.codec_type === 'audio'), duration: Number(data.format.duration), width: rotated ? video.height : video.width, height: rotated ? video.width : video.height, fps: numerator / denominator };
+        return { video, audios: data.streams.filter(stream => stream.codec_type === 'audio'), duration: Number(data.format.duration), startTime: Number(data.format.start_time) || 0, width: rotated ? video.height : video.width, height: rotated ? video.width : video.height, fps: numerator / denominator };
     };
     const input = (job, index) => join(job.path, `input-${index}`);
     const output = async (job, name, kind) => {
@@ -56,6 +57,7 @@ function createMediaTools({ directory, binaries, changed = () => {}, onError = (
     async function processJob(job) {
         await Promise.all(job.uploads.values());
         if (job.received.size !== job.count) throw new Error('请等待全部素材上传完成');
+        if (job.operation === 'videoSuperResolution') return prepareUpscale(job, { run, input, output, probe, notify });
         if (job.operation.startsWith('edit')) return processSmartEdit(job, { run, input, output, notify, binaries });
         if(['extract','mix','subtitles'].includes(job.operation))return processStudioMedia(job);
         const metadata = [];
@@ -150,7 +152,8 @@ function createMediaTools({ directory, binaries, changed = () => {}, onError = (
     }
     return {
         async create(operation, count, options = {}) {
-            if (!['analyze', 'concat','extract','mix','subtitles','editAnalyze','editRender'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (['analyze','extract','subtitles'].includes(operation) && count !== 1)) throw new Error('无效的媒体处理任务');
+            if (!['analyze', 'concat','extract','mix','subtitles','editAnalyze','editRender','videoSuperResolution'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (['analyze','extract','subtitles','videoSuperResolution'].includes(operation) && count !== 1)) throw new Error('无效的媒体处理任务');
+            if (operation === 'videoSuperResolution' && ![2, 3].includes(options.scale)) throw Error('请选择 2× 或 3× 视频超采样');
             if (operation.startsWith('edit')) validateSmartEdit(operation, count, options);
             if(operation==='mix'&&(count<2||['volume','originalVolume','fadeIn','fadeOut'].some(key=>!Number.isFinite(options[key])||options[key]<0)))throw Error('请填写有效的混音音量和淡入淡出时间');
             if(operation==='subtitles'&&(typeof options.srt!=='string'||!/^\d+\r?\n\d\d:\d\d:\d\d,\d{3} --> /m.test(options.srt)))throw Error('字幕内容无效');
@@ -166,13 +169,28 @@ function createMediaTools({ directory, binaries, changed = () => {}, onError = (
             if (!job.controller.signal.aborted) { try { onError(error, 'request', job.operation === 'editAnalyze' ? 'media-analyze' : job.operation === 'editRender' ? 'media-render' : 'media-process'); } catch {} }
             throw error;
         }); return job.running; },
-        async release(id) { const job = jobs.get(id); if (!job) return; job.controller.abort(); await Promise.allSettled([...job.uploads.values(), ...job.reads, ...(job.running ? [job.running] : [])]); jobs.delete(id); await rm(job.path, { recursive: true, force: true }); },
+        async finish(id) { const job = get(id); job.controller.signal.throwIfAborted(); if (job.operation !== 'videoSuperResolution') throw Error('无效的视频超采样任务'); if (!job.finishing) job.finishing = (async () => { await job.running; return finishUpscale(job, { run, input, output, probe, notify }); })().catch(error => { if (!job.controller.signal.aborted) { try { onError(error, 'request', 'media-process'); } catch {} } throw error; }); return job.finishing; },
+        async release(id) { const job = jobs.get(id); if (!job) return; if (!job.releasing) { job.controller.abort(); job.releasing = (async () => { await Promise.allSettled([...job.uploads.values(), ...job.reads, ...(job.upscale ? job.upscale.uploads.values() : []), ...(job.running ? [job.running] : []), ...(job.finishing ? [job.finishing] : [])]); jobs.delete(id); await rm(job.path, { recursive: true, force: true }); })(); } return job.releasing; },
         async close() { await Promise.allSettled([...jobs.keys()].map(id => this.release(id))); },
         async request(request) {
             const url = new URL(request.url), parts = url.pathname.split('/');
             const job = get(parts[2]);
             job.controller.signal.throwIfAborted();
             if (parts.length !== 5) throw new Error('无效媒体路径');
+            if (parts[3] === 'enhanced' && request.method === 'PUT') {
+                const index = Number(parts[4]), state = job.upscale;
+                if (!state || !/^\d+$/.test(parts[4]) || !Number.isSafeInteger(index) || index < 0 || index >= state.frames.length || state.uploads.has(index) || job.finishing || !request.body) throw Error('无效的视频增强帧');
+                const file = join(job.path, `enhanced-${String(index).padStart(9, '0')}.png`);
+                const upload = pipeline(Readable.fromWeb(request.body), createWriteStream(file, { flags: 'wx' }), { signal: job.controller.signal }).then(async () => {
+                    const handle = await open(file, 'r');
+                    try {
+                        const header = Buffer.alloc(24), { bytesRead } = await handle.read(header, 0, 24, 0);
+                        if (bytesRead !== 24 || !header.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) || header.toString('ascii', 12, 16) !== 'IHDR' || header.readUInt32BE(16) !== state.meta.width * 3 || header.readUInt32BE(20) !== state.meta.height * 3) throw Error('AI 增强帧尺寸或格式不正确，已停止处理');
+                    } finally { await handle.close(); }
+                });
+                state.uploads.set(index, upload); await upload;
+                return new Response(null, { status: 204 });
+            }
             if (parts[3] === 'input' && request.method === 'PUT') {
                 const index = Number(parts[4]);
                 if (!/^\d+$/.test(parts[4]) || index < 0 || index >= job.count || job.running || job.uploads.has(index) || !request.body) throw new Error('无效媒体输入');

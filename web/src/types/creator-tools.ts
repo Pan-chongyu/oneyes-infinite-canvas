@@ -1,4 +1,4 @@
-export type CreatorTool = "analyze" | "concat" | "cutout" | "compose" | "superResolution" | "board" | "color" | "mix";
+export type CreatorTool = "analyze" | "concat" | "cutout" | "compose" | "superResolution" | "videoSuperResolution" | "board" | "color" | "mix";
 export type CreatorLayer = { x?: number; y?: number; scale?: number; opacity?: number; blend?: "source-over" | "multiply" | "screen" };
 export type CreatorSettings = {
     columns?: number; gap?: number; labels?: boolean;
@@ -11,6 +11,7 @@ export type CreatorSettings = {
     trims?: Record<string, { start?: number; end?: number }>;
     layers?: Record<string, CreatorLayer>;
     resultCount?: number;
+    videoScale?: 2 | 3;
 };
 export type CreatorProgress = { stage: string; progress?: number };
 export type CreatorArtifact = { name: string; kind: "image" | "video" | "audio" | "text"; blob: Blob; time?: number };

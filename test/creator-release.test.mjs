@@ -21,4 +21,7 @@ test('creator release pins all six native media runtimes and distributes verifie
     assert.ok(['ffmpeg','ffmpeg.exe','ffprobe','ffprobe.exe','*.LICENSE','SOURCES.txt'].every(name=>resources.filter.includes(name)));
     const media = await readFile('desktop/media-tools.cjs', 'utf8');
     assert.ok(media.includes("'-fps_mode:v', 'vfr'") && !media.includes("'-vsync'"), 'frame extraction must support both bundled FFmpeg generations');
+    assert.ok(media.includes("'videoSuperResolution'") && media.includes('prepareUpscale') && media.includes('finishUpscale'));
+    assert.match(await readFile('desktop/video-upscale.cjs', 'utf8'), /ffprobe.*show_frames/s);
+    assert.match(await readFile('web/src/components/canvas/creator-tools-plugin.tsx', 'utf8'), /视频超采样倍率/);
 });

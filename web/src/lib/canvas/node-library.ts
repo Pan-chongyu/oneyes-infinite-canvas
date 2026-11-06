@@ -28,6 +28,7 @@ const entries: Record<string, [Category, string, string?]> = {
     "creator-tools:cutout": ["图片", "图片 → 透明 PNG", "移除背景 cutout"],
     "creator-tools:compose": ["图片", "多张图片 → 图层合成", "叠加 混合 compose"],
     "creator-tools:superResolution": ["图片", "图片 → 3 倍 AI 超分", "放大 增强 upscale"],
+    "creator-tools:videoSuperResolution": ["音视频", "视频 → 2×／3× AI 超采样视频", "超分 超清 分辨率 视频放大 upscale super resolution"],
     "creator-tools:analyze": ["音视频", "视频 → 镜头表／关键帧／音轨", "拆镜 分析 analyze"],
     "creator-tools:concat": ["音视频", "多段视频 → 拼接视频", "剪辑 合并 concat"],
     "creator-tools:mix": ["音视频", "视频／配乐 → 混音视频", "旁白 音量 mix"],

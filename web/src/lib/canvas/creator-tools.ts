@@ -10,6 +10,7 @@ export const creatorTools = {
     cutout: { title: "智能抠图", action: "开始抠图", input: "image", description: "U²-Netp 本地识别主体，输出原尺寸透明 PNG" },
     compose: { title: "图层合成", action: "合成图片", input: "image", description: "按图层叠放，调整位置、缩放、透明度和混合模式" },
     superResolution: { title: "AI 超分", action: "AI 超分 3×", input: "image", description: "ESPCN 本地 AI 增强，输出宽高均为原图 3 倍" },
+    videoSuperResolution: { title: "视频 AI 超采样", action: "开始超采样", input: "video", description: "内置 ESPCN 逐帧增强，输出 2× 或 3× 视频，保留时间轴和全部音轨" },
 } satisfies Record<CreatorTool, { title: string; action: string; input: "image" | "video"; description: string }>;
 export function creatorTool(type: string): CreatorTool | undefined {
     const key = type.startsWith("creator-tools:") ? type.slice("creator-tools:".length) : "";

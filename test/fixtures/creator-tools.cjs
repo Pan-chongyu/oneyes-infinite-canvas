@@ -38,11 +38,14 @@ app.whenReady().then(async()=>{
   await js('creatorTest.seed("compose","loading")');
   await wait('creatorTest.state().nodes[1].metadata.status==="error"');
   assert.match(await js('document.body.innerText'),/上次本地处理已中断/);
-  for(const name of ['analyze','concat','cutout','compose','superResolution']){
+  for(const name of ['analyze','concat','cutout','compose','superResolution','videoSuperResolution']){
    await js(`creatorTest.seed('${name}');creatorTest.theme(true)`);
    await wait(`document.querySelector('[data-creator-panel="${name}"]')`);
    assert.ok(await js('document.body.innerText.includes("结果作为新节点保存")'));
   }
+  await js('creatorTest.seed("videoSuperResolution")');await wait('document.querySelector("[data-creator-panel=videoSuperResolution]")');
+  assert.match(await js('document.body.innerText'),/视频 AI 超采样/);
+  assert.match(await js('document.body.innerText'),/宽高各三倍/);
   assert.deepEqual(await js('creatorTest.original()'),original);
   const remote='https://creator-fixture.invalid/original.png?signature=fixture-private';
   for(const kind of ['remote','batch','missing-index']){
@@ -71,6 +74,6 @@ app.whenReady().then(async()=>{
    assert.ok(await js('Number(getComputedStyle(document.querySelector("[data-creator-panel] button")).color.match(/[\\d.]+/)[0])>150'),'dark buttons stay legible');
    writeFileSync(process.env.CANVAS_CREATOR_SCREENSHOT.replace('.png','-dark.png'),(await win.webContents.capturePage()).toPNG());
   }
-  console.log('CREATOR_UI_OK: native-scheme original without CORS or credentials, batch selection, missing-index original, precise output, five nodes, cancellation, project isolation, source retained');storage.close();app.exit(0);
+  console.log('CREATOR_UI_OK: native-scheme original without CORS or credentials, batch selection, missing-index original, precise output, six nodes including video AI upscale, cancellation, project isolation, source retained');storage.close();app.exit(0);
  }catch(error){console.error(error);console.error(await js('document.body.innerText'));app.exit(1);}
 }).catch(error=>{console.error(error);app.exit(1);});

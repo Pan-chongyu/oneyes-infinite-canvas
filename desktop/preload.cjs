@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('oneYesDesktop', {
     media: {
         create: (operation, count, options) => ipcRenderer.invoke('media:create', operation, count, options),
         start: id => ipcRenderer.invoke('media:start', id),
+        finish: id => ipcRenderer.invoke('media:finish', id),
         release: id => ipcRenderer.invoke('media:release', id),
         subscribe(callback) {
             const listener = (_event, state) => callback(state);

@@ -2,6 +2,7 @@ import { getImageBlob, fetchImageBlob } from "@/services/image-storage";
 import { getMediaBlob } from "@/services/file-storage";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CreatorArtifact, CreatorProgress, CreatorSettings } from "@/types/creator-tools";
+import { createCreatorAiWorker } from "@/services/creator-ai";
 
 export async function creatorSourceBlob(node: CanvasNodeData, signal: AbortSignal): Promise<Blob> {
     signal.throwIfAborted();
@@ -31,10 +32,10 @@ export async function creatorSourceBlob(node: CanvasNodeData, signal: AbortSigna
     return blob;
 }
 
-export async function processNativeVideo(operation: "analyze" | "concat" | "mix" | "extract" | "subtitles" | "editAnalyze" | "editRender", sources: CanvasNodeData[], settings: CreatorSettings & { srt?: string; edit?: Record<string, unknown> }, signal: AbortSignal, progress: (state: CreatorProgress) => void): Promise<CreatorArtifact[]> {
+export async function processNativeVideo(operation: "analyze" | "concat" | "mix" | "extract" | "subtitles" | "videoSuperResolution" | "editAnalyze" | "editRender", sources: CanvasNodeData[], settings: CreatorSettings & { srt?: string; edit?: Record<string, unknown> }, signal: AbortSignal, progress: (state: CreatorProgress) => void): Promise<CreatorArtifact[]> {
     const media = window.oneYesDesktop?.media;
     if (!media) throw new Error("本地音视频处理需要桌面版内置的媒体组件，请在 OneYes Canvas 桌面版中使用");
-    const id = await media.create(operation, sources.length, operation.startsWith("edit") ? settings.edit : operation === "analyze" ? { threshold: settings.threshold ?? 0.3, clips: Boolean(settings.clips), audio: Boolean(settings.audio) } : operation==='mix' ? {volume:settings.volume??1,originalVolume:settings.originalVolume??1,fadeIn:settings.fadeIn??0,fadeOut:settings.fadeOut??0} : operation==='subtitles' ? {srt:settings.srt} : { trims: sources.map(node => settings.trims?.[node.id] || {}) });
+    const id = await media.create(operation, sources.length, operation.startsWith("edit") ? settings.edit : operation === "analyze" ? { threshold: settings.threshold ?? 0.3, clips: Boolean(settings.clips), audio: Boolean(settings.audio) } : operation==='mix' ? {volume:settings.volume??1,originalVolume:settings.originalVolume??1,fadeIn:settings.fadeIn??0,fadeOut:settings.fadeOut??0} : operation==='subtitles' ? {srt:settings.srt} : operation === "videoSuperResolution" ? { scale: settings.videoScale ?? 3 } : { trims: sources.map(node => settings.trims?.[node.id] || {}) });
     const stop = media.subscribe(state => { if (state.id === id) progress(state); });
     const abort = () => { void media.release(id).catch(() => {}); };
     signal.addEventListener("abort", abort, { once: true });
@@ -46,9 +47,32 @@ export async function processNativeVideo(operation: "analyze" | "concat" | "mix"
             const response = await fetch(`oneyes-canvas://app/media-tools/${id}/input/${index}`, { method: "PUT", body: blob, signal });
             if (!response.ok) throw new Error("无法准备本地视频素材");
         }
-        const result = await media.start(id);
+        let result = await media.start(id);
         signal.throwIfAborted();
         if (!result.data) throw new Error(result.error || "本地视频处理失败");
+        if (operation === "videoSuperResolution") {
+            const frames = result.data;
+            if (!frames.length || frames.some(item => item.kind !== "image" || !Number.isFinite(item.time))) throw new Error("原视频帧时间表无效，已停止增强");
+            let currentFrame = 0;
+            const ai = createCreatorAiWorker(signal, state => progress({ stage: `第 ${currentFrame + 1} / ${frames.length} 帧 · ${state.stage}`, progress: (currentFrame + (state.progress ?? 0) / 100) / frames.length * 100 }));
+            try {
+                for (const [index, frame] of frames.entries()) {
+                    currentFrame = index;
+                    signal.throwIfAborted();
+                    const response = await fetch(`oneyes-canvas://app/media-tools/${id}/output/${encodeURIComponent(frame.name)}`, { signal });
+                    if (!response.ok) throw new Error("无法读取视频原始帧");
+                    const original = await response.blob();
+                    if (original.size !== frame.bytes) throw new Error("视频原始帧不完整，请重试");
+                    const enhanced = await ai.run("superResolution", original);
+                    signal.throwIfAborted();
+                    const upload = await fetch(`oneyes-canvas://app/media-tools/${id}/enhanced/${index}`, { method: "PUT", body: enhanced, signal });
+                    if (!upload.ok) throw new Error("无法提交 AI 增强帧");
+                    progress({ stage: `AI 超采样帧 ${index + 1} / ${frames.length}`, progress: (index + 1) / frames.length * 100 });
+                }
+            } finally { ai.close(); }
+            result = await media.finish(id);
+            if (!result.data) throw new Error(result.error || "无法封装超采样视频");
+        }
         const artifacts: CreatorArtifact[] = [];
         for (const item of result.data) {
             const response = await fetch(`oneyes-canvas://app/media-tools/${id}/output/${encodeURIComponent(item.name)}`, { signal });

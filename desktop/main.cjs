@@ -125,6 +125,7 @@ app.whenReady().then(async () => {
     ipcMain.handle('editor:report', (event, stage, error) => { if (!editors.trusted(event)) throw new Error('拒绝访问剪辑窗口'); return diagnostics.report({component:'media',stage,error}); });
     ipcMain.handle('media:create', (event, operation, count, options) => { trusted(event); return media.create(operation, count, options); });
     ipcMain.handle('media:start', async (event, id) => { trusted(event); try { return { data: await media.start(id) }; } catch (error) { return { error: error.message }; } });
+    ipcMain.handle('media:finish', async (event, id) => { trusted(event); try { return { data: await media.finish(id) }; } catch (error) { return { error: error.message }; } });
     ipcMain.handle('media:release', (event, id) => { trusted(event); return media.release(id); });
     ipcMain.handle('diagnostics:report', (event, input) => { trusted(event); return diagnostics.report(input); });
     ipcMain.handle('diagnostics:recover', (event, input) => { trusted(event); return diagnostics.recover(input); });
