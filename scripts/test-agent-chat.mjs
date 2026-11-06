@@ -19,8 +19,9 @@ const creators = process.argv.includes('--creators');
 const director = process.argv.includes('--director');
 const studio=process.argv.includes('--studio');
 const collaboration = process.argv.includes('--collaboration');
-const fixture = collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
-const server = collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
+const playback = process.argv.includes('--playback');
+const fixture = playback?'playback':collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const server = playback||collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {
@@ -39,6 +40,7 @@ try {
     if (creators) env.CANVAS_CREATOR_TEST_ROOT = server.root;
     if(studio)env.CANVAS_STUDIO_TEST_ROOT=server.root;
     if(collaboration)env.CANVAS_COLLABORATION_TEST_ROOT=server.root;
+    if(playback)env.CANVAS_PLAYBACK_TEST_ROOT=server.root;
     const pluginProfile = studio||plugins || director ? await mkdtemp(join(tmpdir(), 'canvas-plugin-restart-')) : null;
     if (pluginProfile) env[studio?'CANVAS_STUDIO_TEST_PROFILE':director ? 'CANVAS_DIRECTOR_TEST_PROFILE' : 'CANVAS_PLUGIN_TEST_PROFILE'] = pluginProfile;
     const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env, stdio: 'inherit' }) : spawn(electron, args, { env, stdio: 'inherit', windowsHide: true });

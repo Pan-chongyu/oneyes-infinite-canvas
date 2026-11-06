@@ -1,3 +1,5 @@
+OneYes Canvas v0.20.108：修复画布视频播放控件的鼠标事件冒泡，点击原生控制栏的全屏、播放等按钮不再触发节点拖动；保留视频默认全屏行为、节点选中与画布缩放保护。
+
 OneYes Canvas v0.20.107：标准化 Windows 桌面图标，提供 16／20／24／32／40／48／64／96／128／256 像素 ICO，各尺寸独立缩放、居中并保留透明边距。桌面快捷方式、程序窗口和安装／卸载程序使用同一图标；支持 Windows x64／ARM64 及签名 OTA 更新。图案沿用原品牌，macOS 与 Linux 图标不变。
 
 图标源为 `desktop/resources/icon.png`，安装 Pillow 后运行 `python scripts/prepare-windows-icon.py` 可重新生成 Windows ICO。升级后若已有快捷方式暂时显示旧缓存，可刷新桌面或重建该快捷方式；不要删除用户桌面内容或清理整个系统图标缓存。

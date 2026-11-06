@@ -722,7 +722,10 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">{t("canvas.node.emptyVideo")}</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-video={node.id} data-canvas-no-zoom />;
+    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-video={node.id} data-canvas-no-zoom onMouseDown={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (bounds.bottom - event.clientY <= bounds.height / event.currentTarget.clientHeight * 48) event.stopPropagation();
+    }} />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {

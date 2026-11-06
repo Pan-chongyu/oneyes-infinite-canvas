@@ -17,6 +17,7 @@ const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
 const { createEditorWindows } = require('./editor-windows.cjs');
 const { createCollaboration } = require('./collaboration.cjs');
 const { createTray, closeToTray } = require('./tray.cjs');
+const { configurePermissions } = require('./permissions.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 let tray, quitting = false;
@@ -186,8 +187,7 @@ app.whenReady().then(async () => {
         const external = url => { try { const u = new URL(url); if (u.protocol === 'https:' && !u.username && !u.password) void shell.openExternal(u.href); } catch {} };
         window.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
         window.webContents.on('will-navigate', (event, url) => { if (!url.startsWith('oneyes-canvas://app/')) { event.preventDefault(); external(url); } });
-        window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-        window.webContents.session.setPermissionCheckHandler(() => false);
+        configurePermissions(window.webContents.session);
         window.webContents.session.on('will-download', (_event, item) => item.setSaveDialogOptions({ title: '保存文件' }));
         window.on('closed', () => { editors.disconnectHost(); void collaboration.close(); window = null; });
         if (!smoke) window.webContents.once('did-finish-load', async () => {

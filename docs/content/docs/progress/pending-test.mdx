@@ -7,6 +7,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- OneYes Canvas v0.20.108：在视频节点播放视频并实际点击 Chromium 原生播放与全屏按钮，检查视频全屏、Esc 退出、深浅主题及不同画布缩放；控制栏点击不触发节点拖动，视频内容区域仍可拖动节点。Electron 权限回归仅允许 OneYes Canvas 活动主帧使用用户触发的 fullscreen，其余权限与自动全屏仍拒绝。仍需在实际桌面窗口确认系统全屏动画表现。
+
 - OneYes Canvas v0.20.107：Windows 图标包含 16／20／24／32／40／48／64／96／128／256 像素 RGBA 图层，分别居中并统一透明边距，桌面快捷方式、主窗口、独立剪辑窗口及安装／卸载程序使用同一 ICO。已检查实际图层尺寸与透明区域，发布沿用六平台打包冒烟；升级后需在 Windows x64／ARM64 的真实桌面与不同显示缩放下确认视觉比例，已有快捷方式可能受系统图标缓存影响。macOS、Linux 与托盘图标不变。已核对 TODO，无对应待办需迁移。
 
 - OneYes Canvas v0.20.106：关闭主窗口后隐藏到系统托盘，协作房间及后台服务继续运行；点击托盘图标或「显示 OneYes Canvas」恢复窗口，选择「退出 OneYes Canvas」后保存并关闭，macOS Dock 激活也恢复窗口。原生最小化按钮仍正常缩到任务栏；六平台打包冒烟检查托盘图标资源、关闭隐藏与恢复。
