@@ -76,7 +76,9 @@ app.whenReady().then(async () => {
         assert.equal(green,0); assert.equal(opacity,255); assert.equal(result.invalid,true);
         assert.ok(localRequests.some(file=>file.endsWith('.wasm')) && localRequests.some(file=>file.endsWith('u2netp.onnx')) && localRequests.some(file=>file.endsWith('espcn-3x.onnx')));
         const file = join(directory,'source.mp4');
-        await exec(binary('ffmpeg'), ['-nostdin','-y','-f','lavfi','-i','testsrc2=s=32x24:r=5:d=0.6','-f','lavfi','-i','sine=frequency=440:duration=1.2','-map','0:v','-map','1:a','-vf',"setpts='if(eq(N,2),3,N)/(5*TB)'",'-fps_mode:v','passthrough','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',file]);
+        const timeline=join(directory,'timeline.mp4');
+        await exec(binary('ffmpeg'), ['-nostdin','-y','-f','lavfi','-i','testsrc2=s=32x24:r=5','-frames:v','3','-vf',"setpts='if(eq(N,2),3,N)/(5*TB)'",'-fps_mode:v','passthrough','-c:v','libx264','-pix_fmt','yuv420p',timeline]);
+        await exec(binary('ffmpeg'), ['-nostdin','-y','-i',timeline,'-f','lavfi','-i','sine=frequency=440:duration=1.2','-map','0:v','-map','1:a','-c:v','copy','-c:a','aac',file]);
         const modelReads = localRequests.filter(file=>file.endsWith('espcn-3x.onnx')).length;
         const encoded = (await readFile(file)).toString('base64');
         const video = await win.webContents.executeJavaScript(`(async()=>{
