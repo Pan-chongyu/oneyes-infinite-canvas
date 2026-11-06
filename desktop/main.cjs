@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, nativeTheme } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, nativeTheme, Tray, Menu, nativeImage } = require('electron');
 const { join, resolve } = require('node:path');
 const { createDiagnostics } = require('./diagnostics.cjs');
 const { createVault } = require('./vault.cjs');
@@ -16,8 +16,10 @@ const { prepareInstall } = require('./update-install.cjs');
 const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
 const { createEditorWindows } = require('./editor-windows.cjs');
 const { createCollaboration } = require('./collaboration.cjs');
+const { createTray, closeToTray } = require('./tray.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
+let tray, quitting = false;
 let diagnostics = { report: async () => {}, recover: async () => {}, close: async () => {} };
 const report = (component, stage, error) => { void diagnostics.report({ component, stage, error }); };
 const smoke = process.argv.includes('--smoke-test');
@@ -69,7 +71,7 @@ app.whenReady().then(async () => {
         if (!window || window.isDestroyed()) return;
         window.webContents.send('collaboration:event', state);
     } });
-    let diagnosticsClosed = false, quitting = false;
+    let diagnosticsClosed = false;
     app.on('before-quit', event => {
         if (diagnosticsClosed) return;
         event.preventDefault();
@@ -79,7 +81,7 @@ app.whenReady().then(async () => {
         void editors.flushAll().then(async () => {
             updater.close(); agent.stop(); network.close(); await collaboration.close();
             await Promise.allSettled([diagnostics.close(), media.close()]);
-            diagnosticsClosed = true; app.quit();
+            diagnosticsClosed = true; tray?.destroy(); tray = undefined; app.quit();
         }).catch(async error => {
             quitting = false; report('app', 'save', error);
             await dialog.showMessageBox({type:'error',message:'剪辑项目未能保存，已暂停退出',detail:'请返回剪辑窗口重试保存，或在窗口关闭提示中选择强制关闭。',buttons:['返回剪辑']});
@@ -176,6 +178,7 @@ app.whenReady().then(async () => {
     function createWindow() {
         window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#0a0a0a', ...windowChromeOptions(), icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         for (const name of ['enter-full-screen', 'leave-full-screen']) window.on(name, () => window.webContents.send('window:fullscreen', window.isFullScreen()));
+        window.on('close', closeToTray(() => window, () => quitting, () => Boolean(tray)));
         window.webContents.on('render-process-gone', (_event, details) => { editors.disconnectHost(); void collaboration.close(); if (details.reason !== 'clean-exit') void diagnostics.report({ component:'app', stage:'crash', reason:'runtime' }); });
         window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) void collaboration.close(); });
         window.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => { if (mainFrame && code !== -3) report('app', 'load', new Error('network')); });
@@ -206,6 +209,17 @@ app.whenReady().then(async () => {
                     const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
+                if (tray) {
+                    const smokeWindow = window;
+                    smokeWindow.show();
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    smokeWindow.close();
+                    if (smokeWindow.isVisible()) throw new Error('Close button did not hide the window to the tray');
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    tray.restore();
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    if (!smokeWindow.isVisible()) throw new Error('Tray click did not restore the window');
+                }
                 await require('./media-smoke.cjs').smokeMedia(app.isPackaged ? join(process.resourcesPath, 'media-bin') : join(__dirname, 'media-bin'), window);
                 const chrome = await window.webContents.executeJavaScript(`(async () => {
                     const bar = document.querySelector('.desktop-titlebar'), api = window.oneYesDesktop.windowChrome;
@@ -242,13 +256,15 @@ app.whenReady().then(async () => {
                 const proxy = 'http://127.0.0.1:1';
                 const initialized = await require('node:util').promisify(require('node:child_process').execFile)(process.execPath, ['--input-type=module', '-e', initialize], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ONEYES_DESKTOP_AGENT: '1', ONEYES_CANVAS_AGENT_HOME: join(app.getPath('userData'), 'agent'), CODEX_HOME: join(app.getPath('userData'), 'codex'), HTTP_PROXY: proxy, HTTPS_PROXY: proxy, ALL_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, all_proxy: proxy, NO_PROXY: '', no_proxy: '' }, windowsHide: true, timeout: 20_000 });
                 if (!initialized.stdout.includes('APP_SERVER_READY')) throw new Error('Packaged Codex app-server initialization failed');
-                console.log('ONEYES_CANVAS_SMOKE_OK', JSON.stringify({ ...info, codex: true, mcp: true })); agent.stop(); app.exit(0);
+                console.log('ONEYES_CANVAS_SMOKE_OK', JSON.stringify({ ...info, codex: true, mcp: true, tray: Boolean(tray) })); app.quit();
             } catch (error) { console.error('ONEYES_CANVAS_SMOKE_FAILED', error.message); agent.stop(); app.exit(1); }
         });
         void window.loadURL('oneyes-canvas://app/');
     }
+    try { tray = createTray({ Tray, Menu, nativeImage, iconPath: join(__dirname, 'resources/icon.png'), getWindow: () => window, quit: () => app.quit() }); }
+    catch (error) { report('app', 'tray', error); }
     createWindow();
-    app.on('activate', () => { if (!window) createWindow(); });
+    app.on('activate', () => { if (!window) createWindow(); else { window.show(); window.focus(); } });
 }).catch(async error => { await diagnostics.report({ component:'app', stage:'startup', error }); await diagnostics.close(); dialog.showErrorBox('OneYes Canvas', '无法读取本地配置。请备份应用数据后检查文件权限或配置完整性，原文件已保留。'); app.exit(1); });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => { if (!tray) app.quit(); });
 }
