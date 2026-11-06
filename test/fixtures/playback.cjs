@@ -12,8 +12,11 @@ app.whenReady().then(async () => {
     await promisify(require('node:child_process').execFile)(resolve('desktop/media-bin/ffmpeg' + (process.platform === 'win32' ? '.exe' : '')), ['-nostdin', '-y', '-f', 'lavfi', '-i', 'color=blue:s=320x180:r=12:d=8', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', join(root, 'sample.mp4')], { windowsHide: true });
     protocol.handle('oneyes-canvas', request => net.fetch(route(request.url, root).file));
     const win = new BrowserWindow({ width: 1100, height: 760, show: false, ...windowChromeOptions(), webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+    let nativeFullscreen = false;
+    win.on('enter-full-screen', () => { nativeFullscreen = true; });
+    win.on('leave-full-screen', () => { nativeFullscreen = false; });
     const js = code => win.webContents.executeJavaScript(code);
-    const wait = async code => { const end = Date.now() + 15000; while (!await js(code)) { if (Date.now() > end) throw Error('Video playback wait failed: ' + code); await new Promise(resolve => setTimeout(resolve, 25)); } };
+    const wait = async code => { const end = Date.now() + 15000; while (!(typeof code === 'function' ? await code() : await js(code))) { if (Date.now() > end) throw Error('Video playback wait failed: ' + code); await new Promise(resolve => setTimeout(resolve, 25)); } };
     const click = point => {
         win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
         win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
@@ -52,11 +55,13 @@ app.whenReady().then(async () => {
             await wait('!document.querySelector("video").paused');
             click(await controlPoint('-webkit-media-controls-fullscreen-button'));
             await wait('document.fullscreenElement === document.querySelector("video")');
+            await wait(() => nativeFullscreen);
             assert.equal(win.webContents.isDestroyed(), false);
             const rect = await js('(()=>{const r=document.querySelector("video").getBoundingClientRect();return {width:r.width,height:r.height,screenWidth:innerWidth,screenHeight:innerHeight}})()');
             assert.ok(Math.abs(rect.width - rect.screenWidth) <= 1 && Math.abs(rect.height - rect.screenHeight) <= 1, 'video fills the fullscreen viewport');
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
             await wait('!document.fullscreenElement');
+            await wait(() => !nativeFullscreen);
             // Native window fullscreen transitions are asynchronous on macOS.
             await wait('document.querySelector("video").getBoundingClientRect().width < innerWidth');
             win.webContents.sendInputEvent({ type: 'mouseMove', ...middle });
