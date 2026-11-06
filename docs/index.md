@@ -10,6 +10,8 @@
 
 ## Canvas Guide
 
+- [局域网共同创作（仓库说明）](COLLABORATION.zh-CN.md)
+
 - [智能剪辑节点（仓库说明）](SMART_EDIT.zh-CN.md)
 - [Canvas 错误日志定位与处理记录](LOG_REVIEW.zh-CN.md)
 

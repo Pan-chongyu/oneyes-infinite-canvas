@@ -99,6 +99,7 @@ jobs:
       - run: npm run test:creators
       - run: npm run test:director
       - run: npm run test:studio
+      - run: npm run test:collaboration
       - run: npm run test:smart-edit
       - run: npm --prefix web run typecheck
       - run: npm run build

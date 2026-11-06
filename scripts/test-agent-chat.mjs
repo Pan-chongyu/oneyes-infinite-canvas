@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { builtinPlugins } from '../web/build/builtin-plugins.mjs';
 import { imageFixtureServer } from './image-fixture-server.mjs';
@@ -18,8 +18,9 @@ const videos = process.argv.includes('--videos');
 const creators = process.argv.includes('--creators');
 const director = process.argv.includes('--director');
 const studio=process.argv.includes('--studio');
-const fixture = studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
-const server = studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
+const collaboration = process.argv.includes('--collaboration');
+const fixture = collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const server = collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {
@@ -37,10 +38,16 @@ try {
     if (director) env.CANVAS_DIRECTOR_TEST_ROOT = server.root;
     if (creators) env.CANVAS_CREATOR_TEST_ROOT = server.root;
     if(studio)env.CANVAS_STUDIO_TEST_ROOT=server.root;
+    if(collaboration)env.CANVAS_COLLABORATION_TEST_ROOT=server.root;
     const pluginProfile = studio||plugins || director ? await mkdtemp(join(tmpdir(), 'canvas-plugin-restart-')) : null;
     if (pluginProfile) env[studio?'CANVAS_STUDIO_TEST_PROFILE':director ? 'CANVAS_DIRECTOR_TEST_PROFILE' : 'CANVAS_PLUGIN_TEST_PROFILE'] = pluginProfile;
     const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env, stdio: 'inherit' }) : spawn(electron, args, { env, stdio: 'inherit', windowsHide: true });
     process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve(code ?? 1)); });
+    if (collaboration && !process.exitCode) {
+        const result = JSON.parse(await readFile(join(server.root, 'collaboration-result.json'), 'utf8'));
+        if (!result.passed) throw Error('Collaboration renderer verification did not finish');
+        console.log('COLLABORATION_RENDERER_VERIFIED');
+    }
     if (studio||plugins || director) {
         try {
             if (!process.exitCode) {

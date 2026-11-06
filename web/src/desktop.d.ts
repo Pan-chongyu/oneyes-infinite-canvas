@@ -24,6 +24,10 @@ declare global {
                 call(operation: 'state' | 'check' | 'install'): Promise<import('./stores/use-desktop-update-store').DesktopUpdateState>;
                 subscribe(callback: (state: import('./stores/use-desktop-update-store').DesktopUpdateState) => void): () => void;
             };
+            collaboration: {
+                call(operation: 'state' | 'host' | 'join' | 'update' | 'snapshot' | 'leave', args?: { invite?: string; data?: string; projectId?: string }): Promise<import('./stores/canvas/use-collaboration-store').CollaborationState & { data?: string }>;
+                subscribe(callback: (event: { kind: 'state' | 'update' | 'ended'; data?: string } & import('./stores/canvas/use-collaboration-store').CollaborationState) => void): () => void;
+            };
             models: { list(apiKey: string): Promise<{ data?: string[]; error?: string }> };
             proxy: { test(config: import('./services/api/local-proxy').ProxySettings): Promise<{ data?: { status: number }; error?: string }> };
             agent: { call(operation: 'status' | 'setup' | 'restore'): Promise<{ data?: { configured: boolean; url?: string; token?: string }; error?: string }> };

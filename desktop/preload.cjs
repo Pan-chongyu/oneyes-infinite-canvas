@@ -37,6 +37,14 @@ contextBridge.exposeInMainWorld('oneYesDesktop', {
             return () => ipcRenderer.removeListener('update:state', listener);
         },
     },
+    collaboration: {
+        call: (operation, args) => ipcRenderer.invoke('collaboration:call', operation, args),
+        subscribe(callback) {
+            const listener = (_event, state) => callback(state);
+            ipcRenderer.on('collaboration:event', listener);
+            return () => ipcRenderer.removeListener('collaboration:event', listener);
+        },
+    },
     storage: {
         getItem(name) { check(name); return ipcRenderer.invoke('config:read'); },
         setItem(name, value) { check(name); return ipcRenderer.invoke('config:write', value); },

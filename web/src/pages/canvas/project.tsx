@@ -50,6 +50,8 @@ import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { flushCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
+import { useCanvasCollaboration } from "@/pages/canvas/hooks/use-canvas-collaboration";
+import { useCollaborationStore } from "@/stores/canvas/use-collaboration-store";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
@@ -255,7 +257,8 @@ function InfiniteCanvasPage() {
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-    const [projectLoaded, setProjectLoaded] = useState(false);
+    const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
+    const projectLoaded = loadedProjectId === projectId;
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -278,6 +281,21 @@ function InfiniteCanvasPage() {
     const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
     const [referencePickerNodeId, setReferencePickerNodeId] = useState<string | null>(null);
+    const collaborationProject = useCollaborationStore(state => state.projectId);
+    const collaborationRole = useCollaborationStore(state => state.role);
+    const collaborationCanUndo = useCollaborationStore(state => state.canUndo);
+    const collaborationCanRedo = useCollaborationStore(state => state.canRedo);
+    const collaborative = collaborationProject === projectId && Boolean(collaborationRole);
+
+    useCanvasCollaboration({
+        projectId,
+        nodes,
+        connections,
+        title: currentProject?.title || t("canvas.projectPage.untitledCanvas"),
+        loaded: projectLoaded,
+        setNodes,
+        setConnections,
+    });
 
     const nodesRef = useRef(nodes);
     const imageTaskTargets = nodes.map(node => `${node.id}:${node.metadata?.imageTaskId || ""}:${node.metadata?.images?.map(image => `${image.id}:${image.imageTaskId || ""}`).join(",") || ""}`).join(";");
@@ -324,6 +342,15 @@ function InfiniteCanvasPage() {
         }),
         [activeChatId, backgroundMode, chatSessions, showImageInfo],
     );
+    const previousCollaborative = useRef(collaborative);
+    useEffect(() => {
+        if (previousCollaborative.current === collaborative) return;
+        previousCollaborative.current = collaborative;
+        if (historyCommitTimerRef.current) { clearTimeout(historyCommitTimerRef.current); historyCommitTimerRef.current = null; }
+        historyRef.current = { past: [], future: [] };
+        lastHistoryRef.current = createHistoryEntry();
+        setHistoryState({ canUndo: false, canRedo: false });
+    }, [collaborative, createHistoryEntry]);
 
     const cleanupCanvasFiles = useCallback(
         (extra?: unknown) => {
@@ -467,7 +494,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!hydrated) return;
-        setProjectLoaded(false);
+        setLoadedProjectId(null);
         const project = openProject(projectId);
         if (!project) {
             navigate("/canvas", { replace: true });
@@ -500,7 +527,7 @@ function InfiniteCanvasPage() {
                 showImageInfo: project.showImageInfo || false,
             };
             setHistoryState({ canUndo: false, canRedo: false });
-            setProjectLoaded(true);
+            setLoadedProjectId(projectId);
         };
         void restore();
         return () => { cancelled = true; };
@@ -542,7 +569,7 @@ function InfiniteCanvasPage() {
     }, [fragmentBootstrap, localAgentEnabled, openAgentPanel, projectLoaded, searchParams]);
 
     useEffect(() => {
-        if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
+        if (!projectLoaded || collaborative || applyingHistoryRef.current || historyPausedRef.current) return;
         const next = createHistoryEntry();
         const previous = lastHistoryRef.current;
         if (
@@ -573,7 +600,7 @@ function InfiniteCanvasPage() {
                 historyCommitTimerRef.current = null;
             }
         };
-    }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
+    }, [activeChatId, backgroundMode, chatSessions, collaborative, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
 
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
@@ -1228,20 +1255,24 @@ function InfiniteCanvasPage() {
     }, []);
 
     const undoCanvas = useCallback(() => {
+        const collaboration = useCollaborationStore.getState();
+        if (collaboration.projectId === projectId && collaboration.role) { collaboration.undo?.(); return; }
         const previous = historyRef.current.past.pop();
         const current = lastHistoryRef.current;
         if (!previous || !current) return;
         historyRef.current.future.push(current);
         applyHistory(previous);
-    }, [applyHistory]);
+    }, [applyHistory, projectId]);
 
     const redoCanvas = useCallback(() => {
+        const collaboration = useCollaborationStore.getState();
+        if (collaboration.projectId === projectId && collaboration.role) { collaboration.redo?.(); return; }
         const next = historyRef.current.future.pop();
         const current = lastHistoryRef.current;
         if (!next || !current) return;
         historyRef.current.past.push(current);
         applyHistory(next);
-    }, [applyHistory]);
+    }, [applyHistory, projectId]);
 
     const createAndOpenProject = useCallback(() => {
         const id = createProject(t("canvas.defaultTitle", { count: useCanvasStore.getState().projects.length + 1 }));
@@ -3241,8 +3272,8 @@ function InfiniteCanvasPage() {
                     onStartTitleEditing={startTitleEditing}
                     onFinishTitleEditing={finishTitleEditing}
                     onCancelTitleEditing={() => setTitleEditing(false)}
-                    canUndo={historyState.canUndo}
-                    canRedo={historyState.canRedo}
+                    canUndo={collaborative ? collaborationCanUndo : historyState.canUndo}
+                    canRedo={collaborative ? collaborationCanRedo : historyState.canRedo}
                     onHome={() => navigate("/")}
                     onProjects={() => navigate("/canvas")}
                     onCreateProject={createAndOpenProject}
@@ -3440,8 +3471,8 @@ function InfiniteCanvasPage() {
                     selectedCount={selectedNodeIds.size}
                     canvasTool={canvasTool}
                     onFocusSelected={focusSelectedNode}
-                    canUndo={historyState.canUndo}
-                    canRedo={historyState.canRedo}
+                    canUndo={collaborative ? collaborationCanUndo : historyState.canUndo}
+                    canRedo={collaborative ? collaborationCanRedo : historyState.canRedo}
                     backgroundMode={backgroundMode}
                     showImageInfo={showImageInfo}
                     onAddImage={() => createNode(CanvasNodeType.Image)}

@@ -15,6 +15,7 @@ const { updateTarget } = require('./update-platform.cjs');
 const { prepareInstall } = require('./update-install.cjs');
 const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
 const { createEditorWindows } = require('./editor-windows.cjs');
+const { createCollaboration } = require('./collaboration.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 let diagnostics = { report: async () => {}, recover: async () => {}, close: async () => {} };
@@ -64,6 +65,10 @@ app.whenReady().then(async () => {
         onRecovered: (stage, operation) => { void diagnostics.recover({ component: 'update', stage, operation }); },
         changed: state => { if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
         install: async plan => { const apply = await prepareInstall(plan); await apply(); app.quit(); } });
+    const collaboration = createCollaboration({ directory: join(app.getPath('userData'), 'collaboration'), changed: state => {
+        if (!window || window.isDestroyed()) return;
+        window.webContents.send('collaboration:event', state);
+    } });
     let diagnosticsClosed = false, quitting = false;
     app.on('before-quit', event => {
         if (diagnosticsClosed) return;
@@ -72,7 +77,7 @@ app.whenReady().then(async () => {
         quitting = true;
         // Persist only; never hold app exit waiting for a network upload.
         void editors.flushAll().then(async () => {
-            updater.close(); agent.stop(); network.close();
+            updater.close(); agent.stop(); network.close(); await collaboration.close();
             await Promise.allSettled([diagnostics.close(), media.close()]);
             diagnosticsClosed = true; app.quit();
         }).catch(async error => {
@@ -83,6 +88,7 @@ app.whenReady().then(async () => {
     protocol.handle('oneyes-canvas', async request => {
         try {
             if (request.url.startsWith('oneyes-canvas://app/media-tools/')) return await media.request(request);
+            if (request.url.startsWith('oneyes-canvas://app/collaboration/')) return await collaboration.request(request);
             const target = route(request.url, root);
             if (target.file) return net.fetch(target.file);
             if (target.image) return await downloadImage(request, target.image, network.fetch);
@@ -162,11 +168,16 @@ app.whenReady().then(async () => {
         else if (operation !== 'state') throw new Error('不支持的更新操作');
         return updater.state();
     });
+    ipcMain.handle('collaboration:call', async (event, operation, args) => {
+        trusted(event);
+        return collaboration.call(operation, args);
+    });
     let updateStarted = false;
     function createWindow() {
         window = new BrowserWindow({ width: 1380, height: 900, minWidth: 980, minHeight: 650, title: 'OneYes Canvas', show: !smoke, backgroundColor: '#0a0a0a', ...windowChromeOptions(), icon: join(__dirname, 'resources/icon.png'), webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
         for (const name of ['enter-full-screen', 'leave-full-screen']) window.on(name, () => window.webContents.send('window:fullscreen', window.isFullScreen()));
-        window.webContents.on('render-process-gone', (_event, details) => { editors.disconnectHost(); if (details.reason !== 'clean-exit') void diagnostics.report({ component:'app', stage:'crash', reason:'runtime' }); });
+        window.webContents.on('render-process-gone', (_event, details) => { editors.disconnectHost(); void collaboration.close(); if (details.reason !== 'clean-exit') void diagnostics.report({ component:'app', stage:'crash', reason:'runtime' }); });
+        window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) void collaboration.close(); });
         window.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => { if (mainFrame && code !== -3) report('app', 'load', new Error('network')); });
         window.setMenuBarVisibility(false);
         const external = url => { try { const u = new URL(url); if (u.protocol === 'https:' && !u.username && !u.password) void shell.openExternal(u.href); } catch {} };
@@ -175,7 +186,7 @@ app.whenReady().then(async () => {
         window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
         window.webContents.session.setPermissionCheckHandler(() => false);
         window.webContents.session.on('will-download', (_event, item) => item.setSaveDialogOptions({ title: '保存文件' }));
-        window.on('closed', () => { editors.disconnectHost(); window = null; });
+        window.on('closed', () => { editors.disconnectHost(); void collaboration.close(); window = null; });
         if (!smoke) window.webContents.once('did-finish-load', async () => {
             await window.webContents.executeJavaScript(`new Promise(resolve => {
                 const ready = () => { if (!document.body.dataset.canvasReady) return; observer.disconnect(); resolve(true); };
@@ -210,6 +221,7 @@ app.whenReady().then(async () => {
                 await window.webContents.executeJavaScript("window.oneYesDesktop.diagnostics.report({component:'app',stage:'renderer',error:{name:'Error',message:'isolated smoke',stack:'',code:'',status:0}})");
                 await require('./diagnostics-smoke.cjs').smokeDiagnostics((...args) => net.fetch(...args), app.getPath('userData'));
                 await require('./update-delta-smoke.cjs').smokeDelta(app.getPath('userData'));
+                await require('./collaboration-smoke.cjs').smokeCollaboration(join(app.getPath('userData'), 'collaboration-test'), window);
                 await require('./proxy-smoke.cjs').runProxySmoke(window);
                 const connection = await agent.setup();
                 if (!connection.configured || !(await agent.status()).configured) throw new Error('Persistent Codex setup failed');
