@@ -16,11 +16,23 @@ async function privateWrite(file, value) {
     try { await fs.writeFile(temporary, value, { mode: 0o600, flag: 'wx' }); await fs.rename(temporary, file); }
     finally { await fs.rm(temporary, { force: true }); }
 }
-function mcpSettings(config) {
-    return { url: `${config.url}/mcp`, http_headers: { 'x-canvas-agent-token': config.token }, enabled: true, startup_timeout_sec: 20, tool_timeout_sec: 90 };
+function mcpSettings(config, current = {}) {
+    const settings = { startup_timeout_sec: 20, tool_timeout_sec: 90, ...current };
+    // Replace only the transport; keep user tool filters, approval choices and timeouts.
+    for (const key of ['command', 'args', 'cwd', 'env', 'env_vars', 'bearer_token_env_var', 'env_http_headers']) delete settings[key];
+    const headers = Object.fromEntries(Object.entries(current.http_headers || {}).filter(([name]) => name.toLowerCase() !== 'x-canvas-agent-token'));
+    return { ...settings, url: `${config.url}/mcp`, http_headers: { ...headers, 'x-canvas-agent-token': config.token }, enabled: true };
 }
 function parseCodex(text) {
-    try { return toml.parse(text || ''); }
+    try {
+        const parsed = toml.parse(text || '');
+        for (const value of [parsed.mcp_servers, parsed.mcp_servers?.['infinite-canvas']]) {
+            if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) throw new Error();
+        }
+        const headers = parsed.mcp_servers?.['infinite-canvas']?.http_headers;
+        if (headers !== undefined && (!headers || typeof headers !== 'object' || Array.isArray(headers) || Object.values(headers).some(value => typeof value !== 'string'))) throw new Error();
+        return parsed;
+    }
     catch { throw new Error('Codex 配置格式有误，原文件未修改。请修复 config.toml 后重试。'); }
 }
 function startupError(detail = {}) {
@@ -43,7 +55,7 @@ function startupError(detail = {}) {
     return error;
 }
 async function configureCodex(file, config) {
-    const original = await optionalRead(file), parsed = parseCodex(original), settings = mcpSettings(config);
+    const original = await optionalRead(file), parsed = parseCodex(original), settings = mcpSettings(config, parsed.mcp_servers?.['infinite-canvas']);
     if (isDeepStrictEqual(parsed.mcp_servers?.['infinite-canvas'], settings)) return;
     parsed.mcp_servers ||= {};
     parsed.mcp_servers['infinite-canvas'] = settings;

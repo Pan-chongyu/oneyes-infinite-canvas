@@ -130,8 +130,8 @@ export async function listCodexThreads(emit: AgentEmit, options: { cwd: string; 
 }
 
 /** 查询当前账号可用于新任务的 Codex 模型。 */
-export async function listCodexModels(emit: AgentEmit) {
-    return await (await getCodexApp(emit)).listModels();
+export async function listCodexModels(emit: AgentEmit, cwd?: string) {
+    return await (await getCodexApp(emit)).listModels(cwd);
 }
 
 /** 查询当前工作空间的原生 Skill 列表。 */

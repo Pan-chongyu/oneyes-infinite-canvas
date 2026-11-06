@@ -17,7 +17,7 @@ type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error
 type ActiveTurn = PendingRequest & { threadId: string; turnId: string; prompt: string; messageText?: string };
 type ItemDeltaParams = { threadId: string; turnId: string; itemId: string; delta: string; summaryIndex?: number };
 type PendingDelta = { delta: string; itemType: string; params: ItemDeltaParams; timer: ReturnType<typeof setTimeout> };
-type ApprovalRequest = { id: number; method: string; params: JsonRecord; decision?: string };
+type ApprovalRequest = { id: number | string; method: string; params: JsonRecord; decision?: string };
 type PendingTurnStart = { threadId: string; prompt: string; messageText?: string; turnId?: string; onTurn?: (turnId: string) => void; interruptRequested?: boolean };
 
 const canvasAgentMcp = canvasAgentMcpCommand();
@@ -86,38 +86,57 @@ export class CodexAppClient {
         if (process.env.ONEYES_DESKTOP_AGENT === "1") process.once("exit", stopOnExit);
         const client = new CodexAppClient(child, emit);
         let stopped = false;
+        let initializing = true, startupLog = "";
         const stop = () => {
             if (stopped) return;
             stopped = true;
+            process.removeListener("exit", stopOnExit);
             onExit();
         };
-        child.stdout?.on("data", (chunk) => client.read(chunk.toString()));
+        child.stdout?.setEncoding("utf8");
+        child.stdout?.on("data", (chunk: string) => client.read(chunk));
         const stderr = createAgentLogWriter((text) => {
+            if (initializing) startupLog += text;
             logger.warn("Codex app-server stderr", { text });
             emit("agent_log", { text });
         }, (text) => text.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, ""));
-        child.stderr?.on("data", (chunk) => {
+        child.stderr?.setEncoding("utf8");
+        child.stderr?.on("data", (chunk: string) => {
             if (client.skillDraftActive) return stderr.clear();
-            stderr.write(chunk.toString());
+            stderr.write(chunk);
         });
-        child.on("error", (error) => {
+        const failed = (error: Error) => {
+            if (stopped) return;
             stderr.flush();
             logger.error("Codex app-server process error", error);
             emit("agent_error", { message: error.message });
             client.failAll(error.message, true);
+            child.kill();
             stop();
-        });
-        child.on("exit", (code) => {
-            process.removeListener("exit", stopOnExit);
+        };
+        child.on("error", failed);
+        child.stdin?.on("error", failed);
+        child.stdout?.on("error", failed);
+        child.stderr?.on("error", failed);
+        child.on("close", (code) => {
             stderr.flush();
             logger.warn("Codex app-server exited", { code });
-            client.failAll(`Codex app-server exited: ${code ?? 0}`);
+            client.failAll(initializing && startupLog.trim() ? `Codex 初始化失败：${startupLog.trim()}` : `Codex app-server exited: ${code ?? 0}`);
             stop();
             emit("agent_log", { text: `Codex app-server exited: ${code ?? 0}` });
         });
-        await client.request("initialize", { clientInfo: { name: "canvas-agent", title: "Infinite Canvas Agent", version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } });
-        client.notify("initialized");
-        return client;
+        try {
+            await client.request("initialize", { clientInfo: { name: "canvas-agent", title: "Infinite Canvas Agent", version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } });
+            client.notify("initialized");
+            initializing = false;
+            startupLog = "";
+            return client;
+        } catch (error) {
+            client.failAll(error instanceof Error ? error.message : String(error));
+            child.kill();
+            stop();
+            throw error;
+        }
     }
 
     /** 创建新的 Codex 线程。 */
@@ -240,7 +259,7 @@ export class CodexAppClient {
     }
 
     /** 查询当前账号可用的 Codex 模型。 */
-    async listModels() {
+    async listModels(cwd?: string) {
         const data: CodexRequestResult<"model/list">["data"] = [];
         const cursors = new Set<string>();
         let cursor: string | undefined;
@@ -251,6 +270,15 @@ export class CodexAppClient {
             if (cursor && cursors.has(cursor)) throw new Error("Codex 模型列表分页异常，请刷新重试");
             if (cursor) cursors.add(cursor);
         } while (cursor);
+        const { config } = await this.request("config/read", { includeLayers: false, ...(cwd ? { cwd } : {}) }, true);
+        const configured = config.model?.trim();
+        if (configured && configured !== "codex-auto-review") {
+            if (!data.some((item) => item.model === configured)) {
+                const effort = config.model_reasoning_effort || "";
+                data.unshift({ id: configured, model: configured, displayName: configured, defaultReasoningEffort: effort, supportedReasoningEfforts: effort ? [{ reasoningEffort: effort }] : [] });
+            }
+            data.forEach((item) => { item.isDefault = item.model === configured; });
+        }
         return { data, nextCursor: null };
     }
 
@@ -386,8 +414,11 @@ export class CodexAppClient {
     private request<Method extends CodexRequestMethod>(method: Method, params: CodexRequestParams<Method>, silent = false) {
         if (this.failing) return Promise.reject(new CodexReportedError(this.failureMessage || "Codex app-server 已停止")) as Promise<CodexRequestResult<Method>>;
         const id = this.nextId++;
-        this.write({ id, method, params }, silent);
-        return new Promise<CodexRequestResult<Method>>((resolve, reject) => this.pending.set(id, { resolve: (result) => resolve(result as CodexRequestResult<Method>), reject, silent, method }));
+        return new Promise<CodexRequestResult<Method>>((resolve, reject) => {
+            this.pending.set(id, { resolve: (result) => resolve(result as CodexRequestResult<Method>), reject, silent, method });
+            try { this.write({ id, method, params }, silent); }
+            catch (error) { this.pending.delete(id); reject(error); }
+        });
     }
 
     /** 发送无需响应的 JSON-RPC 通知。 */
@@ -400,7 +431,8 @@ export class CodexAppClient {
         const method = String(field(value, "method") || "");
         const params = field(value, "params");
         if (method && !silent) logger.debug(`Codex ${method}`, { id: field(value, "id"), threadId: field(params, "threadId") });
-        this.child.stdin?.write(`${JSON.stringify(value)}\n`);
+        if (this.failing || !this.child.stdin || this.child.stdin.destroyed || this.child.stdin.writableEnded) throw new CodexReportedError(this.failureMessage || "Codex 连接已断开，请重新连接后重试");
+        this.child.stdin.write(`${JSON.stringify(value)}\n`);
     }
 
     /** 按行解析 app-server 标准输出。 */
@@ -422,7 +454,14 @@ export class CodexAppClient {
 
     /** 分派单条 JSON-RPC 响应、请求或通知。 */
     private handle(message: JsonRecord) {
-        const id = Number(message.id);
+        if (this.failing) return;
+        if (typeof message.method === "string") {
+            if ("id" in message) this.answerServerRequest(message);
+            else this.handleNotification(message.method, (message.params || {}) as JsonRecord);
+            return;
+        }
+        const id = message.id;
+        if (typeof id !== "number") return;
         if (message.error && this.pending.has(id)) {
             const error = String(field(message.error, "message") || "Codex request failed");
             if (!this.pending.get(id)?.silent) {
@@ -432,8 +471,6 @@ export class CodexAppClient {
             return this.reject(id, message.error);
         }
         if (this.pending.has(id)) return this.resolve(id, message.result);
-        if (typeof message.method === "string" && "id" in message) return this.answerServerRequest(message);
-        if (typeof message.method === "string") this.handleNotification(message.method, (message.params || {}) as JsonRecord);
     }
 
     /** 转换并广播 app-server 通知。 */
@@ -444,7 +481,7 @@ export class CodexAppClient {
             return;
         }
         if (method === "serverRequest/resolved") {
-            const requestId = String(field(params, "requestId") || "");
+            const requestId = String(field(params, "requestId") ?? "");
             const request = requestId ? this.approvalRequests.get(requestId) : undefined;
             if (request) {
                 this.approvalRequests.delete(requestId);
@@ -742,7 +779,7 @@ export class CodexAppClient {
         }
         if (["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"].includes(method)) {
             const requestId = String(message.id);
-            this.approvalRequests.set(requestId, { id: Number(message.id), method, params });
+            this.approvalRequests.set(requestId, { id: message.id as string | number, method, params });
             this.emit("codex_approval", { requestId, method, ...params });
             return;
         }

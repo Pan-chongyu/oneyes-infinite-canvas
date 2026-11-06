@@ -218,7 +218,7 @@ export function startHttpServer() {
         }
         res.json({ ok: true, workspace: ensureSiteWorkspace(config, false), conversation: session.conversationStateSnapshot });
     }));
-    app.get("/agent/codex/models", route(async (_req, res) => res.json({ ok: true, ...(await listCodexModels(emit)) })));
+    app.get("/agent/codex/models", route(async (_req, res) => res.json({ ok: true, ...(await listCodexModels(emit, ensureSiteWorkspace(config, false).workspacePath)) })));
     app.get("/agent/codex/skills", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const result = await listCodexSkills(emit, workspace.workspacePath, String(req.query.forceReload || "") === "1");

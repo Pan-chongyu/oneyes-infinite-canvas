@@ -32,6 +32,34 @@ test('persistent Codex setup preserves account/models/other MCP, backs up once, 
     } finally { await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
+test('reconnecting replaces obsolete MCP transport but preserves tool restrictions, approval policy and custom headers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'canvas-codex-reconnect-'));
+    try {
+        const file = join(dir, 'config.toml');
+        const original = { model: 'custom-model', model_providers: { oneyes: { name: 'OneYes', base_url: 'https://oneyes.ai/v1' } }, mcp_servers: { 'infinite-canvas': {
+            command: 'old-node', args: ['old-bridge'], env: { OLD: 'value' }, bearer_token_env_var: 'OLD_TOKEN',
+            enabled_tools: ['canvas_get_state'], disabled_tools: ['canvas_delete_nodes'], default_tools_approval_mode: 'prompt',
+            startup_timeout_sec: 35, tool_timeout_sec: 120, http_headers: { 'X-Canvas-Agent-Token': 'old-token', 'x-custom-header': 'preserved' },
+        } } };
+        await writeFile(file, toml.stringify(original));
+        await configureCodex(file, settings);
+        const result = toml.parse(await readFile(file, 'utf8')), entry = result.mcp_servers['infinite-canvas'];
+        for (const key of ['enabled_tools', 'disabled_tools', 'default_tools_approval_mode', 'startup_timeout_sec', 'tool_timeout_sec']) assert.deepEqual(entry[key], original.mcp_servers['infinite-canvas'][key]);
+        assert.deepEqual(result.model_providers, original.model_providers);
+        assert.equal(result.model, original.model);
+        assert.deepEqual(entry.http_headers, { 'x-custom-header': 'preserved', 'x-canvas-agent-token': settings.token });
+        assert.equal(entry.url, `${settings.url}/mcp`);
+        for (const key of ['command', 'args', 'env', 'bearer_token_env_var']) assert.equal(key in entry, false);
+        await configureCodex(file, settings);
+        assert.equal((await readdir(dir)).filter(name => name.endsWith('.bak')).length, 1);
+        for (const invalid of ['mcp_servers="wrong"', '[mcp_servers]\ninfinite-canvas="wrong"', '[mcp_servers.infinite-canvas]\nhttp_headers="wrong"']) {
+            await writeFile(file, invalid);
+            await assert.rejects(configureCodex(file, settings), /原文件未修改/);
+            assert.equal(await readFile(file, 'utf8'), invalid);
+        }
+    } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('corrupt Agent config and an occupied port never replace Codex settings', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-agent-conflict-'));
     const server = createServer(socket => socket.destroy());
@@ -64,6 +92,11 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         assert.deepEqual(await agent.restore(), { configured: false });
         assert.deepEqual(await readdir(dir), []);
         await mkdir(options.agentHome);
+        await mkdir(options.codexHome);
+        await writeFile(join(options.codexHome, 'config.toml'), toml.stringify({
+            model: 'OneYes-中文模型', model_provider: 'oneyes', model_reasoning_effort: 'high',
+            model_providers: { oneyes: { name: 'OneYes', base_url: 'http://127.0.0.1:1/v1', wire_api: 'responses' } },
+        }));
         const workspace = { workspacePath: join(dir, 'workspace'), pinnedThreadIds: ['fixture-pinned'] };
         await writeFile(join(options.agentHome, 'canvas-agent.json'), JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}`, origins: ['oneyes-canvas://app', 'https://bound.example'], workspace }));
         const [connection, duplicate] = await Promise.all([agent.setup(), agent.setup()]);
@@ -99,7 +132,7 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         assert.equal(JSON.parse(stdout).transport.url, `${connection.url}/mcp`);
         // A real thread must discover canvas tools even with an unavailable inherited proxy.
         // No login, model turns, user config, or paid requests are needed.
-        const script = `const {CodexAppClient}=await import('./canvas-agent/dist/agent/codex-client.js');const events=[];const c=await CodexAppClient.start((type,value)=>{if(type==='agent_bootstrap')events.push(value)},()=>{});const thread=await c.startThread(${JSON.stringify(dir)},'request',true);const status=await c.request('mcpServerStatus/list',{threadId:thread.id,limit:100,detail:'toolsAndAuthOnly'});const canvas=status.data.find(s=>s.name==='infinite-canvas');if(events.some(e=>e.name==='infinite-canvas'&&e.status==='failed')||!canvas?.tools?.canvas_get_state)throw Error('Canvas MCP handshake/tools failed');console.log('CODEX_APP_SERVER_READY');process.exit(0);`;
+        const script = `const {CodexAppClient}=await import('./canvas-agent/dist/agent/codex-client.js');const events=[];const c=await CodexAppClient.start((type,value)=>{if(type==='agent_bootstrap')events.push(value)},()=>{});const models=await c.listModels(${JSON.stringify(dir)});const model=models.data.find(m=>m.isDefault);if(model?.model!=='OneYes-中文模型'||model.defaultReasoningEffort!=='high')throw Error('Effective model discovery failed');const thread=await c.startThread(${JSON.stringify(dir)},'request',true);const status=await c.request('mcpServerStatus/list',{threadId:thread.id,limit:100,detail:'toolsAndAuthOnly'});const canvas=status.data.find(s=>s.name==='infinite-canvas');if(events.some(e=>e.name==='infinite-canvas'&&e.status==='failed')||!canvas?.tools?.canvas_get_state)throw Error('Canvas MCP handshake/tools failed');console.log('CODEX_APP_SERVER_READY');process.exit(0);`;
         const proxy = 'http://127.0.0.1:1';
         const started = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, CODEX_HOME: options.codexHome, ONEYES_CANVAS_AGENT_HOME: options.agentHome, ONEYES_DESKTOP_AGENT: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy, ALL_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, all_proxy: proxy, NO_PROXY: '', no_proxy: '' }, timeout: 20_000 });
         assert.ok(started.stdout.includes('CODEX_APP_SERVER_READY'));

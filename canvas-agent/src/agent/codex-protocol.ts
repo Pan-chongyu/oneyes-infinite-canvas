@@ -59,6 +59,10 @@ type ThreadOptions = {
 };
 
 type CodexRequestSpec = {
+    "config/read": {
+        params: { includeLayers: boolean; cwd?: string };
+        result: { config: { model?: string | null; model_reasoning_effort?: string | null } };
+    };
     initialize: {
         params: {
             clientInfo: { name: string; title: string; version: string };

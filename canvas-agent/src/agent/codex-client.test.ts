@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
+import { syncBuiltinESMExports } from "node:module";
+import { PassThrough, Writable } from "node:stream";
 
 import { CodexAppClient, canRecoverWindowsMcp, codexRequestError } from "./codex-client.js";
 import { assertDraftHasNoSensitiveValues, canvasSkillSource } from "./codex.js";
@@ -41,6 +45,9 @@ test("model discovery follows every cursor and rejects incomplete repeated-curso
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(writes.at(-1)!.params, { cursor: "page-2", limit: 100, includeHidden: false });
     native.handle({ id: writes.at(-1)!.id, result: { data: [{ model: "second" }], nextCursor: null } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(writes.at(-1)!.method, "config/read");
+    native.handle({ id: writes.at(-1)!.id, result: { config: {} } });
     assert.deepEqual((await listing).data.map((item) => item.model), ["first", "second"]);
     const repeated = client.listModels();
     native.handle({ id: writes.at(-1)!.id, result: { data: [], nextCursor: "same" } });
@@ -48,6 +55,110 @@ test("model discovery follows every cursor and rejects incomplete repeated-curso
     native.handle({ id: writes.at(-1)!.id, result: { data: [], nextCursor: "same" } });
     await assert.rejects(repeated, /分页异常/);
     assert.equal(writes.some((item) => item.method === "turn/start"), false);
+});
+
+test("effective workspace model is offered without inventing capabilities or exposing config secrets", async () => {
+    for (const configured of ["custom-oneyes-model", "advertised-model", null]) {
+        const writes: Array<Record<string, unknown>> = [];
+        const client = Reflect.construct(CodexAppClient, [{ stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } }, () => {}, emptyEventHistory]) as CodexAppClient;
+        const native = client as unknown as TestClient;
+        const listing = client.listModels("/workspace");
+        native.handle({ id: writes[0].id, result: { data: [{ id: "advertised", model: "advertised-model", isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low" }] }], nextCursor: null } });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(writes[1].params, { includeLayers: false, cwd: "/workspace" });
+        native.handle({ id: writes[1].id, result: { config: { model: configured, model_reasoning_effort: "high", model_providers: { oneyes: { experimental_bearer_token: "PRIVATE_CONFIG_SECRET" } } } } });
+        const result = await listing;
+        assert.equal(result.data.filter(item => item.isDefault).length, 1);
+        assert.equal(result.data.find(item => item.isDefault)?.model, configured || "advertised-model");
+        if (configured === "custom-oneyes-model") assert.deepEqual(result.data[0].supportedReasoningEfforts, [{ reasoningEffort: "high" }]);
+        assert.doesNotMatch(JSON.stringify(result), /PRIVATE_CONFIG_SECRET|model_providers/);
+        assert.equal(writes.some(item => item.method === "turn/start" || item.method === "config/value/write"), false);
+    }
+});
+
+test("bidirectional RPC preserves string/zero approval IDs and cannot confuse a server request with a client response", async () => {
+    const writes: Array<Record<string, unknown>> = [], events: Array<{ type: string; payload: unknown }> = [];
+    const client = Reflect.construct(CodexAppClient, [{ stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } }, (type: string, payload: unknown) => events.push({ type, payload }), emptyEventHistory]) as CodexAppClient;
+    const native = client as unknown as TestClient;
+    const listing = client.listModels();
+    for (const id of [1, "1", "approval-中文", 0]) {
+        native.handle({ id, method: "item/commandExecution/requestApproval", params: { threadId: "t", turnId: "turn" } });
+        assert.equal(client.resolveApproval(String(id), "accept"), true);
+        assert.deepEqual(writes.at(-1), { id, result: { decision: "accept" } });
+        native.handleNotification("serverRequest/resolved", { requestId: id });
+        assert.equal(client.resolveApproval(String(id), "accept"), false);
+    }
+    native.handle({ id: 1, result: { data: [], nextCursor: null } });
+    await new Promise(resolve => setImmediate(resolve));
+    native.handle({ id: writes.at(-1)!.id, result: { config: {} } });
+    assert.deepEqual((await listing).data, []);
+    assert.equal(events.filter(item => item.type === "codex_approval_resolved").length, 4);
+});
+
+test("RPC registers before writing and removes requests after synchronous write failure", async () => {
+    let native: TestClient;
+    const child = { stdin: { write: (line: string) => {
+        const request = JSON.parse(line);
+        native.handle({ id: request.id, result: request.method === "model/list" ? { data: [], nextCursor: null } : { config: {} } });
+        return true;
+    } } };
+    const client = Reflect.construct(CodexAppClient, [child, () => {}, emptyEventHistory]) as CodexAppClient;
+    native = client as unknown as TestClient;
+    assert.deepEqual((await client.listModels()).data, []);
+    child.stdin.write = () => { throw new Error("write failed"); };
+    await assert.rejects(client.listModels(), /write failed/);
+    assert.equal((client as unknown as { pending: Map<number, unknown> }).pending.size, 0);
+    Object.assign(child.stdin, { destroyed: true });
+    await assert.rejects(client.listModels(), /连接已断开/);
+});
+
+test("native stdio decodes split Chinese/emoji; initialization and pipe failures clean up and permit a fresh start", async context => {
+    const children: Array<EventEmitter & { stdout: PassThrough; stderr: PassThrough; stdin: Writable; kill: () => boolean }> = [];
+    const writes: Array<Record<string, unknown>> = [];
+    context.mock.method(childProcess, "spawn", () => {
+        const child = Object.assign(new EventEmitter(), {
+            stdout: new PassThrough(), stderr: new PassThrough(),
+            stdin: new Writable({ write(chunk, _encoding, callback) { writes.push(JSON.parse(chunk.toString())); callback(); } }),
+            kill: () => { child.emit("close", 1); return true; },
+        });
+        children.push(child);
+        return child;
+    });
+    syncBuiltinESMExports();
+    const events: Array<{ type: string; payload: unknown }> = [];
+    let exits = 0;
+    try {
+        const failedStart = CodexAppClient.start((type, payload) => events.push({ type, payload }), () => exits++);
+        children[0].stdout.write(JSON.stringify({ id: writes[0].id, error: { code: -32602, message: "配置错误" } }) + "\n");
+        await assert.rejects(failedStart, /配置错误/);
+        assert.equal(exits, 1);
+        const starting = CodexAppClient.start((type, payload) => events.push({ type, payload }), () => exits++);
+        const child = children[1];
+        child.stdout.write(JSON.stringify({ id: writes.at(-1)!.id, result: {} }) + "\n");
+        const client = await starting;
+        const listing = client.listModels();
+        const text = "中文模型🎬";
+        const bytes = Buffer.from(JSON.stringify({ id: writes.at(-1)!.id, result: { data: [{ model: text }], nextCursor: null } }) + "\r\n");
+        for (const byte of bytes) child.stdout.write(Buffer.from([byte]));
+        await new Promise(resolve => setImmediate(resolve));
+        child.stdout.write(JSON.stringify({ id: writes.at(-1)!.id, result: { config: {} } }) + "\n");
+        assert.equal((await listing).data[0].model, text);
+        const stderr = Buffer.from("中文日志🎬 token=private-fixture\n");
+        for (const byte of stderr) child.stderr.write(Buffer.from([byte]));
+        assert.ok(events.some(item => item.type === "agent_log" && (item.payload as { text: string }).text === "中文日志🎬 token=[REDACTED]\n"));
+        const interrupted = client.listModels();
+        child.stdin.emit("error", Object.assign(new Error("pipe closed"), { code: "EPIPE" }));
+        await assert.rejects(interrupted, /pipe closed/);
+        assert.equal(exits, 2);
+        child.stdout.write('{"method":"skills/changed","params":{}}\n');
+        assert.equal(events.some(item => item.type === "skills_changed"), false);
+        const brokenConfig = CodexAppClient.start((type, payload) => events.push({ type, payload }), () => exits++);
+        children[2].stderr.write("Error: config.toml 无效 token=private-fixture\n");
+        children[2].emit("close", 1);
+        await assert.rejects(brokenConfig, error => /初始化失败.*config.toml 无效/.test(String(error)) && !String(error).includes("private-fixture"));
+        assert.equal(exits, 3);
+        assert.doesNotMatch(JSON.stringify(events), /private-fixture|�/);
+    } finally { context.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
 test("only transient Windows-MCP errors qualify for automatic reconnect", () => {
