@@ -132,8 +132,8 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 peer.secure = channel(peer, room.secret, challenge, auth.nonce, true);
                 peer.send(JSON.stringify({ type: 'authenticated', proof: proof(room.secret, `host:${challenge}:${auth.nonce}:${room.room}`) }));
                 peers.add(peer); attach(peer); emit();
-                void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') });
-                void send(peer, { type: 'members', count: peers.size + 1 });
+                void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') }).catch(() => peer.terminate());
+                void send(peer, { type: 'members', count: peers.size + 1 }).catch(() => peer.terminate());
                 void broadcast({ type: 'members', count: peers.size + 1 }, peer);
             } catch { peer.close(); }
         });
@@ -158,7 +158,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 } else if (value.type === 'authenticated' && challenge && same(value.proof, proof(room.secret, `host:${challenge}:${nonce}:${room.room}`))) {
                     peer.removeListener('message', handshake); peer.secure = channel(peer, room.secret, challenge, nonce, false); attach(peer);
                     status = 'online'; emit();
-                    void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') });
+                    void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') }).catch(() => peer.terminate());
                 } else throw Error();
             } catch { peer.close(); }
         };

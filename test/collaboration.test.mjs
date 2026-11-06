@@ -77,3 +77,27 @@ test('encrypted native rooms merge changes, move original bytes, reconnect witho
         assert.deepEqual(await readdir(directory), []); await rm(directory, { recursive: true, force: true });
     }
 });
+
+test('an initial encrypted send failure on either side reconnects without an unhandled rejection', async t => {
+    for (const hostSide of [true, false]) await t.test(hostSide ? 'host' : 'guest', async t => {
+        const directory = await mkdtemp(join(tmpdir(), 'canvas-lan-send-'));
+        const host = createCollaboration({ directory, address: '127.0.0.1' }), guest = createCollaboration({ directory });
+        const original = WebSocket.prototype.send; let failed = false;
+        t.mock.method(WebSocket.prototype, 'send', function (data, options, callback) {
+            const done = typeof options === 'function' ? options : callback;
+            if (!failed && this._isServer === hostSide && JSON.parse(String(data)).seq && done) {
+                failed = true; queueMicrotask(() => done(Error('connection closed during initial sync'))); return;
+            }
+            return original.call(this, data, options, callback);
+        });
+        try {
+            const room = await host.call('host');
+            const doc = new Y.Doc(); doc.getMap('test').set('retained', 'after reconnect');
+            await host.call('update', { data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') });
+            await guest.call('join', { invite: room.invite });
+            await wait(() => failed && guest.state().status === 'reconnecting');
+            await wait(() => guest.state().status === 'online');
+            await wait(async () => (await snapshot(guest)).getMap('test').get('retained') === 'after reconnect');
+        } finally { await guest.close(); await host.close(); await rm(directory, { recursive: true, force: true }); }
+    });
+});
