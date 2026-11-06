@@ -53,6 +53,28 @@ app.whenReady().then(async () => {
             original.ctx.clearRect(0,0,bitmap.width,bitmap.height);original.ctx.drawImage(bitmap,0,0);
             const neural=original.ctx.getImageData(0,0,bitmap.width,bitmap.height).data;
             let difference=0;for(let i=0;i<neural.length;i+=4)difference+=Math.abs(neural[i]-bilinear[i]);
+            // The same source pixels must agree when a tile boundary moves. Compare
+            // both internal crossings and partial edge tiles with a single-tile crop.
+            const texture=surface(449,451),texturePixels=texture.ctx.createImageData(449,451);
+            for(let y=0;y<451;y++)for(let x=0;x<449;x++){
+                const value=Math.round(128+48*Math.sin(x*.17)+45*Math.cos(y*.11)+(x+y)%19);
+                texturePixels.data.set([value,value,value,255],(y*449+x)*4);
+            }
+            texture.ctx.putImageData(texturePixels,0,0);
+            const tiled=await createImageBitmap(await process('${ai}',{operation:'superResolution',blob:await texture.canvas.convertToBlob({type:'image/png'})}));
+            const full=surface(tiled.width,tiled.height);full.ctx.drawImage(tiled,0,0);tiled.close();
+            const seams=[];
+            for(const [x,y,side] of [[176,176,96],[384,384,64]]){
+                const patch=surface(side,side);patch.ctx.drawImage(texture.canvas,x,y,side,side,0,0,side,side);
+                const reference=await createImageBitmap(await process('${ai}',{operation:'superResolution',blob:await patch.canvas.convertToBlob({type:'image/png'})}));
+                const single=surface(reference.width,reference.height);single.ctx.drawImage(reference,0,0);reference.close();
+                const margin=8,size=(side-2*margin)*3;
+                const expected=single.ctx.getImageData(margin*3,margin*3,size,size).data;
+                const actual=full.ctx.getImageData((x+margin)*3,(y+margin)*3,size,size).data;
+                let maximum=0,total=0;
+                for(let i=0;i<actual.length;i++){const delta=Math.abs(actual[i]-expected[i]);maximum=Math.max(maximum,delta);total+=delta;}
+                seams.push({maximum,mean:total/actual.length});
+            }
             const subject=surface(80,60);subject.ctx.fillStyle='white';subject.ctx.fillRect(0,0,80,60);subject.ctx.fillStyle='#223355';subject.ctx.beginPath();subject.ctx.ellipse(40,30,18,24,0,0,Math.PI*2);subject.ctx.fill();
             subject.ctx.clearRect(0,0,1,1);
             const removed=await process('${ai}',{operation:'cutout',blob:await subject.canvas.convertToBlob({type:'image/png'})});
@@ -65,9 +87,12 @@ app.whenReady().then(async () => {
             const merged=await process('${compose}',{blobs,layers:[{},{x:1,y:1,opacity:0.5}]});
             const image=await createImageBitmap(merged);base.ctx.clearRect(0,0,4,3);base.ctx.drawImage(image,0,0);
             let invalid=false;try{await process('${compose}',{blobs,layers:[{blend:'copy'},{}]});}catch{invalid=true;}
-            return {width:bitmap.width,height:bitmap.height,difference,cut:[cut.width,cut.height],alpha:[low,high,alpha[3]],composition:[image.width,image.height,...base.ctx.getImageData(1,1,1,1).data],invalid};
+            return {width:bitmap.width,height:bitmap.height,difference,seams,size:[full.canvas.width,full.canvas.height],cut:[cut.width,cut.height],alpha:[low,high,alpha[3]],composition:[image.width,image.height,...base.ctx.getImageData(1,1,1,1).data],invalid};
         })()`);
         assert.equal(result.width, 603); assert.equal(result.height, 99); assert.ok(result.difference > 100, 'AI result must differ from interpolated pixels');
+        assert.deepEqual(result.size,[449*3,451*3]);
+        for(const comparison of result.seams)assert.ok(comparison.maximum<=1 && comparison.mean<0.01, 'tile crossings must match single-tile inference: '+JSON.stringify(result.seams));
+        console.log('SUPER_RESOLUTION_SEAMS_OK: '+JSON.stringify(result.seams));
         assert.deepEqual(result.cut, [80,60]); assert.equal(result.alpha[2], 0); assert.ok(result.alpha[0] < result.alpha[1]);
         assert.deepEqual(result.composition.slice(0,2), [4,3]);
         // Skia's premultiplied-alpha rounding differs by one byte across native backends.

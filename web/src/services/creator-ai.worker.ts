@@ -77,10 +77,11 @@ async function superResolution(bitmap: ImageBitmap, session: ort.InferenceSessio
     result.ctx.drawImage(bitmap, 0, 0, result.canvas.width, result.canvas.height);
     const rgb = source.ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
     // Overlapping tiles bound inference working memory, never the user's input dimensions.
-    // ESPCN's 5/3/3 kernels have a four-pixel receptive-field radius.
+    // The pinned ESPCN has four convolutions (5/3/3/3): discard five source
+    // pixels on each tile edge so zero padding never leaks into an internal join.
     // The published ESPCN model has a fixed 224 × 224 input. Pad edge tiles;
     // do not resize the source to the model input or cap the source dimensions.
-    const side = 224, overlap = 4, tile = side - 2 * overlap;
+    const side = 224, overlap = 5, tile = side - 2 * overlap;
     const total = Math.ceil(bitmap.width / tile) * Math.ceil(bitmap.height / tile);
     let completed = 0;
     for (let y = 0; y < bitmap.height; y += tile) for (let x = 0; x < bitmap.width; x += tile) {
