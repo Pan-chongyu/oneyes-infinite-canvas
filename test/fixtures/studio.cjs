@@ -65,13 +65,13 @@ app
       const until = Date.now() + 20000;
       while (!(await js(code))) {
         if (Date.now() > until)
-          throw Error("Studio fixture timed out: " + code);
+          throw Error("Studio fixture timed out: " + code + " " + JSON.stringify(await js('({dialogs:Array.from(document.querySelectorAll(".ant-modal")).map(n=>({className:n.className,text:n.textContent,style:n.getAttribute("style"),animations:n.getAnimations({subtree:true}).map(a=>({state:a.playState,time:a.currentTime}))})),tool:studioTest.state().nodes.find(n=>n.id==="tool")?.metadata,requests:studioTest.requests().length})')));
         await new Promise((r) => setTimeout(r, 25));
       }
     };
     const click = async (text) => {
       await js(
-        `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.replaceAll(' ','')===${JSON.stringify(text.replaceAll(' ', ''))}).click()`,
+        `new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))).then(async()=>{const button=Array.from(document.querySelectorAll('button')).filter(b=>b.textContent.replaceAll(' ','')===${JSON.stringify(text.replaceAll(' ', ''))}&&b.getClientRects().length).at(-1);if(!button)throw Error('Visible button not found');const dialog=button.closest('.ant-modal');if(dialog)await Promise.all(dialog.getAnimations({subtree:true}).filter(a=>Number.isFinite(a.effect.getTiming().iterations)).map(a=>a.finished.catch(()=>{})));button.click()})`,
       );
     };
     const screenshot = async (suffix = "") => {
@@ -79,10 +79,12 @@ app
       win.showInactive();
       await js('Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{}))).then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
       await writeFile(process.env.CANVAS_STUDIO_TEST_SCREENSHOT.replace(/\.png$/,suffix+".png"),(await win.webContents.capturePage()).toPNG());
-      win.hide();
     };
     try {
       await win.loadURL(process.argv[2]);
+      // Native modal animations need a painted window; hidden renderers can
+      // retain an exiting dialog indefinitely even with throttling disabled.
+      win.showInactive();
       await wait("Boolean(window.studioTest)");
       if (process.env.CANVAS_STUDIO_TEST_PHASE === "restore") {
         const saved = await js('studioTest.restoredJev()');
