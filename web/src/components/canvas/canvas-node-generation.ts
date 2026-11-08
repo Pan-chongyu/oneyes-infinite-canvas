@@ -157,6 +157,7 @@ function readNodeGenerationResource(node: CanvasNodeData): NodeGenerationResourc
 }
 
 export function buildNodeResponseMessages(context: NodeGenerationContext): AiTextMessage[] {
+    if (context.referenceVideos.length) throw Error(i18n.t("canvas.videoWorkflow.notSampled"));
     if (!context.referenceImages.length) {
         return [{ role: "user", content: context.prompt }];
     }
@@ -172,6 +173,32 @@ export function buildNodeResponseMessages(context: NodeGenerationContext): AiTex
 export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {
     const { imageToDataUrl } = await import("@/services/image-storage");
     return { ...context, referenceImages: await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) }))) };
+}
+
+export async function prepareNodeTextContext(context: NodeGenerationContext, count: number | undefined, signal: AbortSignal, progress: (text: string) => void, sourceId?: string): Promise<NodeGenerationContext> {
+    signal.throwIfAborted();
+    if (sourceId && !context.referenceVideos.some(video => video.id === sourceId)) throw Error(i18n.t("canvas.videoWorkflow.missingVideo"));
+    if (!context.referenceVideos.length) return context;
+    const { sampleDirectorVideo, DEFAULT_VIDEO_FRAME_COUNT } = await import("@/services/director-video");
+    const { creatorSourceBlob } = await import("@/services/creator-media");
+    const { readFileAsDataUrl } = await import("@/lib/image-utils");
+    const referenceImages = [...context.referenceImages], descriptions: string[] = [];
+    for (const [index, video] of context.referenceVideos.entries()) {
+        signal.throwIfAborted();
+        progress(i18n.t("canvas.videoWorkflow.reading", { index: index + 1 }));
+        const source: CanvasNodeData = { id: video.id, type: CanvasNodeType.Video, title: video.name, position: { x: 0, y: 0 }, width: 1, height: 1, metadata: { content: video.url, storageKey: video.storageKey } };
+        const blob = await creatorSourceBlob(source, signal);
+        const sampled = await sampleDirectorVideo(blob, count ?? DEFAULT_VIDEO_FRAME_COUNT, signal, progress);
+        descriptions.push(`${i18n.t("canvas.configNode.videoReferences")} ${index + 1}：${sampled.duration.toFixed(3)}s，${sampled.width} × ${sampled.height}`);
+        for (const [frameIndex, frame] of sampled.frames.entries()) {
+            signal.throwIfAborted();
+            descriptions.push(`${imageReferenceLabel(referenceImages.length)}：${frame.time.toFixed(3)}s`);
+            referenceImages.push({ id: `${video.id}:frame:${frameIndex}`, name: `${video.id}-${frameIndex}.png`, type: "image/png", dataUrl: await readFileAsDataUrl(new File([frame.blob], "frame.png", { type: "image/png" })) });
+        }
+    }
+    signal.throwIfAborted();
+    progress(i18n.t("canvas.videoWorkflow.analyzing"));
+    return { ...context, prompt: `${context.prompt}\n\n${i18n.t("canvas.videoWorkflow.frameContext")}\n${descriptions.join("\n")}`, referenceImages, referenceVideos: [], imageCount: referenceImages.length };
 }
 
 function readNodeTextInput(node: CanvasNodeData) {

@@ -8,7 +8,7 @@ import { sequenceDuration } from "@/lib/canvas/director-sequence";
 import { studioModelChoice } from "@/lib/canvas/studio-assistant";
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
 import { creatorSourceBlob } from "@/services/creator-media";
-import { sampleDirectorVideo, type DirectorVideoFrames } from "@/services/director-video";
+import { DEFAULT_VIDEO_FRAME_COUNT, sampleDirectorVideo, type DirectorVideoFrames } from "@/services/director-video";
 import { reportError } from "@/services/diagnostics";
 import type { DirectorAssistantSettings, DirectorScene } from "@/types/director";
 import type { CanvasNodeContext } from "@/types/canvas-plugin";
@@ -19,7 +19,7 @@ export function DirectorAssistant({ctx,scene,disabled,onApply,onPreview}:{ctx:Ca
     const latest=useRef({ctx,scene});latest.current={ctx,scene};
     const controller=useRef<AbortController|null>(null),mounted=useRef(true),input=useRef<HTMLInputElement>(null);
     const videos=ctx.getNodes().filter(node=>node.type==="video"&&(node.metadata?.content||node.metadata?.storageKey));
-    const [videoId,setVideoId]=useState(ctx.getUpstream().find(node=>node.type==="video")?.id || videos[0]?.id || ""),[file,setFile]=useState<File|null>(null),[count,setCount]=useState(6);
+    const [videoId,setVideoId]=useState(ctx.getUpstream().find(node=>node.type==="video")?.id || videos[0]?.id || ""),[file,setFile]=useState<File|null>(null),[count,setCount]=useState(DEFAULT_VIDEO_FRAME_COUNT);
     const [samples,setSamples]=useState<DirectorVideoFrames|null>(null),[selected,setSelected]=useState<number[]>([]),[thumbnails,setThumbnails]=useState<string[]>([]);
     const video=videos.find(node=>node.id===videoId),source=JSON.stringify([video?.id,video?.metadata?.content,video?.metadata?.storageKey,file?.name,file?.size,file?.lastModified]);
     const copy=useCopyText(),{message}=App.useApp();

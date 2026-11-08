@@ -36,7 +36,8 @@ import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/can
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
 import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
-import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
+import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, prepareNodeTextContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
+import { createVideoNodeWorkflow } from "@/lib/canvas/video-node-workflow";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-hover-toolbar";
 import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-toolbar";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
@@ -1979,8 +1980,21 @@ function InfiniteCanvasPage() {
         [addAsset, message, t],
     );
 
-    const createImageReversePromptNodes = useCallback(
+    const createVideoWorkflow = useCallback((node: CanvasNodeData, kind: "reverse" | "generate") => {
+        try {
+            const flow = createVideoNodeWorkflow(node, effectiveConfig, kind, nodesRef.current);
+            setNodes(prev => [...prev, ...flow.nodes]);
+            setConnections(prev => [...prev, ...flow.connections]);
+            setSelectedNodeIds(new Set([flow.configNode.id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(flow.configNode.id);
+            setContextMenu(null);
+        } catch (error) { message.warning(error instanceof Error ? error.message : String(error)); }
+    }, [effectiveConfig, message]);
+
+    const createReversePromptNodes = useCallback(
         (node: CanvasNodeData) => {
+            if (node.type === CanvasNodeType.Video) { createVideoWorkflow(node, "reverse"); return; }
             if (node.type !== CanvasNodeType.Image || !node.metadata?.content) {
                 message.warning(t("canvas.projectPage.emptyReverse"));
                 return;
@@ -2015,7 +2029,7 @@ function InfiniteCanvasPage() {
             setDialogNodeId(configNode.id);
             setContextMenu(null);
         },
-        [effectiveConfig.model, effectiveConfig.textModel, message, t],
+        [createVideoWorkflow, effectiveConfig.model, effectiveConfig.textModel, message, t],
     );
 
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
@@ -2463,25 +2477,16 @@ function InfiniteCanvasPage() {
             const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-            const generationContext = await hydrateNodeGenerationContext(
-                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt),
-            );
-            const effectivePrompt = generationContext.prompt.trim();
-            if (runController.signal.aborted) {
-                finishGenerationRequest(nodeId, runController);
-                setRunningNodeId(null);
-                return;
-            }
             const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
-            if (!effectivePrompt && (mode === "text" || mode === "audio")) {
-                finishGenerationRequest(nodeId, runController);
-                setRunningNodeId(null);
-                return;
-            }
             let pendingChildIds: string[] = [];
-            if (markSourceStatus) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...(node.type === CanvasNodeType.Config ? {} : { prompt }), status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
 
             try {
+                const generationContext = await hydrateNodeGenerationContext(
+                    buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt),
+                );
+                const effectivePrompt = generationContext.prompt.trim();
+                if (runController.signal.aborted || !effectivePrompt && (mode === "text" || mode === "audio")) return;
+                if (markSourceStatus) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...(node.type === CanvasNodeType.Config ? {} : { prompt }), status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
                 if (mode === "image") {
                     const count = getGenerationCount(generationConfig.count);
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
@@ -2713,6 +2718,8 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
+                const textContext = await prepareNodeTextContext(generationContext, sourceNode?.metadata?.videoFrameCount, runController.signal,
+                    loadingMessage => setNodes(prev => prev.map(node => node.id === nodeId ? { ...node, metadata: { ...node.metadata, loadingMessage } } : node)), sourceNode?.metadata?.videoPromptSourceId);
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                 const textCount = getGenerationCount(String(sourceNode?.metadata?.textCount || 1));
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : CanvasNodeType.Text];
@@ -2725,7 +2732,7 @@ function InfiniteCanvasPage() {
                 const rootNode: CanvasNodeData = {
                     id: rootId,
                     type: CanvasNodeType.Text,
-                    title: effectivePrompt.slice(0, 32) || "Generated Text",
+                    title: sourceNode?.metadata?.videoPromptSourceId ? t("canvas.videoWorkflow.resultTitle") : effectivePrompt.slice(0, 32) || "Generated Text",
                     position: reuseTextNode ? sourceNode.position : { x: parentPosition.x + parentConfig.width + 96, y: parentPosition.y + parentConfig.height / 2 - textConfig.height / 2 },
                     width: reuseTextNode ? sourceNode.width : textConfig.width,
                     height: reuseTextNode ? sourceNode.height : textConfig.height,
@@ -2758,7 +2765,7 @@ function InfiniteCanvasPage() {
                         try {
                             const answer = await requestImageQuestion(
                                 generationConfig,
-                                buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }),
+                                buildNodeResponseMessages(textContext),
                                 (text) => {
                                     streamed = text;
                                     setNodes((prev) =>
@@ -2821,11 +2828,11 @@ function InfiniteCanvasPage() {
                                     texts: completedTexts,
                                     primaryTextId: primaryText?.id,
                                     status: primaryText ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
-                                    errorDetails: primaryText ? undefined : t("canvas.projectPage.generationFailed"),
+                                    errorDetails: primaryText ? undefined : failedTexts[0]?.errorDetails || t("canvas.projectPage.generationFailed"),
                                 },
                             };
                         }
-                        return node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, status: firstText ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: firstText ? undefined : t("canvas.projectPage.generationFailed") } } : node;
+                        return node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, status: firstText ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: firstText ? undefined : failedTexts[0]?.errorDetails || t("canvas.projectPage.generationFailed") } } : node;
                     }),
                 );
             } catch (error) {
@@ -2851,6 +2858,7 @@ function InfiniteCanvasPage() {
                 );
             } finally {
                 finishGenerationRequest(nodeId, runController);
+                setNodes(prev => prev.map(node => node.id === nodeId && node.metadata?.loadingMessage ? { ...node, metadata: { ...node.metadata, loadingMessage: undefined } } : node));
                 setRunningNodeId(null);
             }
         },
@@ -2896,7 +2904,7 @@ function InfiniteCanvasPage() {
                 return;
             }
 
-            const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.prompt || node.metadata?.prompt || ""));
+            const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.composerContent ?? sourceNode.metadata?.prompt ?? node.metadata?.prompt ?? ""));
             const prompt = (savedImageMetadata?.prompt || context?.prompt || "").trim();
             if (!prompt) {
                 message.warning(t("canvas.projectPage.retryPromptMissing"));
@@ -2920,10 +2928,12 @@ function InfiniteCanvasPage() {
             try {
                 if (node.type === CanvasNodeType.Text) {
                     if (!context) return;
+                    const textContext = await prepareNodeTextContext({ ...context, prompt }, sourceNode.metadata?.videoFrameCount, controller.signal,
+                        loadingMessage => setNodes(prev => prev.map(item => item.id === node.id ? { ...item, metadata: { ...item.metadata, loadingMessage } } : item)), sourceNode.metadata?.videoPromptSourceId);
                     let streamed = "";
                     const answer = await requestImageQuestion(
                         generationConfig,
-                        buildNodeResponseMessages({ ...context, prompt }),
+                        buildNodeResponseMessages(textContext),
                         (text) => {
                             streamed = text;
                             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
@@ -3019,6 +3029,7 @@ function InfiniteCanvasPage() {
                 );
             } finally {
                 finishGenerationRequest(node.id, controller);
+                setNodes(prev => prev.map(item => item.id === node.id && item.metadata?.loadingMessage ? { ...item, metadata: { ...item.metadata, loadingMessage: undefined } } : item));
                 setRunningNodeId(null);
             }
         },
@@ -3450,7 +3461,8 @@ function InfiniteCanvasPage() {
                     onSuperResolve={(node) => setSuperResolveNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
                     onViewImage={handleNodeViewImage}
-                    onReversePrompt={createImageReversePromptNodes}
+                    onReversePrompt={createReversePromptNodes}
+                    onCreateVideoConfig={node => createVideoWorkflow(node, "generate")}
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
@@ -3505,6 +3517,8 @@ function InfiniteCanvasPage() {
                         canCaptureVideoFrame={contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)}
                         canGroup={contextMenu.type === "node" && canGroupSelection}
                         canUngroup={contextMenu.type === "node" && canUngroupSelection}
+                        onReverseVideoPrompt={() => { if (contextMenuNode) createVideoWorkflow(contextMenuNode, "reverse"); }}
+                        onCreateVideoConfig={() => { if (contextMenuNode) createVideoWorkflow(contextMenuNode, "generate"); }}
                         onClose={() => setContextMenu(null)}
                         onCaptureVideoFrame={(position) => {
                             if (contextMenu.type !== "node") return;

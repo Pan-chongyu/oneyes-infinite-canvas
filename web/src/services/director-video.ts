@@ -1,5 +1,6 @@
 import { processNativeVideo } from "./creator-media";
 
+export const DEFAULT_VIDEO_FRAME_COUNT = 6;
 export type DirectorVideoFrames = {duration:number;width:number;height:number;frames:{time:number;blob:Blob}[]};
 export async function sampleDirectorVideo(blob: Blob, count: number, signal: AbortSignal, progress: (text:string)=>void): Promise<DirectorVideoFrames> {
     signal.throwIfAborted();

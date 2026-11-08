@@ -14,11 +14,13 @@ type CanvasTextSettingsPopoverProps = {
     onConfigChange: (key: "reasoningEffort", value: ReasoningEffort) => void;
     count?: number;
     onCountChange?: (count: number) => void;
+    videoFrameCount?: number;
+    onVideoFrameCountChange?: (count: number) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
-export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCountChange, buttonClassName, placement = "topLeft" }: CanvasTextSettingsPopoverProps) {
+export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCountChange, videoFrameCount, onVideoFrameCountChange, buttonClassName, placement = "topLeft" }: CanvasTextSettingsPopoverProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
@@ -45,7 +47,7 @@ export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCou
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <TextSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} count={count} onConfigChange={onConfigChange} onCountChange={onCountChange} /> : null;
+    const panel = open && buttonRect ? <TextSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} count={count} onConfigChange={onConfigChange} onCountChange={onCountChange} videoFrameCount={videoFrameCount} onVideoFrameCountChange={onVideoFrameCountChange} /> : null;
 
     return (
         <>
@@ -59,7 +61,7 @@ export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCou
     );
 }
 
-function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, count, onConfigChange, onCountChange }: {
+function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, count, onConfigChange, onCountChange, videoFrameCount, onVideoFrameCountChange }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasTextSettingsPopoverProps["placement"];
@@ -68,6 +70,8 @@ function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, co
     count?: number;
     onConfigChange: CanvasTextSettingsPopoverProps["onConfigChange"];
     onCountChange?: (count: number) => void;
+    videoFrameCount?: number;
+    onVideoFrameCountChange?: (count: number) => void;
 }) {
     const { t } = useTranslation();
     const width = 356;
@@ -97,6 +101,15 @@ function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, co
                 <div className="mt-4 space-y-2.5">
                     <div className="text-sm font-medium" style={{ color: theme.node.muted }}>{t("settingsPanels.text.count")}</div>
                     <InputNumber className="w-full" min={1} max={15} precision={0} value={count} onChange={(value) => onCountChange(value || 1)} />
+                </div>
+            ) : null}
+            {onVideoFrameCountChange ? (
+                <div className="mt-4 space-y-2.5">
+                    <label className="flex items-center justify-between gap-3 text-sm" style={{ color: theme.node.muted }}>
+                        {t("canvas.videoWorkflow.frameCount")}
+                        <InputNumber aria-label={t("canvas.videoWorkflow.frameCount")} min={1} precision={0} value={videoFrameCount} onChange={value => { if (value !== null && Number.isSafeInteger(value) && value > 0) onVideoFrameCountChange(value); }} />
+                    </label>
+                    <p className="mb-0 text-xs leading-relaxed" style={{ color: theme.node.muted }}>{t("canvas.videoWorkflow.sampleHint")}</p>
                 </div>
             ) : null}
         </div>,

@@ -13,6 +13,7 @@ import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { VideoReferenceSummary } from "@/lib/video-capabilities";
+import { DEFAULT_VIDEO_FRAME_COUNT } from "@/services/director-video";
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
@@ -109,7 +110,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInpu
                 ) : mode === "audio" ? (
                     <CanvasAudioSettingsPopover config={config} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                 ) : (
-                    <CanvasTextSettingsPopover config={config} count={node.metadata?.textCount || 1} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })} onCountChange={(textCount) => onConfigChange(node.id, { textCount })} />
+                    <CanvasTextSettingsPopover config={config} count={node.metadata?.textCount || 1} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })} onCountChange={(textCount) => onConfigChange(node.id, { textCount })} videoFrameCount={node.metadata?.videoFrameCount ?? DEFAULT_VIDEO_FRAME_COUNT} onVideoFrameCountChange={inputSummary.videoCount ? videoFrameCount => onConfigChange(node.id, { videoFrameCount }) : undefined} />
                 )}
             </div>
 
@@ -126,7 +127,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInpu
                         <>
                             <LoaderCircle className="size-4 animate-spin" />
                             <Square className="size-3.5 fill-current" />
-                            <span>{t("canvas.configNode.stop")}</span>
+                            <span className="truncate" title={node.metadata?.loadingMessage}>{node.metadata?.loadingMessage || t("canvas.configNode.stop")}</span>
                         </>
                     ) : (
                         <>

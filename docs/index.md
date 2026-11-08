@@ -10,6 +10,7 @@
 
 ## Canvas Guide
 
+- [视频节点：反推提示词与生成配置](VIDEO_WORKFLOW.zh-CN.md)
 - [3D 导演台：布景、调姿、分镜和生图](DIRECTOR.zh-CN.md)
 - [局域网共同创作（仓库说明）](COLLABORATION.zh-CN.md)
 

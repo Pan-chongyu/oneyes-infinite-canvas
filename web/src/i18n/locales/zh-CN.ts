@@ -284,6 +284,17 @@ export default {
             stopTitle: "停止生成？", stopDescription: "当前生成请求会被中断，已经生成完成的内容会保留。", stop: "停止", continue: "继续生成", configConnection: "配置节点之间不能连接", notFound: "未找到当前画布", exporting: "正在导出当前画布…", exported: "已导出当前画布", clipboardText: "剪切板文本", clipboardImageAdded: "已从剪切板添加图片", clipboardTextAdded: "已从剪切板添加文本", noTextToSave: "没有可保存的文本", canvasText: "画布文本", noVideoToSave: "没有可保存的视频", canvasVideo: "画布视频", noImageToSave: "没有可保存的图片", canvasImage: "画布图片", emptyReverse: "图片节点为空，无法反推提示词", reverseTitle: "反推提示词", reverseConfigTitle: "反推提示词配置", splitTitle: "{{name}} {{row}}-{{column}}", splitSuccess: "已切分为 {{count}} 个子节点", maskResult: "局部编辑结果", maskFailed: "局部修改失败", generationFailed: "生成失败", partialFailed: "部分图片生成失败", partialTextFailed: "部分文本生成失败", allFailed: "全部图片生成失败", retryPromptMissing: "找不到提示词，无法重试", referenceMissing: "参考图片已丢失，无法继续重试", emptyTextImage: "文本节点为空，无法生图", untitledCanvas: "未命名画布", superResolve: "AI 超分", notImplemented: "暂未实现", imageDetails: "图片详情", clearTitle: "清空画布？", clear: "清空", clearDescription: "这会删除当前画布上的所有节点和连线。", reversePreset: "请根据参考图片反推一段适合用于 AI 生图的提示词。\n\n要求：\n1. 只输出提示词正文，不要解释。\n2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。\n3. 尽量写成可直接用于生图模型的完整提示词。", maskPrompt: "参考{{source}}为原图，{{mask}}是在原图上用蓝色半透明标注出的待修改区域。请只修改蓝色标注覆盖的区域，其余区域与原图保持完全一致，输出与原图相同尺寸的完整图片，并且结果中不要保留任何蓝色标注。修改要求：{{prompt}}", maskNodeTitle: "遮罩标注", editTextPrompt: "请根据要求修改以下文本。\n\n原文：\n{{source}}\n\n修改要求：\n{{prompt}}"
         },
         reverseComposer: "参考图片：@[node:{{imageId}}]\n任务说明：@[node:{{textId}}]",
+        videoWorkflow: {
+            resultTitle: "视频反推提示词",
+            missingVideo: "反推所用的视频已移除或断开，请重新连接原视频后生成",
+            reverse: "创建反推提示词", generate: "创建生成配置", generateHint: "复制视频提示词、模型、参数和原参考素材，手动开始新的视频生成",
+            empty: "视频节点为空，请先上传或生成视频", taskTitle: "视频反推任务", promptTitle: "视频提示词", configTitle: "视频反推配置",
+            preset: "请依据参考视频按时间顺序排列的抽样画面，反推可直接用于 AI 视频生成的中文提示词。\n覆盖主体、场景、构图、画面风格、光线、色彩、镜头运动与可观察到的动作变化。多镜头按时间段组织，保持人物和环境的一致性。\n只输出提示词正文，不解释；不要把未观察到的细节、音轨或推测当作事实，无法确定的运动不要编造。",
+            missingReference: "此视频的原参考素材已不在画布中，请先恢复素材再创建配置", notSampled: "请先提取视频参考帧再调用文本模型",
+            reading: "正在读取参考视频 {{index}}…", analyzing: "正在分析视频画面…", frameCount: "每段视频抽帧", frames: "{{count}} 帧",
+            sampleHint: "按时间顺序抽取原尺寸画面，需选择支持图片的视觉模型；仅在开始生成后发送所选数量的画面，不分析音轨。",
+            frameContext: "视频画面采样说明：下列图片按时间顺序来自各段参考视频，保留原尺寸，仅为抽样画面，不包含音轨。请根据可见证据描述；不能确认的声音、动作或采样间细节不要编造。",
+        },
         editors: {
             reset: "重置", zoomOut: "缩小", zoomIn: "放大", loading: "读取中", unknown: "未知", cancel: "取消",
             angleTitle: "AI 多角度", angleDescription: "左侧只预览方向，结果会基于原图重新生成", horizontal: "左右角度", pitch: "俯仰角度", distance: "镜头距离", lens: "广角镜头", standard: "标准", wide: "广角", aiGenerate: "AI 生成",

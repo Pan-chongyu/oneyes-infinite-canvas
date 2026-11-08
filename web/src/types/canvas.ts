@@ -69,6 +69,8 @@ export type CanvasNodeMetadata = {
     background?: string;
     count?: number;
     textCount?: number;
+    videoFrameCount?: number;
+    videoPromptSourceId?: string;
     texts?: CanvasNodeText[];
     primaryTextId?: string;
     seconds?: string;

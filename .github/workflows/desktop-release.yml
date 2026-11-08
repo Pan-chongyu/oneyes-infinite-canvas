@@ -99,6 +99,7 @@ jobs:
       - run: npm run test:chat
       - run: npm run test:ota-ui
       - run: npm run test:videos
+      - run: npm run test:video-workflow
       - run: npm run test:playback
       - run: npm run test:images
       - run: npm run test:plugins

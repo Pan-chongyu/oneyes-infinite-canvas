@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Trash2, Ungroup, Upload, Video } from "lucide-react";
+import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Sparkles, Trash2, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -34,6 +34,7 @@ type CanvasNodeHoverToolbarProps = {
     onAngle: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
+    onCreateVideoConfig?: (node: CanvasNodeData) => void;
     onRetry: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
@@ -72,6 +73,7 @@ export function CanvasNodeHoverToolbar({
     onAngle,
     onViewImage,
     onReversePrompt,
+    onCreateVideoConfig,
     onRetry,
     onToggleFreeResize,
     onDelete,
@@ -86,6 +88,15 @@ export function CanvasNodeHoverToolbar({
     const { message } = App.useApp();
     const { t } = useTranslation();
     const copyText = useCopyText();
+    const toolbarRef = useRef<HTMLDivElement>(null);
+    const [toolbarWidth, setToolbarWidth] = useState(0);
+    useEffect(() => {
+        const element = toolbarRef.current;
+        if (!element) return;
+        const observer = new ResizeObserver(() => setToolbarWidth(element.getBoundingClientRect().width));
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, [node?.id]);
 
     useEffect(() => {
         try {
@@ -143,6 +154,8 @@ export function CanvasNodeHoverToolbar({
         { id: "delete", title: t("canvas.nodeToolbar.removeTitle"), label: t("common.delete"), icon: <Trash2 className="size-4" />, onClick: () => onDelete(node), danger: true },
     ];
     const nodeToolbarTools: ToolbarTool[] = [
+        ...(hasVideo ? [{ id: "reverseVideoPrompt", title: t("canvas.videoWorkflow.reverse"), label: t("canvas.imageTools.reversePrompt"), icon: <Sparkles className="size-4" />, onClick: () => onReversePrompt(node) }] : []),
+        ...(hasVideo && onCreateVideoConfig ? [{ id: "videoConfig", title: t("canvas.videoWorkflow.generateHint"), label: t("canvas.configNode.title"), icon: <Settings2 className="size-4" />, onClick: () => onCreateVideoConfig(node) }] : []),
         ...(canQueryVideoTask ? [{ id: "queryVideoTask", title: t("canvas.nodeToolbar.queryVideoTaskTitle"), label: t("canvas.nodeToolbar.queryVideoTask"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(canRetry ? [{ id: "retry", title: t("canvas.nodeToolbar.retryTitle"), label: t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
@@ -185,9 +198,10 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
-                className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                ref={toolbarRef}
+                className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-x-auto overflow-y-hidden rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
                 data-node-toolbar={node.id}
-                style={{ left, top }}
+                style={{ left: `clamp(${toolbarWidth / 2 + 12}px, ${left}px, calc(100% - ${toolbarWidth / 2 + 12}px))`, top, maxWidth: "calc(100% - 24px)" }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
                     if (!imageToolSettingsOpen) onLeave();
@@ -292,7 +306,7 @@ function ToolbarAction({ title, label, icon, onClick, showLabel, active = false,
     const hasText = showLabel && Boolean(label);
     return (
         <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff" styles={{ root: { color: "#242529", boxShadow: "0 8px 24px rgba(15,23,42,.16)", fontSize: 13, fontWeight: 500 } }}>
-            <button type="button" className={`group relative flex h-12 items-center whitespace-nowrap px-1.5 ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title}>
+            <button type="button" className={`group relative flex h-full shrink-0 items-center whitespace-nowrap px-1.5 ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title}>
                 <span className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[#f0f0f1] ${active ? "bg-[#eeeeef]" : ""}`}>
                     {icon}
                     {hasText ? <span>{label}</span> : null}
