@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { shotScene } from "@/lib/canvas/director-sequence";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -20,7 +21,7 @@ function disposeObject(root: THREE.Object3D) {
 function mannequin(material: THREE.Material, object: DirectorObject) {
     const group = new THREE.Group();
     const pose = object.pose;
-    const joint = (parent: THREE.Group, name: DirectorJoint, position: DirectorVector) => { const pivot = new THREE.Group(); pivot.position.fromArray(position); pivot.rotation.set(...(object.joints?.[name] || [0, 0, 0]).map(THREE.MathUtils.degToRad) as DirectorVector); parent.add(pivot); return pivot; };
+    const joint = (parent: THREE.Group, name: DirectorJoint, position: DirectorVector) => { const pivot = new THREE.Group(); pivot.position.fromArray(position); pivot.userData.directorJoint = name; pivot.rotation.set(...(object.joints?.[name] || [0, 0, 0]).map(THREE.MathUtils.degToRad) as DirectorVector); parent.add(pivot); return pivot; };
     const part = (parent: THREE.Group, geometry: THREE.BufferGeometry, position: DirectorVector) => { const mesh = new THREE.Mesh(geometry, material); mesh.position.fromArray(position); parent.add(mesh); return mesh; };
     const bone = (parent: THREE.Group, name: DirectorJoint, a: DirectorVector, b: DirectorVector, radius: number) => {
         const from = new THREE.Vector3(...a), to = new THREE.Vector3(...b), direction = to.clone().sub(from);
@@ -82,6 +83,8 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     const transform = new TransformControls(shot, surface); helpers.add(transform.getHelper());
     const cameraHelper = new THREE.CameraHelper(shot); helpers.add(cameraHelper);
     const selection = new THREE.Box3Helper(new THREE.Box3(), 0xd5a454); helpers.add(selection); selection.visible = false;
+    const paths = new THREE.Group(); helpers.add(paths);
+    let pathShots: DirectorScene["shots"];
     const grid = new THREE.GridHelper(100, 100, "#8c8881", "#b0aba2"); helpers.add(grid);
     const ambient = new THREE.HemisphereLight("#ffffff", "#6b6260", 2), key = new THREE.DirectionalLight("#ffffff", 3); scene.add(ambient, key);
     const fill = new THREE.DirectionalLight("#dce8ff", 0), rim = new THREE.DirectionalLight("#ffffff", 0); fill.position.set(7, 4, 3); rim.position.set(-3, 5, -7); scene.add(fill, rim);
@@ -91,14 +94,15 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
     const editorTarget = new THREE.Vector3(0, 0.95, 0);
     let state = initial, objects = new Map<string, THREE.Group>(), selected: string | null = null, mode: "camera" | "scene" = "camera", disposed = false, pending = 0, syncing = false, capturing = false;
-    let width = 1, height = 1, pointerStart: [number, number] | null = null;
+    let width = 1, height = 1, pointerStart: [number, number] | null = null, interactive = true;
     const liveCamera = () => mode === "camera" ? shot : editor;
     const viewRect = () => { const ratio = state.width / state.height; return width / height > ratio ? { x: (width - height * ratio) / 2, y: 0, width: height * ratio, height } : { x: 0, y: (height - width / ratio) / 2, width, height: width / ratio }; };
     function draw() {
         if (disposed || capturing || renderer.getContext().isContextLost()) return;
         renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height); renderer.clear();
         cameraHelper.visible = mode === "scene"; grid.visible = state.grid;
-        selection.visible = !!selected && objects.get(selected)?.visible === true;
+        paths.visible = mode === "scene" && state.motionPaths !== false;
+        selection.visible = interactive && !!selected && objects.get(selected)?.visible === true;
         if (selection.visible) selection.box.setFromObject(objects.get(selected!)!);
         const rect = mode === "camera" ? viewRect() : { x: 0, y: 0, width, height };
         Object.assign(surface.style, { left: `${rect.x}px`, top: `${height - rect.y - rect.height}px`, width: `${rect.width}px`, height: `${rect.height}px` });
@@ -112,14 +116,14 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         renderer.setScissorTest(false);
     }
     const render = () => { if (!pending && !disposed) pending = requestAnimationFrame(() => { pending = 0; draw(); }); };
-    const commitCamera = () => { if (syncing) return; if (mode === "camera") callbacks.camera({ position: shot.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens }); else editorTarget.copy(controls.target); };
+    const commitCamera = () => { if (syncing || !interactive) return; if (mode === "camera") callbacks.camera({ ...state.camera, position: shot.position.toArray(), target: controls.target.toArray() }); else editorTarget.copy(controls.target); };
     controls.addEventListener("change", render); controls.addEventListener("end", commitCamera);
     transform.addEventListener("dragging-changed", event => { controls.enabled = !event.value; });
     transform.addEventListener("change", render);
     transform.addEventListener("mouseUp", () => {
         const object = transform.object;
         const saved = state.objects.find(item => item.id === selected);
-        if (object && selected && saved && !saved.locked) {
+        if (interactive && object && selected && saved && !saved.locked) {
             // Scene scales are positive. Reject a collapsed or mirrored gizmo
             // edit instead of persisting invalid geometry or changing its size.
             if (object.scale.toArray().some(value => value <= 0)) object.scale.fromArray(saved.scale);
@@ -128,7 +132,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     });
     const down = (event: PointerEvent) => { pointerStart = event.button === 0 ? [event.clientX, event.clientY] : null; };
     const up = (event: PointerEvent) => {
-        if (event.button !== 0 || !pointerStart || Math.hypot(event.clientX - pointerStart[0], event.clientY - pointerStart[1]) > 4 || transform.axis) return;
+        if (!interactive || event.button !== 0 || !pointerStart || Math.hypot(event.clientX - pointerStart[0], event.clientY - pointerStart[1]) > 4 || transform.axis) return;
         const bounds = renderer.domElement.getBoundingClientRect(), x = event.clientX - bounds.left, y = bounds.height - (event.clientY - bounds.top);
         if (mode === "scene") { const w = Math.min(width * 0.32, 260, height * 0.32 * shot.aspect); if (x >= width - w - 12 && x <= width - 12 && y >= 12 && y <= 12 + w / shot.aspect) return; }
         const rect = mode === "camera" ? viewRect() : { x: 0, y: 0, width, height };
@@ -145,26 +149,40 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         state = next; selected = selection; syncing = true;
         try {
             const attached = transform.object?.userData.directorId;
-            const shape = (item: DirectorObject) => JSON.stringify([item.kind, item.pose, item.joints]);
+            const shape = (item: DirectorObject) => `${item.kind}:${item.pose}`;
             for (const [id, object] of objects) if (!next.objects.some(item => item.id === id && shape(item) === object.userData.shape)) { if (attached === id) transform.detach(); subjects.remove(object); disposeObject(object); objects.delete(id); }
             for (const item of next.objects) {
                 let object = objects.get(item.id);
                 if (!object) { object = buildObject(item); object.userData.shape = shape(item); objects.set(item.id, object); subjects.add(object); }
                 object.position.fromArray(item.position); object.rotation.set(...item.rotation.map(THREE.MathUtils.degToRad) as DirectorVector); object.scale.fromArray(item.scale); object.visible = item.visible !== false;
-                object.traverse(child => { if (child instanceof THREE.Mesh) { const material = child.material as THREE.MeshStandardMaterial; material.color.set(item.color); material.roughness = item.roughness ?? 0.72; material.metalness = item.metalness ?? 0; } });
+                object.traverse(child => {
+                    if (child.userData.directorJoint) child.rotation.set(...(item.joints?.[child.userData.directorJoint as DirectorJoint] || [0, 0, 0]).map(THREE.MathUtils.degToRad) as DirectorVector);
+                    if (child instanceof THREE.Mesh) { const material = child.material as THREE.MeshStandardMaterial; material.color.set(item.color); material.roughness = item.roughness ?? 0.72; material.metalness = item.metalness ?? 0; }
+                });
             }
             const target = selected && objects.get(selected), editable = next.objects.find(item => item.id === selected);
-            if (target && editable?.visible !== false && !editable?.locked) { if (transform.object !== target) transform.attach(target); } else transform.detach();
+            if (interactive && target && editable?.visible !== false && !editable?.locked) { if (transform.object !== target) transform.attach(target); } else transform.detach();
             shot.aspect = next.width / next.height; shot.setFocalLength(next.camera.lens); shot.position.fromArray(next.camera.position); shot.lookAt(new THREE.Vector3(...next.camera.target)); shot.updateProjectionMatrix();
             editor.fov = shot.fov; editor.updateProjectionMatrix();
             if (mode === "camera") { controls.target.fromArray(next.camera.target); controls.update(); }
+            shot.rotateZ(THREE.MathUtils.degToRad(next.camera.roll ?? 0));
             const azimuth = THREE.MathUtils.degToRad(next.light.azimuth), elevation = THREE.MathUtils.degToRad(next.light.elevation);
             key.position.set(Math.sin(azimuth) * Math.cos(elevation) * 10, Math.sin(elevation) * 10, Math.cos(azimuth) * Math.cos(elevation) * 10); key.intensity = next.light.intensity;
             key.color.set(next.light.color || "#ffffff"); key.castShadow = next.light.shadows !== false; ambient.intensity = next.light.ambient ?? 2; fill.intensity = next.light.fill ?? 0; rim.intensity = next.light.rim ?? 0; floor.visible = next.floorVisible !== false;
             scene.background = new THREE.Color(next.background); floor.material.color.set(next.floor); cameraHelper.update(); render();
+            if (pathShots !== next.shots) {
+                pathShots = next.shots; disposeObject(paths); paths.clear();
+                for (const saved of next.shots || []) {
+                    const times = [0,...(saved.keyframes || []).slice().sort((a,b)=>a.time-b.time).map(key=>key.time)];
+                    const samples = times.flatMap((time,index) => index === times.length-1 ? [time] : Array.from({length:8},(_,i)=>time+(times[index+1]-time)*i/8));
+                    const positions = samples.map(time=>shotScene(next,saved,time).camera.position);
+                    if (positions.length > 1) paths.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(positions.map(position=>new THREE.Vector3(...position))),new THREE.LineBasicMaterial({color:0xd5a454})));
+                }
+            }
             guide.replaceChildren();
             const divisions = next.guide === "thirds" ? [1 / 3, 2 / 3] : next.guide === "center" ? [0.5] : [];
             for (const fraction of divisions) for (const vertical of [true, false]) { const line = document.createElement("div"); line.style.cssText = vertical ? `position:absolute;left:${fraction * 100}%;top:0;height:100%;border-left:1px solid rgba(255,255,255,.6);box-shadow:1px 0 rgba(0,0,0,.25)` : `position:absolute;top:${fraction * 100}%;left:0;width:100%;border-top:1px solid rgba(255,255,255,.6);box-shadow:0 1px rgba(0,0,0,.25)`; guide.appendChild(line); }
+            if (next.safeFrame) for (const margin of [5,10]) { const box=document.createElement("div");box.style.cssText=`position:absolute;inset:${margin}%;border:1px dashed rgba(255,255,255,.65)`;box.title=margin===5?"90% 动作安全区":"80% 标题安全区";guide.appendChild(box); }
         } finally { syncing = false; }
     }
     function frame(direction?: THREE.Vector3, id?: string | null) {
@@ -180,12 +198,14 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     update(initial, null);
     return {
         update,
-        mode(value: "camera" | "scene") { if (mode === "scene") editorTarget.copy(controls.target); mode = value; controls.object = liveCamera(); transform.camera = liveCamera(); syncing = true; controls.target.copy(mode === "camera" ? new THREE.Vector3(...state.camera.target) : editorTarget); controls.update(); syncing = false; render(); },
+        interactive(value: boolean) { if (interactive === value) return; interactive = value; controls.enabled = value && !capturing; transform.enabled = value && !capturing; update(state, selected); },
+        mode(value: "camera" | "scene") { if (mode === "scene") editorTarget.copy(controls.target); mode = value; controls.object = liveCamera(); transform.camera = liveCamera(); syncing = true; controls.target.copy(mode === "camera" ? new THREE.Vector3(...state.camera.target) : editorTarget); controls.update(); syncing = false; update(state,selected); },
         transform(value: "translate" | "rotate" | "scale") { transform.setMode(value); render(); },
         focus(id?: string | null) { frame(undefined, id); },
         view(value: "front" | "back" | "left" | "right" | "top" | "perspective") { const axes = { front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0], top: [0, 1, 0.001], perspective: [1, 0.6, 1] }; frame(new THREE.Vector3(...axes[value]).normalize(), selected); },
         ground(id: string) { const object = objects.get(id); if (!object || state.objects.find(item => item.id === id)?.locked) return; const bounds = new THREE.Box3().setFromObject(object); callbacks.object(id, { position: [object.position.x, object.position.y - bounds.min.y, object.position.z] }); },
-        adoptView() { callbacks.camera({ position: editor.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens }); },
+        adoptView() { callbacks.camera({ position: editor.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens, roll: 0 }); },
+        aim(id: string) { const object = objects.get(id); if (!object?.visible || !interactive) return; const target = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3()); if (target.distanceTo(shot.position) > 0) callbacks.camera({ ...state.camera, target: target.toArray() }); },
         async capture(output: DirectorOutput='color',maskId?:string) {
             if (disposed || capturing || renderer.getContext().isContextLost()) throw new Error("三维渲染尚未就绪，请重新打开导演台");
             const context = renderer.getContext(), maxSize = Math.min(context.getParameter(context.MAX_TEXTURE_SIZE), context.getParameter(context.MAX_RENDERBUFFER_SIZE));
@@ -221,7 +241,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
                 const blob = await new Promise<Blob>((resolve, reject) => renderer.domElement.toBlob(blob => blob ? resolve(blob) : reject(new Error("取景图导出失败，请重试")), "image/png"));
                 if (disposed || context.isContextLost()) throw new Error("导出已中断，场景设置保持不变");
                 return blob;
-            } finally {scene.background=background;floor.visible=floorVisible;scene.overrideMaterial=override;renderer.toneMapping=tone;materials.forEach((material,mesh)=>{mesh.material=material;});if(composer){composer.passes.forEach(pass=>pass.dispose());composer.dispose();}temporary.forEach(material=>material.dispose()); capturing = false; helpers.visible = true; controls.enabled = true; transform.enabled = true; if (!disposed) { renderer.setSize(width, height, false); render(); } }
+            } finally {scene.background=background;floor.visible=floorVisible;scene.overrideMaterial=override;renderer.toneMapping=tone;materials.forEach((material,mesh)=>{mesh.material=material;});if(composer){composer.passes.forEach(pass=>pass.dispose());composer.dispose();}temporary.forEach(material=>material.dispose()); capturing = false; helpers.visible = true; controls.enabled = interactive; transform.enabled = interactive; if (!disposed) { renderer.setSize(width, height, false); render(); } }
         },
         dispose() { disposed = true; cancelAnimationFrame(pending); resize.disconnect(); controls.dispose(); transform.dispose(); surface.removeEventListener("pointerdown", down); surface.removeEventListener("pointerup", up); surface.remove(); renderer.domElement.removeEventListener("webglcontextlost", contextLost); disposeObject(scene); key.shadow.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); objects.clear(); },
     };

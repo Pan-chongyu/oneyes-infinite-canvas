@@ -4,6 +4,7 @@ const { writeFile, readFile } = require('node:fs/promises');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { route } = require('../../desktop/protocol.cjs');
+const { unzipSync } = require('node:module').createRequire(require.resolve('../../web/package.json'))('fflate');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 if(process.env.CANVAS_DIRECTOR_TEST_PROFILE)app.setPath('userData',process.env.CANVAS_DIRECTOR_TEST_PROFILE);
@@ -12,8 +13,8 @@ app.whenReady().then(async()=>{
  const win=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}}),js=code=>win.webContents.executeJavaScript(code).catch(error=>{throw new Error(error.message+' Fixture: '+code);});
  const screenshot=async(name)=>{if(!process.env.CANVAS_DIRECTOR_SCREENSHOT)return;win.showInactive();await js('Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{}))).then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');await new Promise(resolve=>setTimeout(resolve,500));await writeFile(join(tmpdir(),name),(await win.capturePage()).toPNG());win.hide();};
  const external=[];win.webContents.session.webRequest.onBeforeRequest((details,callback)=>{const blocked=/^https?:/.test(details.url);if(blocked)external.push(details.url);callback({cancel:blocked});});
- let exportedFile;
- win.webContents.session.on('will-download',(_event,item)=>{item.setSavePath(join(process.env.CANVAS_DIRECTOR_TEST_PROFILE,'director-scene.json'));item.once('done',(_event,state)=>{exportedFile=state==='completed'?item.getSavePath():state;});});
+ let exportedFile,downloads=0;
+ win.webContents.session.on('will-download',(_event,item)=>{item.setSavePath(join(process.env.CANVAS_DIRECTOR_TEST_PROFILE,item.getFilename()));item.once('done',(_event,state)=>{exportedFile=state==='completed'?item.getSavePath():state;downloads++;});});
  const wait=async(code)=>{const until=Date.now()+20000;while(!await js(code)){if(Date.now()>until)throw Error('Timed out: '+code);await new Promise(resolve=>setTimeout(resolve,25));}};
  const click=async(text)=>{await js(`Array.from(document.querySelectorAll('button')).find(item=>item.textContent.trim()===${JSON.stringify(text)}||item.getAttribute('aria-label')===${JSON.stringify(text)}).click()`);};
  const settings=async(value)=>{const label={object:'物体',camera:'镜头',light:'环境'}[value];await js(`Array.from(document.querySelectorAll('aside[aria-label="导演台设置"] .ant-segmented-item')).find(item=>item.textContent.trim()===${JSON.stringify(label)}).click()`);await wait(`document.querySelector('aside[aria-label="导演台设置"] .ant-segmented-item-selected')?.textContent.trim()===${JSON.stringify(label)}`);};
@@ -94,6 +95,36 @@ app.whenReady().then(async()=>{
   await click('机位前移');await wait(`directorTest.state().nodes[0].metadata.directorScene.shots[${original.shots.length}].id===${JSON.stringify(copy.id)}`);await click('撤销');await click('撤销');await click('撤销');
   assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),original);
  };
+ const verifyTimeline=async()=>{
+  await click('选择分镜 1');
+  const original=await js('directorTest.state().nodes[0].metadata.directorScene');
+  const input=async(label,value)=>js(`(()=>{const field=document.querySelector('input[aria-label=${JSON.stringify(label)}]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,${JSON.stringify(String(value))});field.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await input('分镜时长',0.5);await wait('directorTest.state().nodes[0].metadata.directorScene.shots[0].duration===0.5');
+  await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
+  await click('记录当前场景为末帧');await wait('directorTest.state().nodes[0].metadata.directorScene.shots[0].keyframes?.length===1');
+  const before=await js('directorTest.state().nodes[0].metadata.directorScene');assert.equal(before.shots[0].camera.lens,original.shots[0].camera.lens);assert.equal(before.shots[0].keyframes[0].frame.camera.lens,85);
+  await click('预演此镜');await wait('document.querySelector("[data-director-time]")?.textContent.startsWith("0.50") && document.body.textContent.includes("预演已暂停")');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),before,'preview must never overwrite persisted scene');
+  assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").disabled'),true);
+  await click('编辑此帧');await wait('!document.querySelector("input[aria-label=镜头焦距]").disabled');await click('35 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===35');
+  await js('Array.from(document.querySelectorAll("summary")).find(item=>item.textContent==="镜头内容、台词与关键帧管理").click()');
+  await click('记录当前场景为关键帧');await wait('directorTest.state().nodes[0].metadata.directorScene.shots[0].keyframes[0].frame.camera.lens===35');
+  const keys=await js('directorTest.state().nodes[0].metadata.directorScene.shots[0].keyframes');assert.equal(keys.length,1);assert.equal(keys[0].id,before.shots[0].keyframes[0].id,'editing a frame replaces its key, preserving identity');
+  await js('Array.from(document.querySelectorAll("summary")).find(item=>item.textContent==="创作描述与分镜交付").click()');await input('序列帧率',4);await wait('document.querySelector("input[aria-label=序列帧率]").value==="4"');
+  const previous=downloads;await click('导出 PNG 序列');await wait('document.querySelector("input[aria-label=序列帧率]").disabled');
+  const until=Date.now()+20000;while(downloads===previous){if(Date.now()>until)throw Error('PNG sequence did not download');await new Promise(resolve=>setTimeout(resolve,25));}
+  const archive=unzipSync(new Uint8Array(await readFile(exportedFile))),images=Object.entries(archive).filter(([name])=>name.endsWith('.png'));
+  assert.equal(images.length,2);assert.notDeepEqual(images[0][1],images[1][1]);for(const [,bytes] of images){const png=Buffer.from(bytes);assert.equal(png.readUInt32BE(16),321);assert.equal(png.readUInt32BE(20),197);}
+  assert.ok(archive['storyboard.html']&&archive['shotlist.csv']&&archive['scene.json']);
+  await wait('!document.querySelector("input[aria-label=序列帧率]").disabled');await input('序列帧率',24);const complete=downloads;
+  await click('导出 PNG 序列');await wait('Array.from(document.querySelectorAll("button")).some(item=>item.textContent==="取消导出")');await click('取消导出');await wait('document.body.textContent.includes("导出已取消")');assert.equal(downloads,complete,'cancelled render must not download a partial archive');
+  await js('Array.from(document.querySelectorAll("summary")).find(item=>item.textContent==="创作描述与分镜交付").click()');
+  await js('Array.from(document.querySelectorAll("summary")).find(item=>item.textContent==="镜头内容、台词与关键帧管理").click()');
+  while(await js('JSON.stringify(directorTest.state().nodes[0].metadata.directorScene)')!==JSON.stringify(original)){
+   assert.equal(await js('document.querySelector("button[aria-label=撤销]").disabled'),false,'all timeline edits must be undoable');
+   const state=await js('JSON.stringify(directorTest.state().nodes[0].metadata.directorScene)');await click('撤销');await wait(`JSON.stringify(directorTest.state().nodes[0].metadata.directorScene)!==${JSON.stringify(state)}`);
+  }
+ };
  try{
   await win.loadURL(process.argv[2]);await wait('window.directorTest && document.querySelector("button")');
   const webgl=await js('(()=>{const gl=document.createElement("canvas").getContext("webgl2");if(gl)gl.getExtension("WEBGL_lose_context")?.loseContext();return Boolean(gl);})()');
@@ -115,16 +146,18 @@ app.whenReady().then(async()=>{
   }
   if(process.env.CANVAS_DIRECTOR_TEST_PHASE==='restore'){
    const state=await js('directorTest.state()');assert.equal(state.nodes.find(n=>n.id==='director').metadata.directorScene.camera.lens,85);assert.equal(state.nodes.filter(n=>n.type==='image').length,2);
+   assert.equal(state.nodes[0].metadata.directorScene.shots[0].keyframes.length,1);assert.deepEqual(await js('directorTest.savedMotion()'),[50,67.5,85],'independent stage and animation keys must survive a native process restart');
    const image=await js('directorTest.image()');assert.equal(image.width,321);assert.equal(image.height,197);assert.ok(image.colors>30);
    await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas")');await settings('camera');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');assert.equal(state.nodes[0].metadata.directorScene.shots.length,1);await verifyDismissal();
    await verifyEditing();assert.equal(await js('directorTest.state().nodes[0].metadata.directorScene.shots.length'),2,'adding a shot after restart preserves the saved shot');
    await js('directorTest.switch()');await wait('!document.querySelector("[data-director-editor]")');assert.equal((await js('directorTest.state()')).projectId,'B');
-   console.log('DIRECTOR_RESTART_OK: scene/lens, original PNG storage, project isolation');
+   console.log('DIRECTOR_RESTART_OK: scene/lens, independent stage snapshots and animated keyframes, original PNG storage, project isolation');
   }else{
    assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});
    const runtime=await js('directorTest.runtime()');assert.deepEqual(runtime.sizes,[[317,191],[317,191]]);assert.equal(runtime.differs,true);assert.equal(runtime.portraitControls,true);assert.equal(runtime.cleanExport,true,'guides and selection must not leak into PNG');assert.equal(runtime.visibility,true);assert.ok(Math.abs(runtime.grounded)<0.01,'ground uses actual geometry bounds');assert.equal(runtime.lock,true);assert.equal(runtime.focused,true);assert.match(runtime.reason,/不会自动降低分辨率/);
    await js('directorTest.configure()');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas") && !Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出取景图").disabled');
-   await verifyEditing();await verifySceneExchange();
+   await verifyEditing();await verifySceneExchange();await verifyTimeline();
+   const sequence=await js('directorTest.sequence()');assert.equal(sequence.progress,4);assert.deepEqual(sequence.sizes,[[317,191],[317,191],[193,311],[193,311]]);
    await click('输出取景图');await wait('directorTest.state().nodes.filter(n=>n.type==="image").length===1 && document.body.textContent.includes("已保存到画布")');
    await screenshot('oneyes-director-light.png');
    const first=await js('directorTest.image()');assert.equal(first.width,321);assert.equal(first.height,197);assert.ok(first.colors>30);
@@ -134,11 +167,14 @@ app.whenReady().then(async()=>{
    await js('directorTest.theme(true)');await wait('document.documentElement.classList.contains("dark")');
    await screenshot('oneyes-director-dark.png');
    await verifyDismissal();
+   await click('记录当前场景为末帧');await wait('directorTest.state().nodes[0].metadata.directorScene.shots[0].keyframes?.length===1');
    await js('directorTest.save()');
    await click('创建生图工作流');await wait('directorTest.state().nodes.filter(n=>n.type==="text").length===1 && document.body.textContent.includes("已保存到画布")');
    const workflow=await js('directorTest.state()'),text=workflow.nodes.find(node=>node.type==='text'),target=workflow.nodes.find(node=>node.title==='导演台 · 待生成');
    assert.equal(target.metadata.status,'idle');assert.equal(target.metadata.generationType,'edit');assert.match(text.metadata.content,/保持人物位置/);assert.equal(workflow.connections.filter(edge=>edge.toNodeId===target.id).length,2);assert.equal(workflow.nodes.filter(node=>node.type==='image').length,4);
-   console.log('DIRECTOR_3D_OK: real scaled canvas, native close/Esc/Space/mask input without portal capture or drag, scene retained, WebGL, precise PNG, cleanup, light/dark, linked results');
+   await js('Array.from(document.querySelectorAll("summary")).find(item=>item.textContent==="创作描述与分镜交付").click()');await click('创建视频工作流');await wait('directorTest.state().nodes.some(node=>node.title==="导演台 · 待生成视频")');
+   const video=await js('directorTest.state().nodes.find(node=>node.title==="导演台 · 待生成视频")');assert.equal(video.type,'video');assert.equal(video.metadata.status,'idle');assert.equal(video.metadata.seconds,'5');assert.equal(video.metadata.references.length,1);assert.match(video.metadata.prompt,/0s：相机/);
+   console.log('DIRECTOR_3D_OK: real timeline preview without persistence, frame editing/undo, native ZIP sequence download/cancel, WebGL motion pixels and exact sizes, camera roll retention, native dismissal, light/dark, linked image/video workflows');
   }
   assert.deepEqual(external,[],'director must load fully offline');
   app.exit(0);

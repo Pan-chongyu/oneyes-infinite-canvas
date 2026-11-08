@@ -18,8 +18,20 @@ export type DirectorObject = {
     roughness?: number;
     metalness?: number;
 };
-export type DirectorCamera = { position: DirectorVector; target: DirectorVector; lens: number };
-export type DirectorShot = { id: string; name: string; camera: DirectorCamera; width: number; height: number; note?: string };
+export type DirectorCamera = { position: DirectorVector; target: DirectorVector; lens: number; roll?: number };
+export type DirectorStage = Pick<DirectorScene, "objects" | "light" | "background" | "floor" | "floorVisible">;
+export type DirectorFrame = DirectorStage & { camera: DirectorCamera };
+export type DirectorKeyframe = { id: string; time: number; frame: DirectorFrame };
+export type DirectorShot = {
+    id: string; name: string; camera: DirectorCamera; width: number; height: number; note?: string;
+    stage?: DirectorStage;
+    duration?: number;
+    easing?: "linear" | "smooth" | "hold";
+    cameraPath?: "linear" | "orbit";
+    keyframes?: DirectorKeyframe[];
+    dialogue?: string;
+    sound?: string;
+};
 export type DirectorScene = {
     schema: 1;
     objects: DirectorObject[];
@@ -34,4 +46,6 @@ export type DirectorScene = {
     shots?: DirectorShot[];
     floorVisible?: boolean;
     note?: string;
+    safeFrame?: boolean;
+    motionPaths?: boolean;
 };

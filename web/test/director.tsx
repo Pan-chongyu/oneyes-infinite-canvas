@@ -8,6 +8,9 @@ import '@/styles/globals.css';
 import { directorPlugin } from '@/components/canvas/director-plugin';
 import { createDirectorRuntime } from '@/components/canvas/director-runtime';
 import { directorPreset, readDirectorScene } from '@/lib/canvas/director-scene';
+import { createDirectorShot, recordDirectorFrame, shotScene } from '@/lib/canvas/director-sequence';
+import { exportDirectorBundle } from '@/lib/canvas/director-export';
+import { unzipSync } from 'fflate';
 import { registerBuiltinNodes } from '@/components/canvas/nodes/builtin-nodes';
 import { registerNodeDefinitions } from '@/lib/canvas/node-registry';
 import { applyCanvasAgentOps } from '@/lib/canvas/canvas-agent-ops';
@@ -39,10 +42,29 @@ function Fixture() {
   resetEvents:()=>{events.current={selection:0,drag:0,background:0,context:0,viewport:0};},
   configure:(width=321,height=197)=>flushSync(()=>setNodes(old=>old.map(n=>n.id==='director'?{...n,metadata:{...n.metadata,directorScene:{...directorPreset('dialogue'),width,height}}}:n))),
   save:()=>localForageStorage.setItem('director-fixture',JSON.stringify({nodes,connections})),
+  savedMotion:()=>{const scene=nodes[0].metadata!.directorScene!,shot=scene.shots![0];return [0,2.5,5].map(time=>shotScene(scene,shot,time).camera.lens);},
   image:async(index=0)=>{const image=nodes.filter(n=>n.type==='image')[index];const blob=await getImageBlob(image.metadata!.storageKey!);if(!blob)throw Error('Missing image');const bitmap=await createImageBitmap(blob);const canvas=new OffscreenCanvas(bitmap.width,bitmap.height),ctx=canvas.getContext('2d')!;ctx.drawImage(bitmap,0,0);const pixels=ctx.getImageData(0,0,bitmap.width,bitmap.height).data;const colors=new Set<string>();for(let i=0;i<pixels.length;i+=4)colors.add(pixels.slice(i,i+4).join(','));bitmap.close();return {width:canvas.width,height:canvas.height,bytes:blob.size,colors:colors.size,hash:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))).join(',')};},
   switch:()=>flushSync(()=>{setProject('B');setNodes([{...seed}]);setConnections([]);}),
   remove:()=>flushSync(()=>setNodes(old=>old.filter(n=>n.id!=='director'))),
   theme:(value:boolean)=>flushSync(()=>{setDark(value);useThemeStore.getState().setTheme(value?'dark':'light');}),
+  sequence:async()=>{
+   const container=document.createElement('div');container.style.cssText='position:fixed;width:500px;height:300px';document.body.append(container);
+   const scene=directorPreset();scene.width=317;scene.height=191;
+   const shot=createDirectorShot(scene);shot.duration=0.5;shot.easing='linear';
+   scene.objects[0].position[0]=1;scene.camera.roll=20;scene.camera.lens=35;
+   const moving=recordDirectorFrame(shot,scene,0.5), other=createDirectorShot(scene);other.duration=0.5;other.width=193;other.height=311;scene.shots=[moving,other];
+   const runtime=createDirectorRuntime(container,scene,{camera:()=>{},object:()=>{},select:()=>{},error:message=>{throw Error(message);}});
+   try{
+    runtime.interactive(false);let progress=0;
+    const blob=await exportDirectorBundle(scene,{sequence:true,fps:4,signal:new AbortController().signal,render:async frame=>{runtime.update(frame,null);return runtime.capture();},progress:done=>{progress=done;}});
+    const files=unzipSync(new Uint8Array(await blob.arrayBuffer())),pngs=Object.entries(files).filter(([name])=>name.endsWith('.png'));
+    const sizes=[];for(const [,bytes] of pngs){const image=await createImageBitmap(new Blob([new Uint8Array(bytes)],{type:'image/png'}));sizes.push([image.width,image.height]);image.close();}
+    if(pngs[0][1].toString()===pngs[1][1].toString())throw Error('Actor/camera animation did not change the exported pixels');
+    runtime.update(scene,null);const hash=async()=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await(await runtime.capture()).arrayBuffer()))).join(',');
+    const rolled=await hash();runtime.mode('scene');runtime.mode('camera');if(await hash()!==rolled)throw Error('Camera roll changed after switching viewport modes');runtime.update(scene,null);if(await hash()!==rolled)throw Error('Repeated updates accumulated camera roll');
+    return {sizes,progress,files:Object.keys(files)};
+   }finally{runtime.dispose();container.remove();}
+  },
   runtime:async()=>{
    const container=document.createElement('div');container.style.cssText='position:fixed;left:0;top:0;width:640px;height:400px';document.body.append(container);
    const scene=directorPreset();scene.width=317;scene.height=191;

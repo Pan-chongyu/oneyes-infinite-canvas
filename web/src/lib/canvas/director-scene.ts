@@ -30,10 +30,11 @@ export function readDirectorScene(value: unknown): DirectorScene {
     const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
     const vector = (v: unknown): v is DirectorVector => Array.isArray(v) && v.length === 3 && v.every(finite);
     const color = (v: unknown) => typeof v === "string" && /^#[a-f\d]{6}$/i.test(v);
-    const camera = (v: DirectorCamera) => v && vector(v.position) && vector(v.target) && v.position.some((n, i) => n !== v.target[i]) && finite(v.lens) && v.lens > 0;
+    const camera = (v: DirectorCamera) => v && vector(v.position) && vector(v.target) && v.position.some((n, i) => n !== v.target[i]) && finite(v.lens) && v.lens > 0 && (v.roll === undefined || finite(v.roll));
     const dimensions = (width: number, height: number) => [width, height].every(v => Number.isSafeInteger(v) && v > 0);
     if (!scene || scene.schema !== 1 || !Array.isArray(scene.objects) || !camera(scene.camera) || !scene.light || ![scene.light.azimuth, scene.light.elevation, scene.light.intensity].every(finite) || scene.light.intensity < 0 || !color(scene.background) || !color(scene.floor) || !dimensions(scene.width, scene.height) || typeof scene.grid !== "boolean" || (scene.guide !== undefined && !["none", "thirds", "center"].includes(scene.guide)) || (scene.note !== undefined && typeof scene.note !== "string") || [scene.floorVisible, scene.light.shadows].some(v => v !== undefined && typeof v !== "boolean") || (scene.light.color !== undefined && !color(scene.light.color)) || [scene.light.ambient, scene.light.fill, scene.light.rim].some(v => v !== undefined && (!finite(v) || v < 0))) throw new Error("导演台场景数据无效，请从有效的画布备份恢复；原场景未被覆盖");
     const ids = new Set<string>();
+    if ([scene.safeFrame, scene.motionPaths].some(value => value !== undefined && typeof value !== "boolean")) throw new Error("导演台辅助线设置无效，原场景未被覆盖");
     for (const object of scene.objects) {
         if (!object || typeof object.id !== "string" || !object.id || ids.has(object.id) || typeof object.name !== "string" || !Object.hasOwn(directorNames, object.kind) || !directorPoses.some(pose => pose.value === object.pose) || !vector(object.position) || !vector(object.rotation) || !vector(object.scale) || object.scale.some(v => v <= 0) || !color(object.color) || [object.visible, object.locked].some(v => v !== undefined && typeof v !== "boolean")) throw new Error("导演台物体数据无效，请从有效的画布备份恢复；原场景未被覆盖");
         ids.add(object.id);
@@ -45,6 +46,22 @@ export function readDirectorScene(value: unknown): DirectorScene {
         for (const shot of scene.shots) {
             if (!shot || typeof shot.id !== "string" || !shot.id || shots.has(shot.id) || typeof shot.name !== "string" || (shot.note !== undefined && typeof shot.note !== "string") || !camera(shot.camera) || !dimensions(shot.width, shot.height)) throw new Error("导演台机位数据无效，原场景未被覆盖");
             shots.add(shot.id);
+            if ((shot.duration !== undefined && (!finite(shot.duration) || shot.duration <= 0)) || [shot.dialogue, shot.sound].some(value => value !== undefined && typeof value !== "string") || (shot.easing !== undefined && !["linear", "smooth", "hold"].includes(shot.easing)) || (shot.cameraPath !== undefined && !["linear", "orbit"].includes(shot.cameraPath))) throw new Error("导演台分镜时长、运镜或描述无效，原场景未被覆盖");
+            const validateFrame = (frame: unknown, view: DirectorCamera) => {
+                if (!frame || typeof frame !== "object" || Array.isArray(frame)) throw new Error("导演台分镜快照无效，原场景未被覆盖");
+                const stage = frame as DirectorScene;
+                // Select data fields explicitly; never recurse into nested shot lists from imported JSON.
+                readDirectorScene({ schema: 1, objects: stage.objects, light: stage.light, background: stage.background, floor: stage.floor, floorVisible: stage.floorVisible, camera: view, width: shot.width, height: shot.height, grid: false });
+            };
+            if (shot.stage !== undefined) validateFrame(shot.stage, shot.camera);
+            if (shot.keyframes !== undefined) {
+                if (!Array.isArray(shot.keyframes)) throw new Error("导演台关键帧无效，原场景未被覆盖");
+                const keys = new Set<string>(), times = new Set<number>();
+                for (const key of shot.keyframes) {
+                    if (!key || typeof key.id !== "string" || !key.id || keys.has(key.id) || !finite(key.time) || key.time <= 0 || key.time > (shot.duration ?? 5) || times.has(key.time) || !key.frame || !camera(key.frame.camera)) throw new Error("导演台关键帧时间或镜头无效，原场景未被覆盖");
+                    keys.add(key.id); times.add(key.time); validateFrame(key.frame, key.frame.camera);
+                }
+            }
         }
     }
     return scene;
