@@ -50,6 +50,7 @@ export type CanvasNodeMetadata = {
     smartEdit?: import('./smart-edit').SmartEditSettings;
     studio?: import('./studio').StudioSettings;
     directorScene?: import("./director").DirectorScene;
+    directorAssistant?: import("./director").DirectorAssistantSettings;
     creatorSettings?: import("./creator-tools").CreatorSettings;
     imageTaskId?: string;
     content?: string;

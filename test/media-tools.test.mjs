@@ -55,12 +55,22 @@ test('local video tools preserve dimensions, shot timing, order and audio; rejec
         assert.match((await output(analysis, items.find(item => item.kind === 'text'))).toString(), /镜头 2/);
         await assert.rejects(engine.request(new Request(`oneyes-canvas://app/media-tools/${analysis}/output/unknown`)), /无效媒体输出/);
         await engine.release(analysis);
+        for(const samples of [0,1.5,NaN])await assert.rejects(engine.create('sample',1,{samples}));
+        const sampler=await engine.create('sample',1,{samples:4});await upload(sampler,0,merged);
+        const sampled=await engine.start(sampler), sampledFrames=sampled.filter(item=>item.kind==='image');
+        assert.equal(sampledFrames.length,4);assert.deepEqual(sampledFrames.map(item=>item.time),[0,1,2,3].map(index=>Number(info.format.duration)*index/4));
+        for(const item of sampledFrames){const png=await output(sampler,item);assert.equal(png.readUInt32BE(16),96);assert.equal(png.readUInt32BE(20),64);}
+        assert.notDeepEqual(await output(sampler,sampledFrames[0]),await output(sampler,sampledFrames[3]));
+        assert.deepEqual(JSON.parse((await output(sampler,sampled.find(item=>item.kind==='text'))).toString()),{duration:Number(info.format.duration),width:96,height:64});
+        await engine.release(sampler);
         await run(binary('ffmpeg'), ['-nostdin','-y','-display_rotation:v:0','90','-i',join(dir,'red.mp4'),'-map','0','-c','copy',join(dir,'rotated.mp4')]);
         const rotated = await engine.create('analyze',1,{threshold:0.3,clips:true});
         await upload(rotated,0,await readFile(join(dir,'rotated.mp4')));
         const rotatedItems=await engine.start(rotated), rotatedFrame=await output(rotated,rotatedItems.find(item=>item.kind==='image'));
         assert.equal(rotatedFrame.readUInt32BE(16),64);assert.equal(rotatedFrame.readUInt32BE(20),96);
         await engine.release(rotated);
+        const portraitSampler=await engine.create('sample',1,{samples:2});await upload(portraitSampler,0,await readFile(join(dir,'rotated.mp4')));const portraitSamples=await engine.start(portraitSampler);
+        for(const frame of portraitSamples.filter(item=>item.kind==='image')){const png=await output(portraitSampler,frame);assert.equal(png.readUInt32BE(16),64);assert.equal(png.readUInt32BE(20),96);}await engine.release(portraitSampler);
         const missing = await engine.create('analyze', 1, { threshold: 0.3 });
         await assert.rejects(engine.start(missing), /全部素材/); await engine.release(missing);
         const unsafe = await engine.create('analyze', 1, { threshold: 0.3 });

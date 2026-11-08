@@ -49,3 +49,9 @@ export type DirectorScene = {
     safeFrame?: boolean;
     motionPaths?: boolean;
 };
+export type DirectorVideoPrompt = {
+    summary: string; prompt: string; negativePrompt?: string;
+    shots: {start:number;end:number;description:string;camera:string;action:string;prompt:string}[];
+    uncertainties?: string[];
+};
+export type DirectorAssistantSettings = {mode?: "scene"|"animation"|"video";model?:string;prompt?:string;reverse?:DirectorVideoPrompt;reverseSource?:{name:string;duration:number;times:number[]}};

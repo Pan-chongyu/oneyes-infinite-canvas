@@ -4,7 +4,7 @@ declare global {
         oneYesDesktop?: {
             editor?: { open(key: string): Promise<void> };
             media?: {
-                create(operation: 'analyze' | 'concat' | 'mix' | 'extract' | 'subtitles' | 'editAnalyze' | 'editRender' | 'videoSuperResolution', count: number, options: Record<string, unknown> | undefined): Promise<string>;
+                create(operation: 'analyze' | 'sample' | 'concat' | 'mix' | 'extract' | 'subtitles' | 'editAnalyze' | 'editRender' | 'videoSuperResolution', count: number, options: Record<string, unknown> | undefined): Promise<string>;
                 start(id: string): Promise<{ data?: Array<{ name: string; kind: 'image' | 'video' | 'audio' | 'text'; bytes: number; time?: number }>; error?: string }>;
                 finish(id: string): Promise<{ data?: Array<{ name: string; kind: 'image' | 'video' | 'audio' | 'text'; bytes: number }>; error?: string }>;
                 release(id: string): Promise<void>;

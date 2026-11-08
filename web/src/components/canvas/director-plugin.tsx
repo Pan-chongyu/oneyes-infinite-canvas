@@ -57,12 +57,12 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
             <Button type="text" className="self-start" size="small" icon={<Camera size={14} />} onPointerDown={event => event.stopPropagation()} onClick={start}>打开导演台</Button>
         </div>
         <Modal title="3D 导演台" open={open} width="min(1180px, calc(100vw - 32px))" centered footer={null} destroyOnHidden data-canvas-shortcuts-ignore data-canvas-no-zoom onCancel={() => { controller.current?.abort(); setOpen(false); }} styles={{ body: { paddingTop: 8, maxHeight: "calc(100dvh - 120px)", overflowY: "auto", overscrollBehavior: "contain" } }}>
-            {open && scene && <Suspense fallback={<div className="flex min-h-80 items-center justify-center gap-2 text-sm" role="status"><LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" />正在准备导演台…</div>}><Editor scene={scene} theme={ctx.theme} onChange={change} onCapture={capture} /></Suspense>}
+            {open && scene && <Suspense fallback={<div className="flex min-h-80 items-center justify-center gap-2 text-sm" role="status"><LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" />正在准备导演台…</div>}><Editor scene={scene} ctx={ctx} onChange={change} onCapture={capture} /></Suspense>}
         </Modal>
     </>;
 }
 export const directorPlugin: CanvasPlugin = {
-    id: "director", name: "3D 导演台", version: "1.3.0", description: "独立分镜、多关键帧走位与运镜、连续预演、分镜表与原尺寸序列交付，以及生图／视频工作流。",
+    id: "director", name: "3D 导演台", version: "1.4.0", description: "提示词 AI 调台与动画分镜、视频反推、关键帧预演和原尺寸分镜交付。",
     nodes: [{ type: "director:stage", title: "3D 导演台", icon: <Clapperboard size={18} />, description: "人物与道具布景、相机、灯光及原尺寸取景图", defaultSize: { width: 320, height: 190 }, hidePanel: true, renderOwnStatus: true, Content: DirectorContent,
         toolbar: ctx => [{ id: "director-open", title: "打开 3D 导演台", label: "导演台", icon: <Camera size={14} />, onClick: () => ctx.emit("director:open", ctx.node.id) }],
         onDoubleClick: ctx => { ctx.emit("director:open", ctx.node.id); return true; },

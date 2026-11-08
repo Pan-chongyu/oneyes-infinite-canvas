@@ -63,6 +63,19 @@ function createMediaTools({ directory, binaries, changed = () => {}, onError = (
         const metadata = [];
         for (let index = 0; index < job.count; index++) metadata.push(await probe(job, input(job, index)));
         const results = [];
+        if (job.operation === 'sample') {
+            const meta = metadata[0];
+            for (let index = 0; index < job.options.samples; index++) {
+                job.controller.signal.throwIfAborted();
+                const time = meta.duration * index / job.options.samples, name = `sample-${String(index + 1).padStart(6,'0')}.png`;
+                notify(job, `正在提取参考帧 ${index + 1} / ${job.options.samples}`, index / job.options.samples * 100);
+                await run(job,'ffmpeg',['-nostdin','-y','-ss',String(time),'-i',input(job,0),'-map','0:v:0','-frames:v','1',join(job.path,name)]);
+                results.push({...await output(job,name,'image'),time});
+            }
+            await writeFile(join(job.path,'video-info.json'),JSON.stringify({duration:meta.duration,width:meta.width,height:meta.height}));
+            results.push(await output(job,'video-info.json','text'));
+            return results;
+        }
         const encode = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'aac', '-movflags', '+faststart'];
         const verifyVideo = async (file, source) => {
             const meta = await probe(job, join(job.path, file));
@@ -152,7 +165,8 @@ function createMediaTools({ directory, binaries, changed = () => {}, onError = (
     }
     return {
         async create(operation, count, options = {}) {
-            if (!['analyze', 'concat','extract','mix','subtitles','editAnalyze','editRender','videoSuperResolution'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (['analyze','extract','subtitles','videoSuperResolution'].includes(operation) && count !== 1)) throw new Error('无效的媒体处理任务');
+            if (!['analyze','sample', 'concat','extract','mix','subtitles','editAnalyze','editRender','videoSuperResolution'].includes(operation) || !Number.isSafeInteger(count) || count < 1 || (['analyze','sample','extract','subtitles','videoSuperResolution'].includes(operation) && count !== 1)) throw new Error('无效的媒体处理任务');
+            if (operation === 'sample' && (!Number.isSafeInteger(options.samples) || options.samples < 1)) throw Error('参考帧数量必须为正整数');
             if (operation === 'videoSuperResolution' && ![2, 3].includes(options.scale)) throw Error('请选择 2× 或 3× 视频超采样');
             if (operation.startsWith('edit')) validateSmartEdit(operation, count, options);
             if(operation==='mix'&&(count<2||['volume','originalVolume','fadeIn','fadeOut'].some(key=>!Number.isFinite(options[key])||options[key]<0)))throw Error('请填写有效的混音音量和淡入淡出时间');

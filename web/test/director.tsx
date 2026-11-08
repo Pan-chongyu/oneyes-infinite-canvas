@@ -20,6 +20,8 @@ import { useThemeStore } from '@/stores/use-theme-store';
 import { getImageBlob, deleteStoredImages } from '@/services/image-storage';
 import { localForageStorage } from '@/lib/localforage-storage';
 import { canvasThemes } from '@/lib/canvas-theme';
+import { uploadMediaFile } from '@/services/file-storage';
+import { createCanvasNode, videoMetadata } from '@/lib/canvas/canvas-node-factory';
 import { getAntThemeConfig } from '@/lib/app-theme';
 import type { CanvasNodeData, CanvasConnection } from '@/types/canvas';
 import type { CanvasPluginHost } from '@/types/canvas-plugin';
@@ -31,13 +33,19 @@ function Fixture() {
  const [projectId,setProject] = useState('A'), [dark,setDark] = useState(new URLSearchParams(location.search).get('theme') === 'dark');
  const container=useRef<HTMLDivElement>(null),events=useRef({selection:0,drag:0,background:0,context:0,viewport:0});
  const [viewport,setViewport]=useState({x:20,y:20,k:1.86});
+ const aiCalls=useRef<any[]>([]),reply=useRef('{}'),held=useRef(false),pending=useRef<((value:{text:string})=>void)|null>(null);
  document.documentElement.classList.toggle('dark',dark);
  document.documentElement.style.colorScheme=dark?'dark':'light';
  const applyOps:CanvasPluginHost['applyOps']=ops=>{const result=applyCanvasAgentOps({nodes,connections,projectId,title:'test',viewport:{x:0,y:0,k:1},selectedNodeIds:[]},ops);setNodes(result.nodes);setConnections(result.connections);};
- const host:CanvasPluginHost={projectId,getNode:id=>nodes.find(n=>n.id===id)||null,getNodes:()=>nodes,getConnections:()=>connections,getUpstream:()=>[],getDownstream:()=>[],updateMetadata:(id,patch)=>setNodes(old=>old.map(n=>n.id===id?{...n,metadata:{...n.metadata,...patch}}:n)),updateNode:()=>{},applyOps,ai:{} as any,openPanel:()=>{},closePanel:()=>{}};
+ const host:CanvasPluginHost={projectId,getNode:id=>nodes.find(n=>n.id===id)||null,getNodes:()=>nodes,getConnections:()=>connections,getUpstream:()=>[],getDownstream:()=>[],updateMetadata:(id,patch)=>setNodes(old=>old.map(n=>n.id===id?{...n,metadata:{...n.metadata,...patch}}:n)),updateNode:()=>{},applyOps,ai:{generateText:async(prompt,options)=>{aiCalls.current.push({prompt,model:options?.model,system:options?.system,references:options?.references});if(held.current)return new Promise(resolve=>{pending.current=resolve;});return{text:reply.current};},listModels:()=>[{value:'fixture-text',label:'隔离测试模型'}],defaultModel:()=> 'fixture-text',isModelReady:()=>true,generateImage:async()=>{throw Error('Unexpected paid image call');},generateVideo:async()=>{throw Error('Unexpected paid video call');}},openPanel:()=>{},closePanel:()=>{}};
  const node=nodes.find(n=>n.id==='director'),theme=canvasThemes[dark?'dark':'light'];
  Object.assign(window,{directorTest:{
   state:()=>({nodes,connections,projectId}),
+  reply:(text:string,hold=false)=>{reply.current=text;held.current=hold;},
+  resolveAi:()=>{pending.current?.({text:reply.current});pending.current=null;held.current=false;},
+  ai:()=>aiCalls.current,
+  video:async()=>{const response=await fetch('oneyes-canvas://app/director-reference.mp4');const file=await uploadMediaFile(new Blob([await response.arrayBuffer()],{type:'video/mp4'}),'video');const node=createCanvasNode('video',{x:900,y:600},videoMetadata(file));node.id='reference-video';node.title='反推测试视频';flushSync(()=>setNodes(old=>[...old,node]));},
+  removeVideo:()=>flushSync(()=>{const removed=new Set(nodes.filter(n=>n.id==='reference-video'||n.title==='视频反推 · 提示词').map(n=>n.id));setNodes(old=>old.filter(n=>!removed.has(n.id)));setConnections(old=>old.filter(link=>!removed.has(link.fromNodeId)&&!removed.has(link.toNodeId)));}),
   events:()=>events.current,
   resetEvents:()=>{events.current={selection:0,drag:0,background:0,context:0,viewport:0};},
   configure:(width=321,height=197)=>flushSync(()=>setNodes(old=>old.map(n=>n.id==='director'?{...n,metadata:{...n.metadata,directorScene:{...directorPreset('dialogue'),width,height}}}:n))),

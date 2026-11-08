@@ -32,10 +32,10 @@ export async function creatorSourceBlob(node: CanvasNodeData, signal: AbortSigna
     return blob;
 }
 
-export async function processNativeVideo(operation: "analyze" | "concat" | "mix" | "extract" | "subtitles" | "videoSuperResolution" | "editAnalyze" | "editRender", sources: CanvasNodeData[], settings: CreatorSettings & { srt?: string; edit?: Record<string, unknown> }, signal: AbortSignal, progress: (state: CreatorProgress) => void): Promise<CreatorArtifact[]> {
+export async function processNativeVideo(operation: "analyze" | "sample" | "concat" | "mix" | "extract" | "subtitles" | "videoSuperResolution" | "editAnalyze" | "editRender", sources: CanvasNodeData[], settings: CreatorSettings & { srt?: string; samples?:number; edit?: Record<string, unknown> }, signal: AbortSignal, progress: (state: CreatorProgress) => void): Promise<CreatorArtifact[]> {
     const media = window.oneYesDesktop?.media;
     if (!media) throw new Error("本地音视频处理需要桌面版内置的媒体组件，请在 OneYes Canvas 桌面版中使用");
-    const id = await media.create(operation, sources.length, operation.startsWith("edit") ? settings.edit : operation === "analyze" ? { threshold: settings.threshold ?? 0.3, clips: Boolean(settings.clips), audio: Boolean(settings.audio) } : operation==='mix' ? {volume:settings.volume??1,originalVolume:settings.originalVolume??1,fadeIn:settings.fadeIn??0,fadeOut:settings.fadeOut??0} : operation==='subtitles' ? {srt:settings.srt} : operation === "videoSuperResolution" ? { scale: settings.videoScale ?? 3 } : { trims: sources.map(node => settings.trims?.[node.id] || {}) });
+    const id = await media.create(operation, sources.length, operation.startsWith("edit") ? settings.edit : operation === "sample" ? {samples:settings.samples} : operation === "analyze" ? { threshold: settings.threshold ?? 0.3, clips: Boolean(settings.clips), audio: Boolean(settings.audio) } : operation==='mix' ? {volume:settings.volume??1,originalVolume:settings.originalVolume??1,fadeIn:settings.fadeIn??0,fadeOut:settings.fadeOut??0} : operation==='subtitles' ? {srt:settings.srt} : operation === "videoSuperResolution" ? { scale: settings.videoScale ?? 3 } : { trims: sources.map(node => settings.trims?.[node.id] || {}) });
     const stop = media.subscribe(state => { if (state.id === id) progress(state); });
     const abort = () => { void media.release(id).catch(() => {}); };
     signal.addEventListener("abort", abort, { once: true });
