@@ -3377,7 +3377,7 @@ function InfiniteCanvasPage() {
                         />
                     ))}
 
-                    <CanvasCollaborationPresence projectId={projectId} containerRef={containerRef} nodes={nodes} viewport={viewport} selectedNodeIds={selectedNodeIds} action={isNodeDragging?'move':isNodeResizing?'resize':connectingParams?'connect':null} connection={connectingParams}/>
+                    <CanvasCollaborationPresence projectId={projectId} containerRef={containerRef} nodes={nodes} viewport={viewport} onViewportChange={setViewport} selectedNodeIds={selectedNodeIds} action={isNodeDragging?'move':isNodeResizing?'resize':connectingParams?'connect':null} connection={connectingParams}/>
                     {selectionBox ? (
                         <svg
                             className="pointer-events-none absolute z-[100] overflow-visible"

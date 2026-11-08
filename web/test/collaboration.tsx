@@ -13,6 +13,7 @@ import { InfiniteCanvas } from '@/components/canvas/infinite-canvas';
 import { CanvasNode } from '@/components/canvas/canvas-node';
 import { CanvasCollaborationPresence } from '@/components/canvas/canvas-collaboration-presence';
 import { useThemeStore } from '@/stores/use-theme-store';
+import { useOneYesAccountStore } from '@/stores/use-oneyes-account-store';
 import { getAntThemeConfig } from '@/lib/app-theme';
 import { setImageBlob, getImageBlob } from '@/services/image-storage';
 import { setMediaBlob, getMediaBlob } from '@/services/file-storage';
@@ -47,6 +48,9 @@ function Fixture() {
         host: () => useCollaborationStore.getState().host!(), join: (invite: string) => useCollaborationStore.getState().join!(invite), leave: () => useCollaborationStore.getState().leave!(),
         room: () => useCollaborationStore.getState(), state: () => ({ id, nodes, connections, title: project?.title }),
         interaction: () => action,
+        account: (username: string) => useOneYesAccountStore.setState({ user: { id: 1, username, email: 'private@example.invalid' }, ready: true }),
+        rename: (nickname: string) => useCollaborationStore.getState().rename!(nickname),
+        view: () => viewport,
         modify: (nodeId: string, patch: Partial<CanvasNodeData>) => flushSync(() => setNodes(old => old.map(node => node.id === nodeId ? { ...node, ...patch } : node))),
         add: () => flushSync(() => setNodes(old => [...old, { ...seed, id: 'extra', title: '新增',position:{x:650,y:180} }])),
         connect: () => flushSync(() => setConnections([{ id: 'link', fromNodeId: 'text', toNodeId: 'extra' }])),
@@ -71,7 +75,7 @@ function Fixture() {
         <div className="absolute right-4 top-4 z-50"><CanvasCollaborationButton /></div>
         <InfiniteCanvas containerRef={ref} viewport={viewport} tool="select" onViewportChange={setViewport}>
             {nodes.map(node => <CanvasNode key={node.id} data={node} scale={viewport.k} isSelected={selected.has(node.id)} isRelated={false} isFocusRelated={false} isConnectionTarget={false} isConnecting={action==='connect'} showPanel={false} showImageInfo={false} onMouseDown={(event,nodeId)=>{event.stopPropagation();drag.current={id:nodeId,x:event.clientX,y:event.clientY,left:node.position.x,top:node.position.y};setAction('move');}} onSelectCapture={(_event,nodeId)=>setSelected(new Set([nodeId]))} onHoverStart={()=>{}} onHoverEnd={()=>{}} onConnectStart={(event,nodeId,handleType)=>{event.stopPropagation();setSelected(new Set([nodeId]));setAction('connect');setConnection({nodeId,handleType});}} onResizeStart={()=>setAction('resize')} onResize={resize} onResizeEnd={resizeEnd} onContentChange={(nodeId,content)=>metadata(nodeId,{content})} onTitleChange={(nodeId,title)=>change(nodeId,{title})} onContextMenu={()=>{}}/>)}
-            <CanvasCollaborationPresence projectId={id} containerRef={ref} nodes={nodes} viewport={viewport} selectedNodeIds={selected} action={action} connection={connection}/>
+            <CanvasCollaborationPresence projectId={id} containerRef={ref} nodes={nodes} viewport={viewport} onViewportChange={setViewport} selectedNodeIds={selected} action={action} connection={connection}/>
         </InfiniteCanvas>
     </div></App></ConfigProvider>;
 }

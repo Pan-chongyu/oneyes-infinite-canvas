@@ -24,13 +24,14 @@ app.whenReady().then(async () => {
         windows.push(win);
         win.webContents.on('console-message', event => { if (event.level === 'error') trace('renderer ' + event.message); });
         win.webContents.on('render-process-gone', (_event, details) => trace('renderer-gone ' + JSON.stringify(details)));
-        const service = createCollaboration({ directory, vault: createVault(join(directory, 'resume-' + win.webContents.id), 'collaboration'), address: '127.0.0.1', changed: value => { if (!win.isDestroyed()) win.webContents.send('collaboration:event', value); } });
+        const service = createCollaboration({ directory, vault: createVault(join(directory, 'resume-' + win.webContents.id), 'collaboration'), profileVault: createVault(join(directory, 'resume-' + win.webContents.id), 'collaboration-profile'), address: '127.0.0.1', changed: value => { if (!win.isDestroyed()) win.webContents.send('collaboration:event', value); } });
         services.set(win.webContents.id, service);
         win.webContents.session.protocol.handle('oneyes-canvas', async request => request.url.startsWith('oneyes-canvas://app/collaboration/') ? service.request(request) : net.fetch(route(request.url, process.env.CANVAS_COLLABORATION_TEST_ROOT).file));
         await win.loadURL('oneyes-canvas://app/'); trace('loaded'); await wait(win, '!!window.collabTest'); trace('test-ready'); return win;
     };
     try {
         const a = await make(), b = await make();
+        trace('phase initial');
         if (process.env.CANVAS_COLLABORATION_SCREENSHOT) {
             a.showInactive();
             await js(a, 'document.querySelector("button").click()'); await wait(a, '!!document.querySelector(".ant-modal")');
@@ -40,12 +41,32 @@ app.whenReady().then(async () => {
             }
             await js(a, 'document.querySelector(".ant-modal-close").click()');
         }
-        await js(a, 'collabTest.host()'); await wait(a, '!!collabTest.room().invite');
+        await js(a, 'collabTest.account("小林");collabTest.host()'); await wait(a, '!!collabTest.room().invite');
         const invite = await js(a, 'collabTest.room().invite');
-        await js(b, `collabTest.join(${JSON.stringify(invite)})`);
+        await js(b, `collabTest.account("小周");collabTest.join(${JSON.stringify(invite)})`);
         await wait(b, 'collabTest.room().status === "online" && collabTest.state().nodes.some(n=>n.id==="text")');
         await wait(b, 'document.querySelector("[data-collaboration-status=online]")?.textContent.includes("2人")');
         assert.equal(await js(b, 'collabTest.originalProjects().length'), 2, 'joining preserves the original canvas');
+        await wait(b, 'collabTest.room().peers.some(peer=>peer.name==="小林") && document.querySelector("[data-collaboration-member]")');
+        await js(b, 'collabTest.rename("阿周")'); await wait(a, 'collabTest.room().peers.some(peer=>peer.name==="阿周")');
+        trace('phase third-member');
+        const c = await make();
+        await js(c, `collabTest.account("小林");collabTest.join(${JSON.stringify(invite)})`);
+        await wait(b, 'collabTest.room().members===3 && collabTest.room().peers.filter(peer=>peer.name==="小林").length===2');
+        await js(a, 'collabTest.selected(["text"]);collabTest.action("move")');
+        await js(c, 'collabTest.selected(["text"]);collabTest.action("edit")');
+        await wait(b, 'document.querySelectorAll("[data-collaboration-node-label=text]").length===2 && Array.from(document.querySelectorAll("[data-collaboration-node-label=text]")).some(label=>label.textContent.includes("编辑中"))');
+        const labels = await js(b, 'Array.from(document.querySelectorAll("[data-collaboration-node-label=text]")).map(label=>({name:label.textContent,color:label.style.color}))');
+        trace('phase labels');
+        assert.equal(new Set(labels.map(label=>label.name)).size,2,'same-name users have distinct labels');
+        assert.equal(new Set(labels.map(label=>label.color)).size,2,'simultaneous operators have distinct colors');
+        assert.equal(await js(b, 'document.body.textContent.includes("private@example.invalid")'),false,'email is never a collaboration identity');
+        await js(b, 'collabTest.viewport({x:-500,y:-500,k:0.5});document.querySelector("[data-collaboration-member="+CSS.escape(collabTest.room().peers.find(peer=>peer.role==="host").id)+"]").click()');
+        await wait(b, 'collabTest.view().x!==-500 && collabTest.view().k===0.5');
+        trace('phase third-leave');
+        await js(c, 'collabTest.leave()'); await wait(b, 'collabTest.room().members===2 && document.querySelectorAll("[data-collaboration-node-label=text]").length===1');
+        await js(a, 'collabTest.selected([]);collabTest.action(null)'); await js(b, 'collabTest.viewport({x:0,y:0,k:1})');
+        trace('phase edits');
         await Promise.all([js(a, 'collabTest.modify("text",{position:{x:250,y:180}})'), js(b, 'collabTest.modify("text",{title:"协作者标题"})')]);
         await wait(a, 'collabTest.state().nodes[0].title === "协作者标题"');
         await wait(b, 'collabTest.state().nodes[0].position.x===250');
@@ -54,20 +75,24 @@ app.whenReady().then(async () => {
         assert.equal(await js(a, 'collabTest.state().nodes[0].title'), '协作者标题');
         await js(a, 'collabTest.redo();collabTest.add();collabTest.connect()');
         await wait(b, 'collabTest.state().connections.length === 1 && collabTest.state().nodes.length === 2');
+        trace('phase native-drag');
         // Leave the pointer held: peers must see intermediate geometry, not only the final mouseup.
         const bounds=await js(a,'(()=>{const r=document.querySelector("[data-node-id=text] > .border-2").getBoundingClientRect();return {x:Math.round(r.x+40),y:Math.round(r.y+40)}})()');
         a.webContents.sendInputEvent({type:'mouseMove',...bounds});a.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...bounds});
         for(const dx of [20,60]){a.webContents.sendInputEvent({type:'mouseMove',x:bounds.x+dx,y:bounds.y+10});await wait(b,`collabTest.state().nodes.find(n=>n.id==="text").position.x===${250+dx}`);}
         a.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:bounds.x+60,y:bounds.y+10});await wait(a,'collabTest.interaction()===null');await js(a,'collabTest.undo()');await wait(b,'collabTest.state().nodes.find(n=>n.id==="text").position.x===250');await js(a,'collabTest.redo()');await wait(b,'collabTest.state().nodes.find(n=>n.id==="text").position.x===310');
         const resize=await js(a,'(()=>{const r=document.querySelector("[data-node-id=text] > .border-2").getBoundingClientRect();return {x:Math.round(r.right),y:Math.round(r.bottom)}})()');
+        trace('phase native-resize');
         a.webContents.sendInputEvent({type:'mouseMove',...resize});a.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...resize});a.webContents.sendInputEvent({type:'mouseMove',x:resize.x+50,y:resize.y+30});
         await wait(b,'collabTest.state().nodes.find(n=>n.id==="text").width===350 && collabTest.state().nodes.find(n=>n.id==="text").height===200');
         a.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:resize.x+50,y:resize.y+30});
         await js(a,'document.querySelector("[data-node-id=text] > .border-2").dispatchEvent(new MouseEvent("dblclick",{bubbles:true}))');await wait(a,'!!document.querySelector("[data-node-id=text] textarea")');
+        trace('phase native-typing');
         await js(a,'(()=>{const field=document.querySelector("[data-node-id=text] textarea");Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(field,"实时协作，尚未结束输入🎬");field.dispatchEvent(new Event("input",{bubbles:true}));})()');
         await wait(b,'collabTest.state().nodes.find(n=>n.id==="text").metadata.content==="实时协作，尚未结束输入🎬"');assert.equal(await js(a,'!!document.querySelector("[data-node-id=text] textarea")'),true,'text is shared before the editor loses focus');
         await js(a,'document.querySelector("[data-node-id=text] textarea").dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))');
         const handle=await js(a,'(()=>{const r=Array.from(document.querySelectorAll("[data-node-id=text] > .cursor-crosshair")).at(-1).getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
+        trace('phase native-connect');
         a.webContents.sendInputEvent({type:'mouseMove',...handle});a.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...handle});a.webContents.sendInputEvent({type:'mouseMove',x:800,y:400});
         await wait(b,'!!document.querySelector("[data-collaboration-connection] path")');assert.equal(await js(b,'collabTest.state().connections.length'),1,'unfinished connection is only a preview');
         a.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:800,y:400});await wait(b,'!document.querySelector("[data-collaboration-connection]")');
@@ -75,10 +100,12 @@ app.whenReady().then(async () => {
         await js(a,'(()=>{const canvas=document.querySelector("[data-canvas-surface]"),r=canvas.getBoundingClientRect();canvas.dispatchEvent(new PointerEvent("pointermove",{clientX:r.left+100,clientY:r.top+90,bubbles:true}));})()');
         await wait(b,'collabTest.room().peers.some(peer=>peer.cursor?.x===120&&peer.cursor?.y===120&&peer.action==="move") && !!document.querySelector("[data-collaboration-selection=text]")');
         assert.equal(await js(b,'document.querySelector("[data-collaboration-cursor]").style.transform'),'translate(120px, 120px) scale(0.5)','cursor maps to world coordinates and stays a constant screen size');
-        if(process.env.CANVAS_COLLABORATION_SCREENSHOT){b.showInactive();await js(b,'collabTest.theme(true);collabTest.viewport({x:0,y:0,k:1});Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{}))).then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');await fs.writeFile(process.env.CANVAS_COLLABORATION_SCREENSHOT.replace('.png','-live.png'),(await b.webContents.capturePage()).toPNG());}
+        await wait(b, 'document.querySelector("[data-collaboration-node-label=text]")?.textContent.includes("小林") && document.querySelector("[data-collaboration-node-label=text]")?.textContent.includes("移动中")');
+        if(process.env.CANVAS_COLLABORATION_SCREENSHOT){b.showInactive();b.webContents.invalidate();await js(b,'collabTest.theme(true);collabTest.viewport({x:0,y:0,k:1});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await fs.writeFile(process.env.CANVAS_COLLABORATION_SCREENSHOT.replace('.png','-live.png'),(await b.webContents.capturePage()).toPNG());}
         await js(a,'window.dispatchEvent(new Event("blur"))');await wait(b,'collabTest.room().peers.every(peer=>!peer.cursor&&!peer.selected.length)');
         await js(a,'collabTest.action(null);collabTest.viewport({x:0,y:0,k:1})');await js(b,'collabTest.viewport({x:0,y:0,k:1})');
         await js(a, 'collabTest.media()');
+        trace('phase media');
         await wait(b, 'collabTest.state().nodes.find(n=>n.id==="image")?.metadata?.content?.startsWith("blob:") && !collabTest.room().syncing');
         assert.deepEqual(await js(b, 'collabTest.bytes()'), await js(a, 'collabTest.bytes()'));
         assert.equal(await js(b, 'document.querySelector("img").naturalWidth'), 17);
@@ -89,6 +116,7 @@ app.whenReady().then(async () => {
         await b.webContents.reload();
         await wait(b, '!!window.collabTest && collabTest.room().status==="online" && collabTest.state().nodes.find(n=>n.id==="text")?.title==="重连保留的共享标题" && document.querySelector("img")?.naturalWidth===17');
         assert.equal(await js(b, 'collabTest.state().id'), beforeRestart, 'automatically resume the same replica instead of importing another project');
+        assert.equal(await js(b,'collabTest.room().self.name'),'阿周','encrypted nickname survives reload');
         assert.equal(await js(b, 'collabTest.originalProjects().length'), 2);
         await js(b, 'window.dispatchEvent(new Event("offline"))');
         await wait(b, 'collabTest.room().status==="reconnecting" && !!document.querySelector("[data-collaboration-status=reconnecting]")');
@@ -118,5 +146,6 @@ app.whenReady().then(async () => {
         assert.equal(await js(b, `collabTest.originalProjects().find(p=>p.id===${JSON.stringify(replica)}).nodes.length`), 3, 'leaving by navigation flushes only the shared project');
         await fs.writeFile(join(process.env.CANVAS_COLLABORATION_TEST_ROOT, 'collaboration-result.json'), JSON.stringify({ passed: true }));
         console.log('COLLABORATION_UI_OK: live status, automatic encrypted room recovery, online/offline reconnect and merge, held drag/resize/typing, local undo, originals and explicit exit retained');
-    } finally { await Promise.allSettled([...services.values()].map(service => service.close())); windows.forEach(win => win.destroy()); await fs.rm(directory, { recursive: true, force: true }); }
+    } catch (error) { trace('phase failure ' + error.stack); throw error; }
+    finally { trace('phase cleanup'); await Promise.allSettled([...services.values()].map(service => service.close())); windows.forEach(win => win.destroy()); await fs.rm(directory, { recursive: true, force: true }); }
 }).then(() => app.exit(0)).catch(error => { trace('error ' + error.stack); console.error(error); app.exit(1); });

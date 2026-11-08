@@ -14,6 +14,10 @@ const prefix = 'ONEYESCANVAS1.';
 const hashPattern = /^[a-f0-9]{64}$/;
 const random = () => crypto.randomBytes(32).toString('base64url');
 const blankPresence = () => ({ cursor: null, selected: [], action: null,connection:null });
+const cleanName = value => {
+    if (typeof value !== 'string') throw Error('协作昵称无效');
+    return value.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '').replace(/\s+/g, ' ').trim();
+};
 function readPresence(value) {
     if (!value || typeof value !== 'object' || (value.cursor !== null && (!value.cursor || !Number.isFinite(value.cursor.x) || !Number.isFinite(value.cursor.y))) || !Array.isArray(value.selected) || value.selected.some(id => typeof id !== 'string') || ![null,'move','resize','connect','edit'].includes(value.action)) throw Error('无效协作状态');
     if(value.connection!=null&&(typeof value.connection.nodeId!=='string'||!['source','target'].includes(value.connection.handleType)))throw Error('无效协作连线预览');
@@ -58,12 +62,23 @@ function channel(ws, secret, challenge, nonce, host) {
     };
 }
 
-function createCollaboration({ directory = os.tmpdir(), changed = () => {}, address, vault } = {}) {
+function createCollaboration({ directory = os.tmpdir(), changed = () => {}, address, vault, profileVault } = {}) {
     let room, server, socket, cache, reconnectTimer, status = 'offline', epoch = 0;
     let doc = new Y.Doc();
+    const identity = { id: crypto.randomBytes(8).toString('hex'), name: '', nickname: '' }, colors = new Map();
+    let identityReady;
+    const name = () => identity.nickname || identity.name || `协作者 ${identity.id.slice(0, 4)}`;
+    const loadIdentity = () => identityReady ||= (async () => {
+        const text = await profileVault?.read();
+        if (text) {
+            const value = JSON.parse(text);
+            if (!/^[a-f0-9]{16}$/.test(value.id) || typeof value.nickname !== 'string') throw Error('协作身份记录无法读取，已保留原文件');
+            identity.id = value.id; identity.nickname = cleanName(value.nickname);
+        } else await profileVault?.write(JSON.stringify({ id: identity.id, nickname: '' }));
+    })();
     const peers = new Set(), pending = new Map(), incoming = new Map(), available = new Set();
     let closing, saving, saveDirty = false;
-    const state = () => ({ status, role: room?.role, roomId: room?.room, projectId: room?.projectId, invite: room?.invite, invitations: room?.invitations, members: room?.role === 'host' ? peers.size + 1 : status === 'online' ? room?.members || 2 : 0 });
+    const state = () => ({ status, role: room?.role, roomId: room?.room, projectId: room?.projectId, invite: room?.invite, invitations: room?.invitations, members: room?.role === 'host' ? peers.size + 1 : status === 'online' ? room?.members || 2 : 0, self: { id: room?.peerId || identity.id, name: name(), color: room?.color || 0, role: room?.role }, nickname: identity.nickname });
     const emit = () => changed({ kind: 'state', ...state() });
     const saveResume = () => {
         if (!vault || room?.role !== 'guest' || !room.projectId) return;
@@ -82,7 +97,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
     const broadcast = (value, except) => Promise.allSettled([...peers].filter(peer => peer !== except).map(peer => send(peer, value).catch(() => peer.terminate())));
     const publishPresence = () => {
         if (room?.role !== 'host') return;
-        const list = [{id:room.peerId,name:'房主',...room.presence},...[...peers].map(peer=>({id:peer.peerId,name:`协作者 ${peer.peerId.slice(0,4)}`,...peer.presence}))];
+        const list = [{id:room.peerId,name:name(),color:0,role:'host',...room.presence},...[...peers].map(peer=>({id:peer.peerId,name:peer.name || `协作者 ${peer.peerId.slice(0,4)}`,color:peer.color,role:'guest',...peer.presence}))];
         changed({kind:'presence',peers:list.filter(peer=>peer.id!==room.peerId)});
         void broadcast({type:'presence',peers:list});
     };
@@ -114,11 +129,18 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
             Y.applyUpdate(doc, update, peer);
             saveResume();
             changed({ kind: 'update', data: update.toString('base64') });
+        } else if (value.type === 'identity') {
+            if (room?.role !== 'host' || !/^[a-f0-9]{16}$/.test(value.id)) throw Error('无效协作身份');
+            peer.name = cleanName(value.name) || `协作者 ${value.id.slice(0,4)}`;
+            if (!colors.has(value.id)) colors.set(value.id, colors.size);
+            peer.color = colors.get(value.id); publishPresence();
         } else if (value.type === 'presence') {
             if (room?.role === 'host') { peer.presence = readPresence(value.presence); publishPresence(); }
             else {
                 if (!Array.isArray(value.peers)) throw Error('无效协作者列表');
-                const list=value.peers.map(item=>{if(typeof item.id!=='string'||typeof item.name!=='string')throw Error('无效协作者');return {id:item.id,name:item.name,...readPresence(item)};});
+                const list=value.peers.map(item=>{if(typeof item.id!=='string'||!Number.isSafeInteger(item.color)||item.color<0||!['host','guest'].includes(item.role))throw Error('无效协作者');return {id:item.id,name:cleanName(item.name),color:item.color,role:item.role,...readPresence(item)};});
+                const self = list.find(item => item.id === room?.peerId);
+                if (self && room.color !== self.color) { room.color = self.color; emit(); }
                 changed({kind:'presence',peers:list.filter(item=>item.id!==room?.peerId)});
             }
         } else if (value.type === 'members') {
@@ -157,7 +179,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
             let value; try { value = peer.secure.read(raw); } catch { peer.close(); return; }
             if (current !== epoch) return;
             if (!value || typeof value !== 'object') { peer.close(); return; }
-            if (['update','presence','members','end'].includes(value.type) || value.type === 'asset-get') void receive(peer,value).catch(()=>peer.close());
+            if (['update','presence','identity','members','end'].includes(value.type) || value.type === 'asset-get') void receive(peer,value).catch(()=>peer.close());
             else peer.queue = peer.queue.then(() => current === epoch ? receive(peer, value) : undefined).catch(() => { peer.close(); });
         });
     };
@@ -171,6 +193,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 if (current !== epoch || !/^[\w-]{43}$/.test(auth.nonce) || !same(auth.proof, proof(room.secret, `guest:${challenge}:${auth.nonce}:${room.room}`))) throw Error();
                 peer.secure = channel(peer, room.secret, challenge, auth.nonce, true);
                 peer.peerId = crypto.randomBytes(8).toString('hex'); peer.presence = blankPresence();
+                peer.color = colors.size;
                 peer.send(JSON.stringify({ type: 'authenticated', peerId:peer.peerId, proof: proof(room.secret, `host:${challenge}:${auth.nonce}:${room.room}:${peer.peerId}`) }));
                 peers.add(peer); attach(peer); emit();
                 void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') }).catch(() => peer.terminate());
@@ -204,6 +227,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                     room.peerId = value.peerId;
                     peer.removeListener('message', handshake); peer.secure = channel(peer, room.secret, challenge, nonce, false); attach(peer);
                     status = 'online'; emit();
+                    void send(peer, { type: 'identity', id: identity.id, name: name() }).catch(() => peer.terminate());
                     void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') }).catch(() => peer.terminate());
                     void send(peer, { type:'presence',presence:room.presence }).catch(()=>peer.terminate());
                 } else throw Error();
@@ -226,7 +250,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
         if (room?.role === 'host') await broadcast({ type: 'end' });
         socket?.terminate(); socket = undefined;
         if (server) { for (const peer of server.clients) peer.terminate(); await new Promise(resolve => server.close(resolve)); server = undefined; }
-        await Promise.allSettled([...incoming.values()].map(entry => entry.handle.close())); incoming.clear(); peers.clear();
+        await Promise.allSettled([...incoming.values()].map(entry => entry.handle.close())); incoming.clear(); peers.clear(); colors.clear();
         if (cache) await fs.rm(cache, { recursive: true, force: true }); cache = undefined; available.clear();
         await saving;
         if (forget) await vault?.remove();
@@ -237,7 +261,19 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
     return {
         state,
         async call(operation, args = {}) {
+            await loadIdentity();
             if (operation === 'state') return state();
+            if (operation === 'profile') {
+                if (args.name !== undefined) identity.name = cleanName(args.name);
+                if (args.nickname !== undefined) {
+                    const nickname = cleanName(args.nickname);
+                    await profileVault?.write(JSON.stringify({ id: identity.id, nickname }));
+                    identity.nickname = nickname;
+                }
+                if (room?.role === 'host') publishPresence();
+                else if (status === 'online') { const peer = socket; void send(peer, { type: 'identity', id: identity.id, name: name() }).catch(() => peer?.terminate()); }
+                emit(); return state();
+            }
             if (operation === 'leave') { await close({ forget: true }); return state(); }
             if (operation === 'saved') {
                 await saving;
@@ -262,6 +298,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 if (address) hosts.unshift(address);
                 if (!hosts.length) throw Error('未找到局域网地址，请连接 Wi-Fi 或网线后重试');
                 room = { role: 'host', projectId: args.projectId, room: crypto.randomBytes(16).toString('hex'), secret: random(), host: hosts[0], port: 0, peerId:crypto.randomBytes(8).toString('hex'),presence:blankPresence() };
+                colors.set(identity.id, 0);
                 server = new WebSocketServer({ host: '0.0.0.0', port: 0, perMessageDeflate: false, maxPayload: 0, verifyClient: info => !info.origin && info.req.url === `/canvas/${room?.room}` });
                 await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
                 room.port = server.address().port;

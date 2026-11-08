@@ -70,7 +70,7 @@ app.whenReady().then(async () => {
         onRecovered: (stage, operation) => { void diagnostics.recover({ component: 'update', stage, operation }); },
         changed: state => { if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
         install: async plan => { const apply = await prepareInstall(plan); await apply(); app.quit(); } });
-    const collaboration = createCollaboration({ directory: join(app.getPath('userData'), 'collaboration'), vault: createVault(app.getPath('userData'), 'collaboration'), changed: state => {
+    const collaboration = createCollaboration({ directory: join(app.getPath('userData'), 'collaboration'), vault: createVault(app.getPath('userData'), 'collaboration'), profileVault: createVault(app.getPath('userData'), 'collaboration-profile'), changed: state => {
         if (!window || window.isDestroyed()) return;
         window.webContents.send('collaboration:event', state);
     } });

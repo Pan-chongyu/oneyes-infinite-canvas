@@ -3,6 +3,7 @@ import * as Y from 'yjs';
 import { useNavigate } from 'react-router-dom';
 import { flushCanvasStorage, useCanvasStore } from '@/stores/canvas/use-canvas-store';
 import { useCollaborationStore, type CollaborationPresence } from '@/stores/canvas/use-collaboration-store';
+import { useOneYesAccountStore } from '@/stores/use-oneyes-account-store';
 import { base64ToBytes, bytesToBase64, canonicalCanvas, LOCAL_EDIT, REMOTE_EDIT, mergeSharedWithLocal, patchSharedCanvas, readSharedCanvas, sharedAssetKeys, trackSharedUndoAction, type SharedCanvas, type SharedAsset } from '@/lib/canvas/collaboration-document';
 import { getImageBlob, setImageBlob, resolveImageUrl } from '@/services/image-storage';
 import { getMediaBlob, setMediaBlob, resolveMediaUrl } from '@/services/file-storage';
@@ -102,7 +103,7 @@ async function start(role: 'host' | 'guest', projectId: string, initial: SharedC
         if (session !== active) return;
         if (event.kind === 'state') {
             const reconnected = event.status === 'online' && state.getState().status === 'reconnecting';
-            state.setState({ status: event.status, role: event.role, roomId: event.roomId, invite: event.invite, invitations: event.invitations, members: event.members, ...(event.status === 'online' ? { error: undefined } : { syncing: false }) });
+            state.setState({ status: event.status, role: event.role, roomId: event.roomId, invite: event.invite, invitations: event.invitations, members: event.members, self: event.self, nickname: event.nickname, ...(event.status === 'online' ? { error: undefined } : { syncing: false }) });
             if (event.status === 'online') {
                 if (reconnected && active.origin === 'guest') { active.assets.clear(); if (active.assetRun) void active.assetRun.then(retryAssets); }
                 retryAssets();
@@ -128,6 +129,7 @@ async function start(role: 'host' | 'guest', projectId: string, initial: SharedC
     };
     active.unsubscribe = () => { unsubscribe(); doc.off('update', transmit);if(presenceFrame!==undefined)cancelAnimationFrame(presenceFrame); };
     try {
+        await native()!.call('profile', { name: useOneYesAccountStore.getState().user?.username || '' });
         const result = await native()!.call(role === 'host' ? 'host' : 'join', { projectId, ...(invite ? { invite } : {}), ...(restored ? { data: restored } : {}) });
         state.setState(result);
         doc.on('update', transmit);
@@ -144,6 +146,18 @@ export function useCanvasCollaboration({ projectId, nodes, connections, title, s
     // Layout cleanup flushes the previous project's snapshot before this commit replaces it.
     useLayoutEffect(() => { latest.current = { nodes, connections, title }; });
     const roomProject = state(value => value.projectId), activeStatus = state(value => value.status);
+    const accountName = useOneYesAccountStore(value => value.user?.username || '');
+    useEffect(() => {
+        let cancelled = false;
+        const profile = async (nickname?: string) => {
+            if (!native()) return;
+            const result = await native()!.call('profile', { name: accountName, ...(nickname === undefined ? {} : { nickname }) });
+            if (!cancelled) state.setState({ self: result.self, nickname: result.nickname });
+        };
+        state.setState({ rename: profile });
+        void profile().catch(error => { if (!cancelled) state.setState({ error: errorMessage(error) }); });
+        return () => { cancelled = true; };
+    }, [accountName]);
     useLayoutEffect(() => {
         const active = session;
         if (!loaded || !active || active.projectId !== projectId || !active.ready || !active.apply) return;

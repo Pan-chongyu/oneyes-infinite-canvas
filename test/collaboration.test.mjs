@@ -139,6 +139,46 @@ test('encrypted guest recovery survives restart with the same Yjs identities, re
     } finally { await guest.close(); await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test('encrypted member identities retain names and colors across reconnect and service restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'canvas-lan-identities-')), events = [];
+    const host = createCollaboration({ directory, address: '127.0.0.1', changed: event => events.push(event) });
+    let guest = createCollaboration({ directory, profileVault: createVault(directory, 'collaboration-profile') });
+    const other = createCollaboration({ directory });
+    const members = () => events.findLast(event => event.kind === 'presence')?.peers || [];
+    try {
+        await host.call('profile', { name: '小林' });
+        await guest.call('profile', { name: '小周', nickname: '剪辑师 🎬' });
+        await other.call('profile', { name: '小林' });
+        const { invite } = await host.call('host');
+        await guest.call('join', { invite }); await other.call('join', { invite });
+        await wait(() => members().length === 2 && members().some(member => member.name === '剪辑师 🎬') && members().some(member => member.name === '小林'));
+        const original = members().find(member => member.name === '剪辑师 🎬');
+        assert.equal(new Set([host.state().self.color, ...members().map(member => member.color)]).size, 3);
+        assert.equal(host.state().self.role, 'host');
+        assert.equal(members().every(member => member.role === 'guest'), true);
+        await guest.call('presence', { presence: { cursor: null, selected: ['same-node'], action: 'edit' } });
+        await wait(() => members().some(member => member.name === '剪辑师 🎬' && member.action === 'edit'));
+        await guest.call('profile', { nickname: '阿周\n\u202e' });
+        await wait(() => members().some(member => member.name === '阿周' && member.action === 'edit'));
+        assert.equal(members().find(member => member.name === '阿周').color, original.color);
+        assert.equal((await readFile(join(directory, 'collaboration-profile.enc'))).includes(Buffer.from('阿周')), false);
+        await assert.rejects(guest.call('profile', { nickname: {} }), /昵称无效/);
+        await guest.call('reconnect');
+        await wait(() => guest.state().status === 'online' && members().some(member => member.name === '阿周' && member.id !== original.id));
+        assert.equal(members().find(member => member.name === '阿周').color, original.color);
+        await guest.close();
+        guest = createCollaboration({ directory, profileVault: createVault(directory, 'collaboration-profile') });
+        assert.equal((await guest.call('profile')).self.name, '阿周');
+        await guest.call('join', { invite });
+        await wait(() => members().some(member => member.name === '阿周'));
+        assert.equal(members().find(member => member.name === '阿周').color, original.color);
+        const doc = await snapshot(host);
+        assert.equal(doc.getMap('identity').size, 0, 'identity never enters canvas content'); doc.destroy();
+        await guest.call('profile', { name: '小周', nickname: '' });
+        await wait(() => members().some(member => member.name === '小周'));
+    } finally { await Promise.allSettled([host.close(), guest.close(), other.close()]); await rm(directory, { recursive: true, force: true }); }
+});
+
 test('live operations and presence bypass a paused original transfer and disappear after leaving',async t=>{
     const directory=await mkdtemp(join(tmpdir(),'canvas-lan-live-')),hostEvents=[],guestEvents=[];
     const host=createCollaboration({directory,address:'127.0.0.1',changed:event=>hostEvents.push(event)}),guest=createCollaboration({directory,changed:event=>guestEvents.push(event)}),other=createCollaboration({directory});

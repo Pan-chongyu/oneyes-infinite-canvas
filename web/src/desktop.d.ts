@@ -25,7 +25,7 @@ declare global {
                 subscribe(callback: (state: import('./stores/use-desktop-update-store').DesktopUpdateState) => void): () => void;
             };
             collaboration: {
-                call(operation: 'state' | 'host' | 'join' | 'update' | 'snapshot' | 'leave' | 'presence' | 'saved' | 'reconnect', args?: { invite?: string; data?: string; projectId?: string;presence?:import('./stores/canvas/use-collaboration-store').CollaborationPresence }): Promise<import('./stores/canvas/use-collaboration-store').CollaborationState & { data?: string }>;
+                call(operation: 'state' | 'host' | 'join' | 'update' | 'snapshot' | 'leave' | 'presence' | 'saved' | 'reconnect' | 'profile', args?: { name?: string; nickname?: string; invite?: string; data?: string; projectId?: string;presence?:import('./stores/canvas/use-collaboration-store').CollaborationPresence }): Promise<import('./stores/canvas/use-collaboration-store').CollaborationState & { data?: string }>;
                 subscribe(callback: (event: { kind: 'state' | 'update' | 'ended' | 'presence' | 'error'; message?: string; data?: string;peers?:import('./stores/canvas/use-collaboration-store').CollaborationPeer[] } & import('./stores/canvas/use-collaboration-store').CollaborationState) => void): () => void;
             };
             models: { list(apiKey: string): Promise<{ data?: string[]; error?: string }> };

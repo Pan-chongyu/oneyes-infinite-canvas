@@ -9,6 +9,7 @@ export async function directorFixture({ build, react, builtinPlugins, fixture = 
         await build({ configFile: false, root: resolve('web'), logLevel: 'error',
             resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
             plugins: [react(), builtinPlugins()],
+            worker: { format: 'es' },
             build: { target: 'esnext', outDir: root, rollupOptions: { input: resolve(`web/test/${fixture}.tsx`), output: { entryFileNames: 'fixture.js' } } },
         });
         const styles = (await readdir(join(root, 'assets'))).filter(name => name.endsWith('.css')).map(name => `<link rel="stylesheet" href="/assets/${name}">`).join('');
