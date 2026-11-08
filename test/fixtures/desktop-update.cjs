@@ -196,18 +196,28 @@ app.whenReady().then(async () => {
         await js('updateTest.status("downloading")');
         await wait('document.querySelector("[role=progressbar]")');
         assert.equal(await js('document.querySelector("[role=progressbar]").getAttribute("aria-valuenow")'), '36');
+        for (const [status, phase, title] of [['downloading', 'planning', '分析增量'], ['downloading', 'reconstructing', '合成更新包'], ['downloading', 'verifying', '校验更新包'], ['installing', 'saving', '保存剪辑'], ['installing', 'preparing', '准备安装'], ['installing', 'handoff', '转入安装窗口']]) {
+            await js(`updateTest.status('${status}', true, '${phase}')`);
+            await wait(`document.querySelector('section').textContent.includes('${title}')`);
+            assert.equal(await js('document.querySelector("[role=progressbar]").getAttribute("aria-valuenow")'), null, 'unmeasurable work must never show a fake percentage');
+            assert.equal(await js('document.querySelectorAll("ol[aria-label=更新步骤] li").length'), 4);
+        }
+        await js('updateTest.status("installing", true, "verifying")');
+        await wait('document.querySelector("[role=progressbar]").getAttribute("aria-valuenow") === "100"');
         await js('updateTest.status("ready")');
         await wait('document.body.textContent.includes("新版本 v0.20.21")');
         const before = await js('document.querySelector("section").getBoundingClientRect().toJSON()');
         assert.ok(before.width <= 281 && before.height < 300, 'compact update panel');
         if (process.env.CANVAS_UPDATE_SCREENSHOT) {
-            await js('new Promise(resolve => requestAnimationFrame(resolve))');
+            win.showInactive(); win.webContents.invalidate();
+            await js('new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
             writeFileSync(process.env.CANVAS_UPDATE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
             await js('updateTest.theme(true)');
             win.setSize(400, 680);
             await js('new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
             const narrow = await js('document.querySelector("section").getBoundingClientRect().toJSON()');
             assert.ok(narrow.left >= 0 && narrow.right <= 400);
+            win.webContents.invalidate();
             writeFileSync(process.env.CANVAS_UPDATE_SCREENSHOT.replace('.png', '-dark.png'), (await win.webContents.capturePage()).toPNG());
         }
         console.log('OTA_UI_OK: version prompt, background progress, busy guard, save before install, compact panel'); app.exit(0);

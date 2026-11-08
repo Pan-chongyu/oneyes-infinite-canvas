@@ -273,9 +273,25 @@ test('installer plans use quoted argument arrays, verify macOS identity and reta
     await apply(); assert.ok(starts[0][0].endsWith('\\WindowsPowerShell\\v1.0\\powershell.exe'));assert.deepEqual(starts[0][2],{cwd:root,ready:true});
     assert.deepEqual(JSON.parse(await readFile(join(root, 'install-plan.json'), 'utf8')).destination, target.destination);
     assert.equal(JSON.parse(await readFile(join(root, 'install-plan.json'), 'utf8')).sha256,plan.sha256);
+    assert.ok(starts[0][1].includes('-STA'));
+    assert.equal(JSON.parse(await readFile(join(root, 'install-plan.json'), 'utf8')).ack, join(root, 'installed-0.21.0.ok'));
+    await access(JSON.parse(await readFile(join(root, 'install-plan.json'), 'utf8')).icon);
     const mac = { ...plan, platform: 'darwin', format: 'zip', destination: join(root, 'OneYes Canvas.app'), executable: join(root, 'OneYes Canvas.app/Contents/MacOS/OneYes Canvas') };
     await assert.rejects(prepareInstall(mac, { command: async () => ({ stdout: 'other.app' }) }), /身份/);
     const script = await readFile('desktop/update-unix.sh', 'utf8'); assert.match(script, /while \[ ! -f "\$ack" \]/); assert.match(script, /mv "\$backup" "\$destination"/);
+});
+
+test('install reports real verification progress before saving, preparing and handing off to the native window', async t => {
+    const states = [], payload = Buffer.alloc(256 * 1024, 7);
+    const f = await fixture(t, { changed: state => states.push(state), install: async (_plan, progress) => { progress('saving'); progress('preparing'); progress('handoff'); } });
+    f.setRelease(release('0.21.0', payload));
+    await f.updater.check(); states.length = 0;
+    await f.updater.apply();
+    const verification = states.filter(state => state.phase === 'verifying');
+    assert.equal(verification[0].progress, 0); assert.equal(verification.at(-1).progress, 100);
+    assert.ok(verification.some(state => state.progress > 0 && state.progress < 100));
+    assert.deepEqual([...new Set(states.map(state => state.phase))], ['verifying', 'preparing', 'saving', 'handoff']);
+    assert.equal(states.at(-1).status, 'installing');
 });
 
 test('Windows installer failure markers explain the failed stage without raw helper output and permit retry', async t => {

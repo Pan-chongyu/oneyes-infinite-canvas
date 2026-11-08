@@ -6,14 +6,15 @@ const { FEED, CHECK_INTERVAL, readManifest, newer } = require('./update-policy.c
 const { applyDelta } = require('./update-delta.cjs');
 const { downloadBlocks } = require('./update-blockmap.cjs');
 
-async function fileHash(file) {
+async function fileHash(file, progress) {
     const hash = createHash('sha256');
-    for await (const chunk of createReadStream(file)) hash.update(chunk);
+    let bytes = 0;
+    for await (const chunk of createReadStream(file)) { hash.update(chunk); bytes += chunk.length; progress?.(bytes); }
     return hash.digest('hex');
 }
-async function validateFile(file, entry) {
+async function validateFile(file, entry, progress) {
     const info = await fs.lstat(file);
-    if (!info.isFile() || info.size !== entry.size || await fileHash(file) !== entry.sha256) throw new Error('更新包校验失败，已停止安装。请重新下载');
+    if (!info.isFile() || info.size !== entry.size || await fileHash(file, progress && (bytes => progress(Math.floor(bytes / entry.size * 100)))) !== entry.sha256) throw new Error('更新包校验失败，已停止安装。请重新下载');
 }
 function createUpdater({ currentVersion, directory, target, fetcher, install, changed = () => {}, onError = () => {}, onRecovered = () => {}, publicKey, enabled = true, feed = FEED }) {
     const root = path.join(directory, 'ota');
@@ -127,6 +128,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                 }
             } finally { try { await handle.sync(); } finally { await handle.close(); } }
             if (bytes < size) throw new Error('更新包下载中断，重试后将继续下载');
+            if (notify) emit({ phase: 'verifying' });
             if (hash.digest('hex') !== sha256) { await discard(); throw new Error('更新包校验失败，请重新下载'); }
             await fs.rename(partial, file);
             await fs.rm(receipt, { force: true });
@@ -212,7 +214,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             checking = new AbortController();
             fetcher.reset?.();
             const check = checking;
-            emit({ status: 'checking', error: '' });
+            emit({ status: 'checking', phase: '', error: '' });
             const destination = await chooseTarget();
             const restored = await restore();
             if (check.signal.aborted || closed) return;
@@ -234,14 +236,15 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             if (!enabled || closed || state.status !== 'ready' || !saved) return;
             const ready = saved;
             checking?.abort();
-            emit({ status: 'installing', error: '' });
+            emit({ status: 'installing', phase: 'verifying', progress: 0, error: '' });
             installation = (async () => {
                 const verified = readManifest(ready.text, ready.signature, await chooseTarget(), publicKey, currentVersion);
                 if (!newer(verified.version, currentVersion)) throw new Error('更新版本无效，请重新检查');
                 const file = path.join(ready.folder, verified.file);
-                await validateFile(file, verified);
+                await validateFile(file, verified, progress => { if (progress !== state.progress) emit({ progress }); });
                 if (closed) return;
-                try { await install({ ...selected, file, version: verified.version, sha256: verified.sha256, folder: ready.folder, root }); }
+                emit({ phase: 'preparing', progress: 0 });
+                try { await install({ ...selected, file, version: verified.version, sha256: verified.sha256, folder: ready.folder, root }, phase => emit({ phase, progress: 0 })); }
                 catch (error) { error.userMessage = error.message; throw error; }
             })().catch(error => { if (!closed) failure(error); }).finally(() => { installation = null; });
             return installation;

@@ -31,11 +31,13 @@ async function prepareInstall(plan, { parentPid = process.pid, command = run, st
     const errorFile = path.join(root, 'install-error.txt');
     await fs.rm(path.join(root, `installed-${version}.ok`), { force: true });
     if (platform === 'win32') {
-        const config = path.join(folder, 'install-plan.json'), helper = path.join(folder, 'install.ps1');
+        const config = path.join(folder, 'install-plan.json'), helper = path.join(folder, 'install.ps1'), icon = path.join(folder, 'update.ico'), logo = path.join(folder, 'update.png');
         await fs.rm(path.join(folder, 'install-ready'), { force: true });
-        await fs.writeFile(config, JSON.stringify({ parentPid, destination, executable, file, errorFile, version, sha256 }), { mode: 0o600 });
+        await fs.copyFile(path.join(__dirname, 'resources/icon.ico'), icon);
+        await fs.copyFile(path.join(__dirname, 'resources/icon.png'), logo);
+        await fs.writeFile(config, JSON.stringify({ parentPid, destination, executable, file, errorFile, version, sha256, icon, logo, ack: path.join(root, `installed-${version}.ok`) }), { mode: 0o600 });
         await fs.copyFile(path.join(__dirname, 'update-windows.ps1'), helper);
-        return () => start(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', helper, '-PlanPath', config], { cwd: root, ready: true });
+        return () => start(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', helper, '-PlanPath', config], { cwd: root, ready: true });
     }
     const helper = path.join(folder, 'install.sh');
     await fs.copyFile(path.join(__dirname, 'update-unix.sh'), helper);

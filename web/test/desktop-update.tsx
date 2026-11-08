@@ -18,7 +18,7 @@ const setItem = localForageStorage.setItem;
 localForageStorage.setItem = async (key, value) => { if (key === 'infinite-canvas:canvas_store') await saveGate; return setItem(key, value); };
 const state: DesktopUpdateState = { status: 'ready', currentVersion: '0.20.20', version: '0.20.21', progress: 100, downloaded: 100, total: 100, notes: '支持签名 OTA，后台下载后点击即可更新。', error: '', supported: true, mode: 'full' };
 Object.assign(window, { oneYesDesktop: { updates: { call: async (op: string) => { operations.push(op); return state; }, subscribe: (next: typeof subscriber) => { subscriber = next; return () => {}; } } }, updateTest: {
-    status: (status: DesktopUpdateState['status'], supported = true) => { state.status = status; state.supported = supported; state.progress = status === 'downloading' ? 36 : 100; subscriber({ ...state }); },
+    status: (status: DesktopUpdateState['status'], supported = true, phase: DesktopUpdateState['phase'] = '') => { state.status = status; state.phase = phase; state.supported = supported; state.progress = status === 'downloading' ? 36 : 100; subscriber({ ...state }); },
     state: () => ({ ...useDesktopUpdateStore.getState(), operations }),
     agentBusy: (busy: boolean) => useAgentStore.setState({ waiting: busy }),
     pauseSave: () => { saveGate = new Promise(resolve => { releaseSave = resolve; }); },
