@@ -39,17 +39,13 @@ app.whenReady().then(async () => {
         };
         const node = find(root); assert.ok(node, 'Native media control exists: ' + pseudo);
         const { model } = await win.webContents.debugger.sendCommand('DOM.getBoxModel', { nodeId: node.nodeId });
-        console.log('MEDIA_CONTROL',pseudo,node.attributes,model.content);
         return { x: Math.round((model.content[0] + model.content[4]) / 2), y: Math.round((model.content[1] + model.content[5]) / 2) };
     };
     const clickControl = async pseudo => {
         win.focus(); await wait(() => win.isFocused());
         win.webContents.sendInputEvent({ type: 'mouseMove', ...await controlPoint(pseudo) });
         await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        const point = await controlPoint(pseudo);
-        const location=await win.webContents.debugger.sendCommand('DOM.getNodeForLocation',{...point,includeUserAgentShadowDOM:true});const hit=await win.webContents.debugger.sendCommand('DOM.describeNode',{backendNodeId:location.backendNodeId});
-        console.log('MEDIA_CLICK',pseudo,point,hit.node.nodeName,hit.node.attributes,await js('(()=>{const v=document.querySelector("video");return {paused:v.paused,time:v.currentTime,rect:v.getBoundingClientRect().toJSON(),fullscreen:!!document.fullscreenElement}})()'));
-        click(point);
+        const point=await controlPoint(pseudo);const location=await win.webContents.debugger.sendCommand('DOM.getNodeForLocation',{...point,includeUserAgentShadowDOM:true});const hit=await win.webContents.debugger.sendCommand('DOM.describeNode',{backendNodeId:location.backendNodeId});console.log('MEDIA_CLICK',pseudo,point,hit.node.attributes,await js('({paused:document.querySelector("video").paused,time:document.querySelector("video").currentTime})'));click(point);
     };
     try {
         configurePermissions(win.webContents.session);
@@ -58,7 +54,9 @@ app.whenReady().then(async () => {
         await wait(() => win.isFocused());
         await wait('!!window.playbackTest && document.querySelector("video").readyState >= 2');
         for (const [scale, dark] of [[1, false], [0.7, true]]) {
-            await js(`playbackTest.configure(${scale},${dark})`);
+            // Dragging the video body can toggle playback on macOS. Isolate each scale case.
+            await js(`playbackTest.configure(${scale},${dark});document.querySelector("video").pause();document.querySelector("video").currentTime=0`);
+            await wait('document.querySelector("video").paused && !document.querySelector("video").seeking');
             await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
             const middle = await js('(()=>{const r=document.querySelector("video").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
             win.webContents.sendInputEvent({ type: 'mouseMove', ...middle });
@@ -88,6 +86,6 @@ app.whenReady().then(async () => {
         console.log('VIDEO_PLAYBACK_NATIVE_OK: native play/fullscreen, Escape, scaled canvas, light/dark, no control drag, video drag preserved');
     } catch (error) {
         console.error('Playback state:', await js('(()=>{const video=document.querySelector("video"),rect=video?.getBoundingClientRect();return {focused:document.hasFocus(),paused:video?.paused,ended:video?.ended,readyState:video?.readyState,currentTime:video?.currentTime,error:video?.error?.message,rect:rect?.toJSON()}})()'));
-        require('fs').writeFileSync('playback-failure.png',(await win.webContents.capturePage()).toPNG());throw error;
+        throw error;
     } finally { win.webContents.debugger.detach(); win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

@@ -6,7 +6,11 @@ permissions:
   contents: read
 jobs:
   mac:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -23,12 +27,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - run: npm run test:playback
-        continue-on-error: true
       - run: npm run test:director
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Native-playback-diagnostic
+          name: Native-playback-diagnostic-${{ matrix.os }}
           path: playback-failure.png
           if-no-files-found: ignore
       - run: node scripts/build-resource-relay.mjs stop "${{ runner.temp }}/canvas-build-relay.json"
