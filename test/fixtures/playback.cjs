@@ -39,17 +39,21 @@ app.whenReady().then(async () => {
             if (attrs.some((value, index) => index % 2 === 0 && value === 'pseudo' && attrs[index + 1] === pseudo)) return node;
             for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) { const found = find(child); if (found) return found; }
         };
-        const node = find(root); assert.ok(node, 'Native media control exists: ' + pseudo);
-        const { model } = await win.webContents.debugger.sendCommand('DOM.getBoxModel', { nodeId: node.nodeId });
-        return { x: Math.round((model.content[0] + model.content[4]) / 2), y: Math.round((model.content[1] + model.content[5]) / 2) };
+        const node = find(root); if (!node) return;
+        try {
+            const { model } = await win.webContents.debugger.sendCommand('DOM.getBoxModel', { nodeId: node.nodeId });
+            return { x: Math.round((model.content[0] + model.content[4]) / 2), y: Math.round((model.content[1] + model.content[5]) / 2) };
+        } catch (error) { if (!error.message.includes('Could not compute box model')) throw error; }
     };
     const clickControl = async pseudo => {
         win.focus(); await wait(() => win.isFocused());
-        win.webContents.sendInputEvent({ type: 'mouseMove', ...await controlPoint(pseudo) });
-        await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
         let point, previous;
+        await wait(async () => { point = await controlPoint(pseudo); return Boolean(point); });
+        win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+        await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
         await wait(async () => {
             point = await controlPoint(pseudo);
+            if (!point) return false;
             const location = await win.webContents.debugger.sendCommand('DOM.getNodeForLocation', { ...point, includeUserAgentShadowDOM: true });
             const { node } = await win.webContents.debugger.sendCommand('DOM.describeNode', { backendNodeId: location.backendNodeId });
             const attrs = node.attributes || [], hit = attrs.some((value, index) => index % 2 === 0 && value === 'pseudo' && attrs[index + 1] === pseudo);
@@ -67,9 +71,9 @@ app.whenReady().then(async () => {
         await js('window.playbackTrace=[];for(const type of ["play","pause","seeking","seeked","mousedown","mouseup","click"]){document.addEventListener(type,event=>{const video=document.querySelector("video");window.playbackTrace.push({type,time:video.currentTime,paused:video.paused,x:event.clientX,y:event.clientY,events:{...playbackTest.events()}})},{capture:true})}');
         for (const [scale, dark] of [[1, false], [0.7, true]]) {
             console.log('VIDEO_SCALE_CASE', scale, dark);
-            // Dragging the video body can toggle playback on macOS. Isolate each scale case.
+            // A body drag may toggle playback asynchronously on macOS; each case mounts a fresh video.
             await js(`playbackTest.configure(${scale},${dark});document.querySelector("video").pause();document.querySelector("video").currentTime=0`);
-            await wait('document.querySelector("video").paused && !document.querySelector("video").seeking');
+            await wait('document.querySelector("video").readyState >= 2 && document.querySelector("video").paused && !document.querySelector("video").seeking');
             await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
             const middle = await js('(()=>{const r=document.querySelector("video").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
             win.webContents.sendInputEvent({ type: 'mouseMove', ...middle });
