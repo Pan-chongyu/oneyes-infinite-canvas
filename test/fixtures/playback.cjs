@@ -54,7 +54,9 @@ app.whenReady().then(async () => {
         await wait(() => win.isFocused());
         await wait('!!window.playbackTest && document.querySelector("video").readyState >= 2');
         for (const [scale, dark] of [[1, false], [0.7, true]]) {
-            await js(`playbackTest.configure(${scale},${dark})`);
+            // Dragging the video body can toggle playback on macOS. Isolate each scale case.
+            await js(`playbackTest.configure(${scale},${dark});document.querySelector("video").pause();document.querySelector("video").currentTime=0`);
+            await wait('document.querySelector("video").paused && !document.querySelector("video").seeking');
             await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
             const middle = await js('(()=>{const r=document.querySelector("video").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
             win.webContents.sendInputEvent({ type: 'mouseMove', ...middle });
