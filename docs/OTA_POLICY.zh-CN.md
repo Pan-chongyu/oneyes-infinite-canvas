@@ -1,6 +1,8 @@
 # OneYes Canvas OTA 发布规则
 
-`VERSION` 必须保存完整标签（例如 `v0.20.115`），根 `package.json` 和 `package-lock.json` 的版本值不含 `v`，三者必须一致。提交发布标签前运行 `node --test test/release-version.test.mjs`；CI 继续校验标签与实际芯片架构，失败不得发布。
+`VERSION` 必须保存完整标签（例如 `v0.20.116`），根 `package.json` 和 `package-lock.json` 的版本值不含 `v`，三者必须一致。提交发布标签前运行 `node --test test/release-version.test.mjs`；CI 继续校验标签与实际芯片架构，失败不得发布。
+
+构建阶段的 GitHub Release 资源使用官方 API 解析和下载，旧版 OTA 清单与签名固定到同一 Release 快照，避开网页下载入口的 504。GitHub Token 只发送到官方 API，不发送到资源存储域名；重定向只接受 HTTPS 官方资源域名。依赖 SHA-256、基包签名与大小校验仍是使用文件的前提。单次获取失败即中止构建，不新增重试次数。此构建下载路径由 `test/build-download.test.mjs` 覆盖，客户端固定更新地址与公钥保持原有规则。
 
 实时协作改动须在六平台运行真实节点的按住拖动、持续改变大小、文本编辑未失焦同步，以及不同视口缩放的光标、选中轮廓和临时连线预览；退出／失焦后无残留提示。原生房间测试暂停素材传输，验证文档操作和临时协作状态不被文件队列阻塞；临时状态不进入文档或撤销。Yjs 字符合并须覆盖中文、emoji、并发输入及只撤销本人修改；未修改节点的对象身份应保留。保持既有 3 秒断线重连，不增加付费请求重发。
 

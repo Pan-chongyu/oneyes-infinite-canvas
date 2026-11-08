@@ -21,6 +21,8 @@ jobs:
       - run: npm ci --omit=dev --ignore-scripts
       - name: Pin the signed previous release for every delta task
         run: node scripts/prepare-ota-base.mjs release-base --manifest-only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v4
         with:
           name: Canvas-OTA-Base
@@ -192,6 +194,8 @@ jobs:
           path: release-base
       - name: Download only this target's signed base
         run: node scripts/prepare-ota-base.mjs release-base --pinned --target=${{ matrix.target }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Generate and reconstruct this target's delta
         env:
           CANVAS_OTA_BASE_DIR: ${{ github.workspace }}/release-base
@@ -234,6 +238,8 @@ jobs:
           path: release-base
       - name: Download previous installers for delta OTA
         run: node scripts/prepare-ota-base.mjs release-base --pinned
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Verify every platform and generate checksums
         env:
           CANVAS_OTA_PRIVATE_KEY: ${{ secrets.CANVAS_OTA_PRIVATE_KEY }}

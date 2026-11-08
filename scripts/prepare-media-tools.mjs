@@ -6,8 +6,10 @@ import { pipeline } from 'node:stream/promises';
 import { join, resolve, basename } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { createBuildDownloader } from './build-download.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const download = createBuildDownloader();
 const target = join(root, 'desktop', 'media-bin');
 const manifest = JSON.parse(await readFile(join(root, 'desktop/media-binaries.json'), 'utf8'));
 const fonts = JSON.parse(await readFile(join(root, 'desktop/media-fonts.json'), 'utf8'));
@@ -19,8 +21,7 @@ for (const asset of [...manifest[platform], ...fonts]) {
     const checksum = async file => { const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest('hex'); };
     if (await checksum(destination).catch(() => '') !== asset.sha256) {
         console.log(`Downloading ${asset.name}`);
-        const response = await fetch(asset.url, { headers: asset.url.startsWith('https://api.github.com/') ? { Accept: 'application/vnd.github.raw+json', ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) } : {} });
-        if (!response.ok) throw new Error(`Media runtime download failed: ${response.status}`);
+        const response = await download(asset.url);
         const partial = destination + '.part';
         let received = 0, last = -1;
         const total = Number(response.headers.get('content-length'));
