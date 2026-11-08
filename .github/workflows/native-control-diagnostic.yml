@@ -27,6 +27,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - run: npm run test:playback
+      - run: npm run test:playback
+      - run: npm run test:playback
       - run: npm run test:director
       - uses: actions/upload-artifact@v4
         if: always()
