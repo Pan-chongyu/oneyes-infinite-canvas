@@ -58,13 +58,26 @@ function channel(ws, secret, challenge, nonce, host) {
     };
 }
 
-function createCollaboration({ directory = os.tmpdir(), changed = () => {}, address } = {}) {
+function createCollaboration({ directory = os.tmpdir(), changed = () => {}, address, vault } = {}) {
     let room, server, socket, cache, reconnectTimer, status = 'offline', epoch = 0;
     let doc = new Y.Doc();
     const peers = new Set(), pending = new Map(), incoming = new Map(), available = new Set();
-    let closing;
+    let closing, saving, saveDirty = false;
     const state = () => ({ status, role: room?.role, roomId: room?.room, projectId: room?.projectId, invite: room?.invite, invitations: room?.invitations, members: room?.role === 'host' ? peers.size + 1 : status === 'online' ? room?.members || 2 : 0 });
     const emit = () => changed({ kind: 'state', ...state() });
+    const saveResume = () => {
+        if (!vault || room?.role !== 'guest' || !room.projectId) return;
+        saveDirty = true;
+        if (saving) return;
+        const active = room;
+        saving = Promise.resolve().then(async () => {
+            while (saveDirty && room === active) {
+                saveDirty = false;
+                await vault.write(JSON.stringify({ projectId: active.projectId, invite: active.invite, data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') }));
+            }
+        }).finally(() => { saving = undefined; });
+        void saving.catch(() => changed({ kind: 'error', message: '协作恢复记录未能保存，请检查本机磁盘后重试；当前画布仍保留本机。' }));
+    };
     const send = (peer, value) => peer?.secure && peer.readyState === WebSocket.OPEN ? peer.secure.send(value) : Promise.reject(Error('协作连接已断开，恢复后继续同步'));
     const broadcast = (value, except) => Promise.allSettled([...peers].filter(peer => peer !== except).map(peer => send(peer, value).catch(() => peer.terminate())));
     const publishPresence = () => {
@@ -99,6 +112,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
         if (value.type === 'update') {
             const update = Buffer.from(value.data, 'base64');
             Y.applyUpdate(doc, update, peer);
+            saveResume();
             changed({ kind: 'update', data: update.toString('base64') });
         } else if (value.type === 'presence') {
             if (room?.role === 'host') { peer.presence = readPresence(value.presence); publishPresence(); }
@@ -111,7 +125,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
             if(room?.role!=='guest'||!Number.isSafeInteger(value.count)||value.count<1)throw Error('无效协作成员数量');
             room.members=value.count;emit();
         }
-        else if (value.type === 'end') { if (room?.role !== 'guest') throw Error('只有房主可以结束协作'); await close(); changed({ kind: 'ended' }); return; }
+        else if (value.type === 'end') { if (room?.role !== 'guest') throw Error('只有房主可以结束协作'); await close({ forget: true }); changed({ kind: 'ended' }); return; }
         else if (value.type === 'asset-get') await sendAsset(peer, value.hash);
         else if (value.type === 'asset-start') {
             if (!hashPattern.test(value.hash) || !Number.isSafeInteger(value.size) || value.size < 0) throw Error('无效素材清单');
@@ -173,11 +187,13 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
     };
     const connect = current => {
         if (current !== epoch || !room || room.role !== 'guest') return;
+        clearTimeout(reconnectTimer); reconnectTimer = undefined;
         const peer = socket = new WebSocket(`ws://${room.host}:${room.port}/canvas/${room.room}`, { perMessageDeflate: false, maxPayload: 0 });
         peer.on('error', () => undefined);
         let challenge, nonce;
         const handshake = raw => {
             try {
+                if (current !== epoch || socket !== peer || !room) return;
                 const value = JSON.parse(String(raw));
                 if (value.type === 'challenge' && !challenge) {
                     if (value.room !== room.room || !/^[\w-]{43}$/.test(value.challenge)) throw Error();
@@ -195,14 +211,15 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
         };
         peer.on('message', handshake);
         peer.on('close', () => {
-            if (current !== epoch) return;
+            if (current !== epoch || socket !== peer) return;
+            socket = undefined;
             failPending(); const entry = incoming.get(peer); incoming.delete(peer);
             if (entry) void entry.handle.close().then(() => fs.rm(entry.path, { force: true })).catch(() => {});
             room.presence = blankPresence(); changed({kind:'presence',peers:[]});
             status = 'reconnecting'; emit(); reconnectTimer = setTimeout(() => connect(current), 3000);
         });
     };
-    async function close() {
+    async function close({ forget = false } = {}) {
         if (closing) return closing;
         closing = (async () => {
         epoch++; clearTimeout(reconnectTimer); failPending();
@@ -211,6 +228,8 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
         if (server) { for (const peer of server.clients) peer.terminate(); await new Promise(resolve => server.close(resolve)); server = undefined; }
         await Promise.allSettled([...incoming.values()].map(entry => entry.handle.close())); incoming.clear(); peers.clear();
         if (cache) await fs.rm(cache, { recursive: true, force: true }); cache = undefined; available.clear();
+        await saving;
+        if (forget) await vault?.remove();
         doc.destroy(); doc = new Y.Doc(); room = undefined; status = 'offline'; changed({kind:'presence',peers:[]}); emit();
         })();
         try { await closing; } finally { closing = undefined; }
@@ -219,9 +238,26 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
         state,
         async call(operation, args = {}) {
             if (operation === 'state') return state();
-            if (operation === 'leave') { await close(); return state(); }
+            if (operation === 'leave') { await close({ forget: true }); return state(); }
+            if (operation === 'saved') {
+                await saving;
+                try {
+                    const text = await vault?.read(); if (!text) return {};
+                    const saved = JSON.parse(text);
+                    if (typeof saved.projectId !== 'string' || typeof saved.data !== 'string') throw Error();
+                    parseInvite(saved.invite);
+                    return saved.projectId === args.projectId ? { invite: saved.invite, data: saved.data } : {};
+                } catch { throw Error('协作恢复记录无法读取，已保留原文件和本地画布；可重新粘贴房主邀请加入。'); }
+            }
+            if (operation === 'reconnect') {
+                if (!closing && room?.role === 'guest') {
+                    if (socket) socket.terminate();
+                    else { clearTimeout(reconnectTimer); connect(epoch); }
+                }
+                return state();
+            }
             if (operation === 'host') {
-                await close(); await ensure();
+                await close({ forget: true }); await ensure();
                 const hosts = [...new Set(Object.values(os.networkInterfaces()).flat().filter(item => item?.family === 'IPv4' && !item.internal && lanAddress(item.address)).map(item => item.address))];
                 if (address) hosts.unshift(address);
                 if (!hosts.length) throw Error('未找到局域网地址，请连接 Wi-Fi 或网线后重试');
@@ -233,7 +269,14 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 room.invite = room.invitations[0].invite;
                 server.on('connection', hostPeer); status = 'online'; emit(); return state();
             }
-            if (operation === 'join') { const invite = parseInvite(args.invite); await close(); await ensure(); room = { ...invite, role: 'guest', projectId: args.projectId,presence:blankPresence() }; status = 'reconnecting'; emit(); connect(epoch); return state(); }
+            if (operation === 'join') {
+                const invite = parseInvite(args.invite), restored = new Y.Doc();
+                try { if (args.data) Y.applyUpdate(restored, Buffer.from(args.data, 'base64')); }
+                catch { restored.destroy(); throw Error('协作恢复数据无效，原画布已保留'); }
+                await close(); await ensure(); doc.destroy(); doc = restored;
+                room = { ...invite, invite: args.invite, role: 'guest', projectId: args.projectId,presence:blankPresence() };
+                status = 'reconnecting'; saveResume(); emit(); connect(epoch); return state();
+            }
             if (operation === 'presence') {
                 if (!room) throw Error('协作房间已关闭');
                 room.presence = readPresence(args.presence);
@@ -244,6 +287,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
             if (operation === 'update') {
                 if (!room) throw Error('协作房间已关闭');
                 const data = Buffer.from(args.data, 'base64'); Y.applyUpdate(doc, data, 'local');
+                saveResume();
                 if (room.role === 'host') void broadcast({ type: 'update', data: data.toString('base64') });
                 else if (status === 'online') { const peer=socket; void send(peer, { type: 'update', data: data.toString('base64') }).catch(()=>peer?.terminate()); }
                 return state();

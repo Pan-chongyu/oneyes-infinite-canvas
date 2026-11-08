@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, connect } from 'node:net';
@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const Y = require('yjs');
 const { createCollaboration, parseInvite, lanAddress } = require('../desktop/collaboration.cjs');
+const { createVault } = require('../desktop/vault.cjs');
 const { WebSocket } = require('ws');
 const wait = async predicate => { const until = Date.now() + 12000; while (!await predicate()) { if (Date.now() > until) throw Error('协作测试等待失败'); await new Promise(resolve => setTimeout(resolve, 20)); } };
 const snapshot = async service => { const doc = new Y.Doc(); Y.applyUpdate(doc, Buffer.from((await service.call('snapshot')).data, 'base64')); return doc; };
@@ -100,6 +101,42 @@ test('an initial encrypted send failure on either side reconnects without an unh
             await wait(async () => (await snapshot(guest)).getMap('test').get('retained') === 'after reconnect');
         } finally { await guest.close(); await host.close(); await rm(directory, { recursive: true, force: true }); }
     });
+});
+
+test('encrypted guest recovery survives restart with the same Yjs identities, reconnects, and forgets explicit exits', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'canvas-lan-resume-'));
+    const vault = createVault(directory, 'collaboration'), host = createCollaboration({ directory, address: '127.0.0.1' });
+    let guest = createCollaboration({ directory, vault });
+    try {
+        const room = await host.call('host'), doc = new Y.Doc(); doc.getMap('test').set('original', 'kept');
+        await host.call('update', { data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') });
+        await guest.call('join', { projectId: 'replica', invite: room.invite });
+        await wait(async () => (await snapshot(guest)).getMap('test').get('original') === 'kept');
+        const local = await snapshot(guest); local.getMap('test').set('guest', 'before restart');
+        await guest.call('update', { data: Buffer.from(Y.encodeStateAsUpdate(local)).toString('base64') });
+        await guest.close();
+        const encrypted = await readFile(join(directory, 'collaboration.enc'));
+        assert.equal(encrypted.includes(Buffer.from(room.invite)), false, 'room credentials are encrypted at rest');
+        assert.equal(encrypted.includes(Buffer.from('before restart')), false);
+        guest = createCollaboration({ directory, vault: createVault(directory, 'collaboration') });
+        assert.deepEqual(await guest.call('saved', { projectId: 'unrelated' }), {}, 'never reconnect an unrelated canvas');
+        const saved = await guest.call('saved', { projectId: 'replica' });
+        const remote = await snapshot(host); remote.getMap('test').set('host-offline', 'during restart');
+        await host.call('update', { data: Buffer.from(Y.encodeStateAsUpdate(remote)).toString('base64') });
+        await guest.call('join', { projectId: 'replica', ...saved });
+        await wait(async () => (await snapshot(guest)).getMap('test').get('host-offline') === 'during restart');
+        assert.equal((await snapshot(guest)).getMap('test').get('guest'), 'before restart');
+        await guest.call('reconnect'); await wait(() => guest.state().status === 'reconnecting');
+        const offline = await snapshot(guest); offline.getMap('test').set('offline', 'retained');
+        await guest.call('update', { data: Buffer.from(Y.encodeStateAsUpdate(offline)).toString('base64') });
+        await wait(() => guest.state().status === 'online');
+        await wait(async () => (await snapshot(host)).getMap('test').get('offline') === 'retained');
+        assert.equal(host.state().members, 2, 'only one guest connection remains');
+        await guest.call('leave'); assert.deepEqual(await guest.call('saved', { projectId: 'replica' }), {});
+        await guest.call('join', { projectId: 'replica', invite: room.invite }); await wait(() => guest.state().status === 'online');
+        await host.close(); await wait(() => guest.state().status === 'offline');
+        assert.deepEqual(await guest.call('saved', { projectId: 'replica' }), {}, 'host end clears automatic recovery');
+    } finally { await guest.close(); await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test('live operations and presence bypass a paused original transfer and disappear after leaving',async t=>{

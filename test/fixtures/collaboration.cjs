@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const assert = require('node:assert/strict');
 const { createCollaboration } = require('../../desktop/collaboration.cjs');
+const { createVault } = require('../../desktop/vault.cjs');
 const { route } = require('../../desktop/protocol.cjs');
 const trace = value => require('node:fs').appendFileSync(join(process.env.CANVAS_COLLABORATION_TEST_ROOT, 'trace.log'), value + '\n');
 trace('entry'); process.on('exit', code => trace('exit ' + code)); app.on('will-quit', () => trace('will-quit'));
@@ -23,7 +24,7 @@ app.whenReady().then(async () => {
         windows.push(win);
         win.webContents.on('console-message', event => { if (event.level === 'error') trace('renderer ' + event.message); });
         win.webContents.on('render-process-gone', (_event, details) => trace('renderer-gone ' + JSON.stringify(details)));
-        const service = createCollaboration({ directory, address: '127.0.0.1', changed: value => { if (!win.isDestroyed()) win.webContents.send('collaboration:event', value); } });
+        const service = createCollaboration({ directory, vault: createVault(join(directory, 'resume-' + win.webContents.id), 'collaboration'), address: '127.0.0.1', changed: value => { if (!win.isDestroyed()) win.webContents.send('collaboration:event', value); } });
         services.set(win.webContents.id, service);
         win.webContents.session.protocol.handle('oneyes-canvas', async request => request.url.startsWith('oneyes-canvas://app/collaboration/') ? service.request(request) : net.fetch(route(request.url, process.env.CANVAS_COLLABORATION_TEST_ROOT).file));
         await win.loadURL('oneyes-canvas://app/'); trace('loaded'); await wait(win, '!!window.collabTest'); trace('test-ready'); return win;
@@ -43,6 +44,7 @@ app.whenReady().then(async () => {
         const invite = await js(a, 'collabTest.room().invite');
         await js(b, `collabTest.join(${JSON.stringify(invite)})`);
         await wait(b, 'collabTest.room().status === "online" && collabTest.state().nodes.some(n=>n.id==="text")');
+        await wait(b, 'document.querySelector("[data-collaboration-status=online]")?.textContent.includes("2人")');
         assert.equal(await js(b, 'collabTest.originalProjects().length'), 2, 'joining preserves the original canvas');
         await Promise.all([js(a, 'collabTest.modify("text",{position:{x:250,y:180}})'), js(b, 'collabTest.modify("text",{title:"协作者标题"})')]);
         await wait(a, 'collabTest.state().nodes[0].title === "协作者标题"');
@@ -81,12 +83,31 @@ app.whenReady().then(async () => {
         assert.deepEqual(await js(b, 'collabTest.bytes()'), await js(a, 'collabTest.bytes()'));
         assert.equal(await js(b, 'document.querySelector("img").naturalWidth'), 17);
         await js(b, 'collabTest.save()');
+        const beforeRestart = await js(b, 'collabTest.state().id');
+        await services.get(b.webContents.id).close();
+        await js(a, 'collabTest.modify("text",{title:"重连保留的共享标题"})');
+        await b.webContents.reload();
+        await wait(b, '!!window.collabTest && collabTest.room().status==="online" && collabTest.state().nodes.find(n=>n.id==="text")?.title==="重连保留的共享标题" && document.querySelector("img")?.naturalWidth===17');
+        assert.equal(await js(b, 'collabTest.state().id'), beforeRestart, 'automatically resume the same replica instead of importing another project');
+        assert.equal(await js(b, 'collabTest.originalProjects().length'), 2);
+        await js(b, 'window.dispatchEvent(new Event("offline"))');
+        await wait(b, 'collabTest.room().status==="reconnecting" && !!document.querySelector("[data-collaboration-status=reconnecting]")');
+        await js(b, 'collabTest.modify("text",{title:"断网时编辑后自动合并"})');
+        if (process.env.CANVAS_COLLABORATION_SCREENSHOT) {
+            b.showInactive(); await js(b, 'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            await fs.writeFile(process.env.CANVAS_COLLABORATION_SCREENSHOT.replace('.png', '-reconnecting.png'), (await b.webContents.capturePage()).toPNG());
+        }
+        await js(b, 'window.dispatchEvent(new Event("online"))');
+        await wait(b, 'collabTest.room().status==="online" && !!document.querySelector("[data-collaboration-status=online]")');
+        await wait(a, 'collabTest.state().nodes.find(n=>n.id==="text").title==="断网时编辑后自动合并"');
+        assert.deepEqual(await js(b, 'collabTest.bytes()'), await js(a, 'collabTest.bytes()'));
         await js(a, 'collabTest.leave()');
         await wait(b, 'collabTest.room().status === "offline" && !collabTest.room().role');
         assert.equal(await js(b,'collabTest.room().peers.length'),0,'departed collaborators leave no stale cursor');
         assert.equal(await js(b, 'collabTest.state().nodes.length'), 3);
         assert.equal(await js(b, 'collabTest.state().nodes.find(n=>n.id==="image").metadata.imageTaskId'), undefined);
         await js(b, 'collabTest.save()'); await b.webContents.reload(); await wait(b, '!!window.collabTest && document.querySelector("img")?.naturalWidth === 17');
+        assert.equal(await js(b, 'collabTest.room().role'), undefined, 'host end does not restart collaboration after reload');
         assert.equal(await js(b, 'collabTest.state().nodes.length'), 3, 'a reopened local replica keeps its nodes and original image');
         const replica = await js(b, 'collabTest.state().id');
         const original = await js(b, 'collabTest.originalProjects().find(p=>p.id!==collabTest.state().id).id');
@@ -96,6 +117,6 @@ app.whenReady().then(async () => {
         assert.equal(await js(b, 'collabTest.state().nodes[0].title'), '共创文字', 'opening the original canvas does not import the collaboration snapshot');
         assert.equal(await js(b, `collabTest.originalProjects().find(p=>p.id===${JSON.stringify(replica)}).nodes.length`), 3, 'leaving by navigation flushes only the shared project');
         await fs.writeFile(join(process.env.CANVAS_COLLABORATION_TEST_ROOT, 'collaboration-result.json'), JSON.stringify({ passed: true }));
-        console.log('COLLABORATION_UI_OK: real held drag/resize and typing, scaled presence/selection and cleanup, field/text merge, local undo, native originals, copy retained');
+        console.log('COLLABORATION_UI_OK: live status, automatic encrypted room recovery, online/offline reconnect and merge, held drag/resize/typing, local undo, originals and explicit exit retained');
     } finally { await Promise.allSettled([...services.values()].map(service => service.close())); windows.forEach(win => win.destroy()); await fs.rm(directory, { recursive: true, force: true }); }
 }).then(() => app.exit(0)).catch(error => { trace('error ' + error.stack); console.error(error); app.exit(1); });

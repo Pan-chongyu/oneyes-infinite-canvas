@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, nativeTheme, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, nativeTheme, Tray, Menu, nativeImage, powerMonitor } = require('electron');
 const { join, resolve } = require('node:path');
 const { createDiagnostics } = require('./diagnostics.cjs');
 const { createVault } = require('./vault.cjs');
@@ -70,10 +70,11 @@ app.whenReady().then(async () => {
         onRecovered: (stage, operation) => { void diagnostics.recover({ component: 'update', stage, operation }); },
         changed: state => { if (window && !window.isDestroyed()) window.webContents.send('update:state', state); },
         install: async plan => { const apply = await prepareInstall(plan); await apply(); app.quit(); } });
-    const collaboration = createCollaboration({ directory: join(app.getPath('userData'), 'collaboration'), changed: state => {
+    const collaboration = createCollaboration({ directory: join(app.getPath('userData'), 'collaboration'), vault: createVault(app.getPath('userData'), 'collaboration'), changed: state => {
         if (!window || window.isDestroyed()) return;
         window.webContents.send('collaboration:event', state);
     } });
+    powerMonitor.on('resume', () => { void collaboration.call('reconnect').catch(() => {}); });
     let diagnosticsClosed = false;
     app.on('before-quit', event => {
         if (diagnosticsClosed) return;

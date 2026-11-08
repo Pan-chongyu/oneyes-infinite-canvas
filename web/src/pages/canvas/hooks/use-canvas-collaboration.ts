@@ -12,6 +12,7 @@ const empty = (): SharedCanvas => ({ title: '', nodes: [], connections: [] });
 const native = () => window.oneYesDesktop?.collaboration;
 const state = useCollaborationStore;
 let session: { projectId: string; doc: Y.Doc; baseline: SharedCanvas; canonical:WeakMap<CanvasNodeData,CanvasNodeData>; undo: Y.UndoManager; origin: 'host' | 'guest'; ready: boolean; assets: Set<string>; jobs: Map<string, Promise<void>>; assetRun?: Promise<void>; assetDirty?: boolean; unsubscribe: () => void; apply?: () => void; flush?: () => void; serial: Promise<unknown>; abort: AbortController } | undefined;
+let lifecycle = 0;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '协作同步失败，请检查局域网连接后重试';
 const blobFor = (key: string) => key.startsWith('image:') ? getImageBlob(key) : getMediaBlob(key);
 const assetUrl = (hash: string) => `oneyes-canvas://app/collaboration/assets/${hash}`;
@@ -57,7 +58,7 @@ async function syncAssets(active: NonNullable<typeof session>) {
     }
 }
 function retryAssets() {
-    const active = session; if (!active) return;
+    const active = session; if (!active || state.getState().status !== 'online') return;
     if (active.assetRun) { active.assetDirty = true; return; }
     if (![...sharedAssetKeys(readSharedCanvas(active.doc).nodes)].some(key=>!active.assets.has(key))) return;
     state.setState({ error: undefined, syncing: true });
@@ -68,6 +69,7 @@ function retryAssets() {
     }).catch(error => { if (active === session && !active.abort.signal.aborted) state.setState({ syncing: false, error: errorMessage(error) }); }).finally(() => { active.assetRun = undefined; });
 }
 async function leave() {
+    lifecycle++;
     const active = session;
     active?.flush?.(); active?.abort.abort(); active?.unsubscribe(); await flushCanvasStorage(); await active?.serial;
     if (active) { active.undo.destroy(); active.doc.destroy(); }
@@ -75,13 +77,15 @@ async function leave() {
     await native()?.call('leave');
     state.setState({ status: 'offline', role: undefined, roomId: undefined, invite: undefined, invitations: undefined, projectId: undefined, members: 0, error: undefined, syncing: false, canUndo: false, canRedo: false,peers:[],publishPresence:undefined });
 }
-async function start(role: 'host' | 'guest', projectId: string, initial: SharedCanvas, invite?: string) {
-    await leave();
+async function start(role: 'host' | 'guest', projectId: string, initial: SharedCanvas, invite?: string, restored?: string) {
     const doc = new Y.Doc();
+    try { if (restored) Y.applyUpdate(doc, base64ToBytes(restored), REMOTE_EDIT); }
+    catch { doc.destroy(); throw Error('协作恢复数据无效，原画布与恢复记录已保留'); }
+    await leave();
     if (role === 'host') patchSharedCanvas(doc, canonicalCanvas(initial), empty());
     const undo = new Y.UndoManager([doc.getMap('nodes'), doc.getMap('connections'), doc.getMap('meta')], { trackedOrigins: new Set([LOCAL_EDIT]) });
     const undoAction = trackSharedUndoAction(undo);
-    const active: NonNullable<typeof session> = { projectId, doc, undo, baseline: role === 'host' ? canonicalCanvas(initial) : empty(),canonical:new WeakMap(), origin: role, ready: role === 'host', assets: new Set(), jobs: new Map(), unsubscribe: () => {}, serial: Promise.resolve(), abort: new AbortController() };
+    const active: NonNullable<typeof session> = { projectId, doc, undo, baseline: role === 'host' ? canonicalCanvas(initial) : restored ? readSharedCanvas(doc) : empty(),canonical:new WeakMap(), origin: role, ready: role === 'host' || Boolean(restored), assets: new Set(), jobs: new Map(), unsubscribe: () => {}, serial: Promise.resolve(), abort: new AbortController() };
     session = active;
     state.setState({ projectId, error: undefined, status: role === 'host' ? 'online' : 'reconnecting', role });
     let updates:Uint8Array[]=[];
@@ -98,8 +102,12 @@ async function start(role: 'host' | 'guest', projectId: string, initial: SharedC
         if (session !== active) return;
         if (event.kind === 'state') {
             const reconnected = event.status === 'online' && state.getState().status === 'reconnecting';
-            state.setState({ status: event.status, role: event.role, roomId: event.roomId, invite: event.invite, invitations: event.invitations, members: event.members });
-            if (event.status === 'online') { if (reconnected && active.origin === 'guest') active.assets.clear(); retryAssets(); }
+            state.setState({ status: event.status, role: event.role, roomId: event.roomId, invite: event.invite, invitations: event.invitations, members: event.members, ...(event.status === 'online' ? { error: undefined } : { syncing: false }) });
+            if (event.status === 'online') {
+                if (reconnected && active.origin === 'guest') { active.assets.clear(); if (active.assetRun) void active.assetRun.then(retryAssets); }
+                retryAssets();
+            }
+        } else if (event.kind === 'error') { state.setState({ error: event.message });
         } else if (event.kind === 'presence') { state.setState({peers:event.peers || []}); }
         else if (event.kind === 'update' && event.data) {
             try { active.flush?.(); Y.applyUpdate(doc, base64ToBytes(event.data), REMOTE_EDIT); active.ready = true; active.apply?.(); retryAssets(); }
@@ -120,10 +128,10 @@ async function start(role: 'host' | 'guest', projectId: string, initial: SharedC
     };
     active.unsubscribe = () => { unsubscribe(); doc.off('update', transmit);if(presenceFrame!==undefined)cancelAnimationFrame(presenceFrame); };
     try {
-        const result = await native()!.call(role === 'host' ? 'host' : 'join', { projectId, ...(invite ? { invite } : {}) });
+        const result = await native()!.call(role === 'host' ? 'host' : 'join', { projectId, ...(invite ? { invite } : {}), ...(restored ? { data: restored } : {}) });
         state.setState(result);
         doc.on('update', transmit);
-        if (role === 'host') { await native()!.call('update', { data: bytesToBase64(Y.encodeStateAsUpdate(doc)) }); undo.clear(); retryAssets(); }
+        if (role === 'host' || restored) { await native()!.call('update', { data: bytesToBase64(Y.encodeStateAsUpdate(doc)) }); undo.clear(); retryAssets(); }
     } catch (error) { await leave(); throw error; }
     state.setState({ leave, retry: retryAssets,publishPresence, undo: () => { active.flush?.(); undo.stopCapturing(); undo.undo(); active.apply?.(); }, redo: () => { active.flush?.(); undo.stopCapturing(); undo.redo(); active.apply?.(); } });
 }
@@ -138,7 +146,7 @@ export function useCanvasCollaboration({ projectId, nodes, connections, title, s
     const roomProject = state(value => value.projectId), activeStatus = state(value => value.status);
     useLayoutEffect(() => {
         const active = session;
-        if (!loaded || !active || active.projectId !== projectId || !active.ready) return;
+        if (!loaded || !active || active.projectId !== projectId || !active.ready || !active.apply) return;
         const next = canonicalCanvas(latest.current,active.canonical);
         patchSharedCanvas(active.doc, next, active.baseline); active.baseline = next;
         retryAssets();
@@ -189,11 +197,22 @@ export function useCanvasCollaboration({ projectId, nodes, connections, title, s
         });
     }, [loaded, navigate, projectId]);
     useEffect(() => {
+        if (!loaded || !native() || session) return;
+        let cancelled = false; const current = lifecycle;
+        void native()!.call('saved', { projectId }).then(async saved => {
+            if (!cancelled && !session && lifecycle === current && saved.invite && saved.data) await start('guest', projectId, latest.current, saved.invite, saved.data);
+        }).catch(error => { if (!cancelled) state.setState({ error: errorMessage(error) }); });
+        return () => { cancelled = true; };
+    }, [loaded, projectId]);
+    useEffect(() => {
         if (roomProject && roomProject !== projectId) void leave().catch(error => state.setState({ error: errorMessage(error) }));
     }, [projectId]);
     useEffect(() => {
-        const online = () => retryAssets(); window.addEventListener('online', online); return () => window.removeEventListener('online', online);
-    }, []);
+        const reconnect = () => { if (session?.projectId === projectId && state.getState().role === 'guest') void native()?.call('reconnect').catch(error => state.setState({ error: errorMessage(error) })); };
+        const online = () => { reconnect(); retryAssets(); };
+        window.addEventListener('online', online); window.addEventListener('offline', reconnect);
+        return () => { window.removeEventListener('online', online); window.removeEventListener('offline', reconnect); };
+    }, [projectId]);
     useEffect(() => () => {
         const previous = projectId;
         queueMicrotask(() => { if (session?.projectId === previous && location.pathname !== `/canvas/${previous}`) void leave().catch(error => state.setState({ error: errorMessage(error) })); });
