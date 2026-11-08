@@ -22,11 +22,13 @@ app.whenReady().then(async () => {
         win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
         win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
     };
-    const drag = (point, dx, dy) => {
+    const drag = async (point, dx, dy) => {
+        await js('window.playbackPointerUp=false;window.addEventListener("mouseup",()=>requestAnimationFrame(()=>{window.playbackPointerUp=true}),{once:true,capture:true})');
         win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
         win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
         win.webContents.sendInputEvent({ type: 'mouseMove', x: point.x + dx, y: point.y + dy });
         win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: point.x + dx, y: point.y + dy });
+        await wait('window.playbackPointerUp');
     };
     // Inspect Chromium's actual controls rather than clicking a replacement button.
     win.webContents.debugger.attach('1.3');
@@ -45,7 +47,16 @@ app.whenReady().then(async () => {
         win.focus(); await wait(() => win.isFocused());
         win.webContents.sendInputEvent({ type: 'mouseMove', ...await controlPoint(pseudo) });
         await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        click(await controlPoint(pseudo));
+        let point, previous;
+        await wait(async () => {
+            point = await controlPoint(pseudo);
+            const location = await win.webContents.debugger.sendCommand('DOM.getNodeForLocation', { ...point, includeUserAgentShadowDOM: true });
+            const { node } = await win.webContents.debugger.sendCommand('DOM.describeNode', { backendNodeId: location.backendNodeId });
+            const attrs = node.attributes || [], hit = attrs.some((value, index) => index % 2 === 0 && value === 'pseudo' && attrs[index + 1] === pseudo);
+            const stable = previous?.x === point.x && previous?.y === point.y; previous = point;
+            return hit && stable;
+        });
+        click(point);
     };
     try {
         configurePermissions(win.webContents.session);
@@ -53,7 +64,9 @@ app.whenReady().then(async () => {
         win.show(); if (process.platform === 'darwin') app.focus({ steal: true }); win.focus();
         await wait(() => win.isFocused());
         await wait('!!window.playbackTest && document.querySelector("video").readyState >= 2');
+        await js('window.playbackTrace=[];for(const type of ["play","pause","seeking","seeked","mousedown","mouseup","click"]){document.addEventListener(type,event=>{const video=document.querySelector("video");window.playbackTrace.push({type,time:video.currentTime,paused:video.paused,x:event.clientX,y:event.clientY,events:{...playbackTest.events()}})},{capture:true})}');
         for (const [scale, dark] of [[1, false], [0.7, true]]) {
+            console.log('VIDEO_SCALE_CASE', scale, dark);
             // Dragging the video body can toggle playback on macOS. Isolate each scale case.
             await js(`playbackTest.configure(${scale},${dark});document.querySelector("video").pause();document.querySelector("video").currentTime=0`);
             await wait('document.querySelector("video").paused && !document.querySelector("video").seeking');
@@ -79,13 +92,12 @@ app.whenReady().then(async () => {
             const events = await js('playbackTest.events()');
             assert.equal(events.drag, 0); assert.equal(events.resize, 0); assert.equal(events.background, 0); assert.equal(events.viewport, 0);
             // Video content outside the native controls remains a node drag target.
-            drag(middle, 32, 12);
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await drag(middle, 32, 12);
             assert.equal((await js('playbackTest.events()')).drag, 1, 'video content outside the controls still starts node dragging');
         }
         console.log('VIDEO_PLAYBACK_NATIVE_OK: native play/fullscreen, Escape, scaled canvas, light/dark, no control drag, video drag preserved');
     } catch (error) {
-        console.error('Playback state:', await js('(()=>{const video=document.querySelector("video"),rect=video?.getBoundingClientRect();return {focused:document.hasFocus(),paused:video?.paused,ended:video?.ended,readyState:video?.readyState,currentTime:video?.currentTime,error:video?.error?.message,rect:rect?.toJSON()}})()'));
+        console.error('Playback state:', JSON.stringify(await js('(()=>{const video=document.querySelector("video"),rect=video?.getBoundingClientRect();return {focused:document.hasFocus(),paused:video?.paused,ended:video?.ended,readyState:video?.readyState,currentTime:video?.currentTime,error:video?.error?.message,rect:rect?.toJSON(),events:playbackTest.events(),trace:window.playbackTrace}})()')));
         throw error;
     } finally { win.webContents.debugger.detach(); win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });
