@@ -4,6 +4,44 @@ const { mkdtempSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 app.setPath('userData', mkdtempSync(join(tmpdir(), 'canvas-update-ui-')));
+async function nativeReleaseRedirect() {
+    const { createServer } = require('node:http');
+    const { createNativeFetch } = require('../../desktop/native-fetch.cjs');
+    const { createReleaseFetcher } = require('../../desktop/release-fetch.cjs');
+    const native = createNativeFetch(net), payload = Buffer.from('official fixture bytes');
+    let downloads = 0, waiting, cancelled;
+    const requested = new Promise(resolve => { waiting = resolve; }), disconnected = new Promise(resolve => { cancelled = resolve; });
+    const server = createServer((request, response) => {
+        if (request.url === '/probe') { response.end(); return; }
+        if (request.url === '/wait') { request.on('close', cancelled); waiting(); return; }
+        if (request.url.endsWith('/latest')) { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ assets: [{ name: 'probe.bin', id: 1, state: 'uploaded' }] })); return; }
+        if (request.url.includes('/assets/1') || request.url === '/redirect') { response.writeHead(302, { Location: 'https://release-assets.githubusercontent.com/fixture/file' }); response.end(); return; }
+        if (request.url === '/fixture/file') {
+            downloads++; assert.equal(request.headers.authorization, undefined); assert.equal(request.headers.cookie, undefined);
+            assert.equal(request.headers.range, 'bytes=2-'); assert.equal(request.headers['if-range'], '"fixture"');
+            response.writeHead(206, { 'Content-Range': `bytes 2-${payload.length - 1}/${payload.length}` }); response.end(payload.subarray(2)); return;
+        }
+        response.writeHead(503, { 'Content-Type': 'application/json' }); response.end('{"unavailable":true}');
+    });
+    for (;;) {
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        try { await (await fetch(`http://127.0.0.1:${server.address().port}/probe`)).arrayBuffer(); break; }
+        catch (error) { await new Promise(resolve => server.close(resolve)); if (error.cause?.message !== 'bad port') throw error; }
+    }
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    try {
+        const redirect = await native(origin + '/redirect', { redirect: 'manual' });
+        assert.equal(redirect.status, 302); assert.equal(downloads, 0); assert.equal(new URL(redirect.headers.get('location')).hostname, 'release-assets.githubusercontent.com');
+        const download = createReleaseFetcher({ token: 'fixture-secret', request: (url, init) => native(origin + new URL(url).pathname, init) });
+        const response = await download('https://github.com/owner/repo/releases/latest/download/probe.bin', { headers: { Range: 'bytes=2-', 'If-Range': '"fixture"' } });
+        assert.equal(response.status, 206); assert.deepEqual(Buffer.from(await response.arrayBuffer()), payload.subarray(2)); assert.equal(downloads, 1);
+        const failed = await native(origin + '/failed', { redirect: 'manual' }); assert.equal(failed.status, 503); assert.deepEqual(await failed.json(), { unavailable: true });
+        const abort = new AbortController(), pending = native(origin + '/wait', { redirect: 'manual', signal: abort.signal });
+        await requested; abort.abort(); await assert.rejects(pending, { name: 'AbortError' }); await disconnected;
+        await assert.rejects(native(origin + '/wait', { redirect: 'manual', signal: abort.signal }), { name: 'AbortError' });
+        console.log('NATIVE_RELEASE_API_OK: manual redirect headers, official asset range, no credential forwarding, HTTP failure and abort');
+    } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+}
 async function nativeResume() {
     const { createServer } = require('node:http');
     const { generateKeyPairSync, sign, createHash } = require('node:crypto');
@@ -110,6 +148,7 @@ app.whenReady().then(async () => {
     const js = async code => { try { return await win.webContents.executeJavaScript(code); } catch(error) { throw new Error(code + ': ' + error.message); } };
     const wait = async condition => { const end = Date.now() + 20000; while (!await js(condition)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
     try {
+        await nativeReleaseRedirect();
         await nativeResume();
         await nativeBlockResume();
         await win.loadURL(process.argv[2]);

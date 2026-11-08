@@ -74,6 +74,10 @@ jobs:
       - name: Install Linux packaging tools
         if: matrix.target == 'linux'
         run: sudo apt-get update -qq && sudo apt-get install -y rpm libfuse2t64 xvfb
+      - name: Resolve Electron and packaging tools through the official asset API
+        run: node scripts/build-resource-relay.mjs start "${{ runner.temp }}/canvas-build-relay.json"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npm ci
       - run: npm ci --prefix web
       - run: npm ci --prefix canvas-agent --include=optional
@@ -147,6 +151,10 @@ jobs:
             desktop-dist/*.deb
             desktop-dist/*.rpm
           if-no-files-found: error
+      - name: Stop build resource relay
+        if: always()
+        continue-on-error: true
+        run: node scripts/build-resource-relay.mjs stop "${{ runner.temp }}/canvas-build-relay.json"
   delta:
     if: github.ref_type == 'tag'
     needs: [build, ota-base]

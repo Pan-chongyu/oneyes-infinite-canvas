@@ -7,6 +7,13 @@ import {randomBytes} from 'node:crypto';
 import {promisify} from 'node:util';
 import toml from '@iarna/toml';
 
+// CI uses the same verified bytes through the official asset API when the
+// GitHub webpage download entry is unavailable. The application path is unchanged.
+if (process.env.CI && process.env.ONEYES_BUILD_ASSET_RELAY) {
+  const request = globalThis.fetch;
+  globalThis.fetch = (url, init) => request(String(url).replace('https://github.com/astral-sh/uv/releases/download/', process.env.ONEYES_BUILD_ASSET_RELAY + '/uv/'), init);
+}
+
 if(process.platform!=='win32')throw new Error('Windows-only dependency smoke test');
 const directory=await mkdtemp(path.join(tmpdir(),'oneyes-windows-mcp-'));
 process.env.CODEX_HOME=directory;

@@ -19,6 +19,11 @@ test("director history groups a field edit, keeps independent snapshots and inva
     locked.objects[0].name = "caller mutated";
     assert.deepEqual(history.undo(), second);
     assert.notEqual(history.redo()!.objects[0].name, locked.objects[0].name);
+    const shared = structuredClone(original); shared.camera.lens = 70;
+    assert.equal(history.sync(shared), true); assert.equal(history.canUndo, false); assert.equal(history.canRedo, false);
+    const local = structuredClone(shared); local.camera.lens = 85;
+    history.commit(local); assert.equal(history.sync(local), false);
+    assert.deepEqual(history.undo(), shared, 'new local edits undo to the latest shared scene');
 });
 
 test("director scene exchange preserves articulation, materials, lights and ordered shot notes as independent data", () => {

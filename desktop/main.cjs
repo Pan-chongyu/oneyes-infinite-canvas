@@ -11,6 +11,8 @@ const { createAgent } = require('./agent.cjs');
 const { createNetwork } = require('./network.cjs');
 const { createModelCatalog } = require('./models.cjs');
 const { createUpdater } = require('./updater.cjs');
+const { createReleaseFetcher } = require('./release-fetch.cjs');
+const { createNativeFetch } = require('./native-fetch.cjs');
 const { updateTarget } = require('./update-platform.cjs');
 const { prepareInstall } = require('./update-install.cjs');
 const { windowChromeOptions, syncWindowTheme } = require('./window-chrome.cjs');
@@ -47,7 +49,7 @@ app.whenReady().then(async () => {
     } catch { /* Preserve unreadable diagnostics without blocking startup. */ }
     process.on('uncaughtExceptionMonitor', error => report('app', 'crash', error));
     const saved = await vault.read(); // Refuse to overwrite an unreadable vault.
-    const network = await createNetwork((...args) => net.fetch(...args));
+    const network = await createNetwork(createNativeFetch(net));
     const media = createMediaTools({ directory: app.getPath('userData'), binaries: app.isPackaged ? join(process.resourcesPath, 'media-bin') : join(__dirname, 'media-bin'),
         onError: (error, stage, operation) => { void diagnostics.report({ component: 'media', stage, operation, error }); },
         changed: state => { if (window && !window.isDestroyed()) window.webContents.send('media:state', state); } });
@@ -62,7 +64,7 @@ app.whenReady().then(async () => {
     }
     const agent = createAgent({ directory: app.getPath('userData'), onError: (error, stage) => report('agent', stage, error), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
         ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
-    const updater = createUpdater({ currentVersion: app.getVersion(), directory: app.getPath('userData'), target: () => updateTarget(), fetcher: network.fetch,
+    const updater = createUpdater({ currentVersion: app.getVersion(), directory: app.getPath('userData'), target: () => updateTarget(), fetcher: createReleaseFetcher({ request: network.fetch }),
         enabled: app.isPackaged && !smoke,
         onError: (error, stage, operation) => { void diagnostics.report({ component: 'update', stage, operation, error }); },
         onRecovered: (stage, operation) => { void diagnostics.recover({ component: 'update', stage, operation }); },

@@ -94,6 +94,7 @@ export function directorHistory(initial: DirectorScene) {
             return true;
         },
         end() { editing = undefined; },
+        sync(next: DirectorScene) { if (JSON.stringify(next) === JSON.stringify(present)) return false; present = structuredClone(next); past = []; future = []; editing = undefined; return true; },
         undo() { const previous = past.pop(); if (!previous) return; future.push(present); present = previous; editing = undefined; return structuredClone(present); },
         redo() { const next = future.pop(); if (!next) return; past.push(present); present = next; editing = undefined; return structuredClone(present); },
         get canUndo() { return past.length > 0; }, get canRedo() { return future.length > 0; },

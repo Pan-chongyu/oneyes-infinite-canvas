@@ -41,6 +41,7 @@ function Fixture() {
  const node=nodes.find(n=>n.id==='director'),theme=canvasThemes[dark?'dark':'light'];
  Object.assign(window,{directorTest:{
   state:()=>({nodes,connections,projectId}),
+  remote:(scene:any)=>flushSync(()=>setNodes(old=>old.map(item=>item.id==='director'?{...item,metadata:{...item.metadata,directorScene:scene}}:item))),
   reply:(text:string,hold=false)=>{reply.current=text;held.current=hold;},
   resolveAi:()=>{pending.current?.({text:reply.current});pending.current=null;held.current=false;},
   ai:()=>aiCalls.current,

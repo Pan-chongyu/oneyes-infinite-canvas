@@ -19,6 +19,11 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     useEffect(() => ctx.on("director:open", payload => { if (payload === ctx.node.id) start(); }), [ctx.node.id]);
     useEffect(() => { generation.current++; setOpen(false); setScene(null); return () => { generation.current++; controller.current?.abort(); }; }, [ctx.node.id, ctx.projectId]);
     const change = (next: DirectorScene) => { setScene(next); latest.current.updateMetadata({ directorScene: next }); };
+    useEffect(() => {
+        if (!open || !ctx.node.metadata?.directorScene) return;
+        try { const next=readDirectorScene(ctx.node.metadata.directorScene); setScene(previous=>JSON.stringify(previous)===JSON.stringify(next)?previous:next); }
+        catch(error) { setError(error instanceof Error?error.message:'共享场景无效，当前画面已保留'); }
+    }, [open,ctx.node.metadata?.directorScene]);
     const capture = async (blob: Blob, scene: DirectorScene,label?:string,workflow:boolean|"video"=false,note?:string,seconds?:number) => {
         if (exporting.current) return;
         exporting.current = true;
@@ -62,7 +67,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     </>;
 }
 export const directorPlugin: CanvasPlugin = {
-    id: "director", name: "3D 导演台", version: "1.4.0", description: "提示词 AI 调台与动画分镜、视频反推、关键帧预演和原尺寸分镜交付。",
+    id: "director", name: "3D 导演台", version: "1.5.0", description: "按步骤布景、排镜头、预演与交付，支持 AI 调台、视频反推、关键帧与原尺寸输出。",
     nodes: [{ type: "director:stage", title: "3D 导演台", icon: <Clapperboard size={18} />, description: "人物与道具布景、相机、灯光及原尺寸取景图", defaultSize: { width: 320, height: 190 }, hidePanel: true, renderOwnStatus: true, Content: DirectorContent,
         toolbar: ctx => [{ id: "director-open", title: "打开 3D 导演台", label: "导演台", icon: <Camera size={14} />, onClick: () => ctx.emit("director:open", ctx.node.id) }],
         onDoubleClick: ctx => { ctx.emit("director:open", ctx.node.id); return true; },

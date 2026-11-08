@@ -210,6 +210,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         check() { return serial(async () => {
             if (!enabled || closed || installation || state.status === 'installing') return;
             checking = new AbortController();
+            fetcher.reset?.();
             const check = checking;
             emit({ status: 'checking', error: '' });
             const destination = await chooseTarget();

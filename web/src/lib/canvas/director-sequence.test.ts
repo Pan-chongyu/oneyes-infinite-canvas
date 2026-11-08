@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Quaternion, Euler, MathUtils } from "three";
 import { unzipSync, strFromU8 } from "fflate";
 import { directorPreset, readDirectorScene, directorSceneFile, parseDirectorSceneFile } from "./director-scene";
-import { createDirectorShot, directorCameraMove, directorFrame, directorMotionPrompt, recordDirectorFrame, sequenceAt, sequenceDuration, shotDuration, shotListCsv, shotScene } from "./director-sequence";
+import { createDirectorShot, directorCameraMove, directorFrame, directorFrameChanged, directorMotionPrompt, recordDirectorFrame, retimeDirectorShot, sequenceAt, sequenceDuration, shotDuration, shotListCsv, shotScene } from "./director-sequence";
 import { exportDirectorBundle, storyboardHtml } from "./director-export";
 
 test("independent shots and timed frames retain full stage state without mutating saved data", () => {
@@ -37,6 +37,23 @@ test("keyframes use quaternion rotation, nondegenerate camera orientation, inter
     assert.equal(shotScene(scene,{...moving,easing:"hold"},1).camera.lens,24);assert.equal(shotScene(scene,{...moving,easing:"hold"},2).camera.lens,80);
     assert.ok(shotScene(scene,{...moving,easing:"smooth"},0.5).camera.lens < shotScene(scene,moving,0.5).camera.lens);
     const other={...moving,id:"second",duration:3};assert.equal(sequenceDuration([moving,other]),5);assert.equal(sequenceAt([moving,other],2)?.shot.id,"second");assert.equal(sequenceAt([moving,other],5)?.time,3);assert.equal(sequenceAt([],0),null);
+});
+
+test('frame status follows the edited shot and retiming preserves its motion, key identities and source dimensions', () => {
+    const scene = directorPreset(), first = createDirectorShot(scene);
+    assert.equal(directorFrameChanged(scene, first), false);
+    scene.camera.lens = 85;
+    assert.equal(directorFrameChanged(scene, first), true);
+    const shot = recordDirectorFrame(first, scene, 5), original = structuredClone(shot);
+    assert.equal(directorFrameChanged(scene, shot, 5), false);
+    assert.equal(directorFrameChanged({ ...scene, width: scene.width + 1 }, shot, 5), true);
+    const shorter = retimeDirectorShot(shot, 2), longer = retimeDirectorShot(shorter, 10);
+    assert.equal(shorter.keyframes![0].time, 2); assert.equal(longer.keyframes![0].time, 10);
+    assert.equal(shorter.keyframes![0].id, shot.keyframes![0].id);
+    assert.deepEqual(shotScene(scene, shorter, 1), shotScene(scene, shot, 2.5));
+    assert.deepEqual(shot, original);
+    assert.deepEqual(readDirectorScene({ ...scene, shots: [shorter, { ...longer, id: 'longer' }] }).shots, [shorter, { ...longer, id: 'longer' }]);
+    for (const value of [0, -1, NaN, Infinity]) assert.throws(() => retimeDirectorShot(shot, value), /时长/);
 });
 
 test("import validates snapshot objects, duration, key identities/times and safe frames without recursive shot data", () => {

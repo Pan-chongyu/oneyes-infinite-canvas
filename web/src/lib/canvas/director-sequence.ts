@@ -13,6 +13,16 @@ export function createDirectorShot(scene: DirectorScene): DirectorShot {
     const { camera, ...stage } = directorFrame(scene);
     return { id: nanoid(), name: `镜头 ${(scene.shots?.length || 0) + 1}`, camera, stage, width: scene.width, height: scene.height, duration: 5, easing: "smooth" };
 }
+export function directorFrameChanged(scene: DirectorScene, shot: DirectorShot, time = 0) {
+    const saved = shotScene(scene, shot, time);
+    return scene.width !== saved.width || scene.height !== saved.height || JSON.stringify(directorFrame(scene)) !== JSON.stringify(directorFrame(saved));
+}
+export function retimeDirectorShot(shot: DirectorShot, duration: number): DirectorShot {
+    if (!Number.isFinite(duration) || duration <= 0) throw Error('请输入大于 0 的镜头时长');
+    const keyframes = shot.keyframes?.map(key => ({ ...key, time: key.time / shotDuration(shot) * duration }));
+    if (keyframes?.some(key => !Number.isFinite(key.time) || key.time <= 0 || key.time > duration) || new Set(keyframes?.map(key => key.time)).size !== (keyframes?.length || 0)) throw Error('这个时长会使关键帧重叠，请选择其他时长');
+    return { ...shot, duration, keyframes };
+}
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 const vector = (a: DirectorVector, b: DirectorVector, t: number): DirectorVector => a.map((n, i) => mix(n, b[i], t)) as DirectorVector;
 const rotation = (a: DirectorVector, b: DirectorVector, t: number): DirectorVector => {
