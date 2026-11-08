@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { BrowserRouter, useNavigate, useParams, Routes, Route } from 'react-router-dom';
@@ -10,11 +10,14 @@ import { useCanvasStore, flushCanvasStorage } from '@/stores/canvas/use-canvas-s
 import { useCollaborationStore } from '@/stores/canvas/use-collaboration-store';
 import { CanvasCollaborationButton } from '@/components/canvas/canvas-collaboration-button';
 import { InfiniteCanvas } from '@/components/canvas/infinite-canvas';
+import { CanvasNode } from '@/components/canvas/canvas-node';
+import { CanvasCollaborationPresence } from '@/components/canvas/canvas-collaboration-presence';
 import { useThemeStore } from '@/stores/use-theme-store';
 import { getAntThemeConfig } from '@/lib/app-theme';
 import { setImageBlob, getImageBlob } from '@/services/image-storage';
 import { setMediaBlob, getMediaBlob } from '@/services/file-storage';
-import type { CanvasNodeData, CanvasConnection } from '@/types/canvas';
+import type { CanvasNodeData, CanvasConnection, ConnectionHandle, ViewportTransform } from '@/types/canvas';
+import type { CollaborationPresence } from '@/stores/canvas/use-collaboration-store';
 import { hydrateCanvasImages } from '@/lib/canvas/canvas-generation-helpers';
 
 await useCanvasStore.persist.rehydrate();
@@ -29,6 +32,13 @@ function Fixture() {
     const [nodes, setNodes] = useState<CanvasNodeData[]>(project?.nodes || []), [connections, setConnections] = useState<CanvasConnection[]>(project?.connections || []);
     const [loadedId, setLoadedId] = useState(id), [dark, setDark] = useState(false), ref = useRef<HTMLDivElement>(null);
     const loaded = loadedId === id;
+    const [selected,setSelected]=useState<Set<string>>(new Set()),[action,setAction]=useState<CollaborationPresence['action']>(null),[viewport,setViewport]=useState<ViewportTransform>({x:0,y:0,k:1}),[connection,setConnection]=useState<ConnectionHandle|null>(null);
+    const drag=useRef<{id:string;x:number;y:number;left:number;top:number}|null>(null);
+    const change=useCallback((nodeId:string,patch:Partial<CanvasNodeData>)=>setNodes(old=>old.map(node=>node.id===nodeId?{...node,...patch}:node)),[]);
+    const resize=useCallback((nodeId:string,width:number,height:number,position?:{x:number;y:number})=>change(nodeId,{width,height,...position?{position}:{}}),[change]);
+    const resizeEnd=useCallback(()=>setAction(null),[]);
+    const metadata=(nodeId:string,patch:CanvasNodeData['metadata'])=>setNodes(old=>old.map(node=>node.id===nodeId?{...node,metadata:{...node.metadata,...patch}}:node));
+    useEffect(()=>{const move=(event:MouseEvent)=>{const value=drag.current;if(value)change(value.id,{position:{x:value.left+(event.clientX-value.x)/viewport.k,y:value.top+(event.clientY-value.y)/viewport.k}});};const up=()=>{drag.current=null;setAction(null);setConnection(null);};window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);return()=>{window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);};},[viewport.k]);
     const previous = useRef(id);
     useEffect(() => { if (previous.current === id) return; previous.current = id; const source = useCanvasStore.getState().openProject(id)!; setNodes(source.nodes); setConnections(source.connections); setLoadedId(id); }, [id]);
     useCanvasCollaboration({ projectId: id, nodes, connections, title: project?.title || '测试画布', setNodes, setConnections, loaded });
@@ -37,7 +47,7 @@ function Fixture() {
         host: () => useCollaborationStore.getState().host!(), join: (invite: string) => useCollaborationStore.getState().join!(invite), leave: () => useCollaborationStore.getState().leave!(),
         room: () => useCollaborationStore.getState(), state: () => ({ id, nodes, connections, title: project?.title }),
         modify: (nodeId: string, patch: Partial<CanvasNodeData>) => flushSync(() => setNodes(old => old.map(node => node.id === nodeId ? { ...node, ...patch } : node))),
-        add: () => flushSync(() => setNodes(old => [...old, { ...seed, id: 'extra', title: '新增' }])),
+        add: () => flushSync(() => setNodes(old => [...old, { ...seed, id: 'extra', title: '新增',position:{x:650,y:180} }])),
         connect: () => flushSync(() => setConnections([{ id: 'link', fromNodeId: 'text', toNodeId: 'extra' }])),
         undo: () => useCollaborationStore.getState().undo!(), redo: () => useCollaborationStore.getState().redo!(),
         originalProjects: () => useCanvasStore.getState().projects,
@@ -52,11 +62,15 @@ function Fixture() {
         bytes: async () => ({ image: Array.from(new Uint8Array(await (await getImageBlob('image:shared'))!.arrayBuffer())), file: await (await getMediaBlob('file:shared'))?.text() }),
         save: flushCanvasStorage,
         theme: (value: boolean) => { useThemeStore.getState().setTheme(value ? 'dark' : 'light'); setDark(value); },
+        viewport:(value:ViewportTransform)=>flushSync(()=>setViewport(value)),
+        selected:(ids:string[])=>flushSync(()=>setSelected(new Set(ids))),
+        action:(value:CollaborationPresence['action'])=>flushSync(()=>setAction(value)),
     } });
     return <ConfigProvider theme={getAntThemeConfig(dark)}><App><div className="relative h-screen" style={{ background: dark ? '#181715' : '#f4f2ed' }}>
         <div className="absolute right-4 top-4 z-50"><CanvasCollaborationButton /></div>
-        <InfiniteCanvas containerRef={ref} viewport={{ x: 0, y: 0, k: 1 }} tool="select" onViewportChange={() => {}}>
-            {nodes.map(node => <section key={node.id} style={{ position: 'absolute', left: node.position.x, top: node.position.y, width: node.width, color: dark ? '#f5f5f4' : '#292524' }}><h3>{node.title}</h3>{node.type === 'image' ? <img alt="协作原图" src={node.metadata?.content} /> : <p>{node.metadata?.content}</p>}</section>)}
+        <InfiniteCanvas containerRef={ref} viewport={viewport} tool="select" onViewportChange={setViewport}>
+            {nodes.map(node => <CanvasNode key={node.id} data={node} scale={viewport.k} isSelected={selected.has(node.id)} isRelated={false} isFocusRelated={false} isConnectionTarget={false} isConnecting={action==='connect'} showPanel={false} showImageInfo={false} onMouseDown={(event,nodeId)=>{event.stopPropagation();drag.current={id:nodeId,x:event.clientX,y:event.clientY,left:node.position.x,top:node.position.y};setAction('move');}} onSelectCapture={(_event,nodeId)=>setSelected(new Set([nodeId]))} onHoverStart={()=>{}} onHoverEnd={()=>{}} onConnectStart={(event,nodeId,handleType)=>{event.stopPropagation();setSelected(new Set([nodeId]));setAction('connect');setConnection({nodeId,handleType});}} onResizeStart={()=>setAction('resize')} onResize={resize} onResizeEnd={resizeEnd} onContentChange={(nodeId,content)=>metadata(nodeId,{content})} onTitleChange={(nodeId,title)=>change(nodeId,{title})} onContextMenu={()=>{}}/>)}
+            <CanvasCollaborationPresence projectId={id} containerRef={ref} nodes={nodes} viewport={viewport} selectedNodeIds={selected} action={action} connection={connection}/>
         </InfiniteCanvas>
     </div></App></ConfigProvider>;
 }

@@ -59,7 +59,7 @@ export function ConnectionPath({
     );
 }
 
-export function ActiveConnectionPath({ node, handle, mouseWorld, target }: { node?: CanvasNodeData; handle: ConnectionHandle; mouseWorld: Position; target?: CanvasNodeData }) {
+export function ActiveConnectionPath({ node, handle, mouseWorld, target, color }: { node?: CanvasNodeData; handle: ConnectionHandle; mouseWorld: Position; target?: CanvasNodeData; color?:string }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (!node) return null;
 
@@ -74,5 +74,5 @@ export function ActiveConnectionPath({ node, handle, mouseWorld, target }: { nod
     const distance = Math.abs(snappedEndX - snappedStartX);
     const pathD = `M ${snappedStartX} ${snappedStartY} C ${snappedStartX + distance * 0.5} ${snappedStartY}, ${snappedEndX - distance * 0.5} ${snappedEndY}, ${snappedEndX} ${snappedEndY}`;
 
-    return <path d={pathD} stroke={theme.node.activeStroke} strokeWidth="2" fill="none" strokeDasharray="5,5" />;
+    return <path d={pathD} stroke={color || theme.node.activeStroke} strokeWidth="2" fill="none" strokeDasharray="5,5" />;
 }

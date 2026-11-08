@@ -101,3 +101,30 @@ test('an initial encrypted send failure on either side reconnects without an unh
         } finally { await guest.close(); await host.close(); await rm(directory, { recursive: true, force: true }); }
     });
 });
+
+test('live operations and presence bypass a paused original transfer and disappear after leaving',async t=>{
+    const directory=await mkdtemp(join(tmpdir(),'canvas-lan-live-')),hostEvents=[],guestEvents=[];
+    const host=createCollaboration({directory,address:'127.0.0.1',changed:event=>hostEvents.push(event)}),guest=createCollaboration({directory,changed:event=>guestEvents.push(event)}),other=createCollaboration({directory});
+    const original=WebSocket.prototype.send;let release,paused=false;
+    t.mock.method(WebSocket.prototype,'send',function(data,options,callback){
+        const done=typeof options==='function'?options:callback;
+        if(this._isServer&&done&&String(data).length>300000&&!paused){paused=true;return original.call(this,data,error=>{release=()=>done(error);});}
+        return original.call(this,data,options,callback);
+    });
+    try {
+        const room=await host.call('host');await guest.call('join',{invite:room.invite});await other.call('join',{invite:room.invite});await wait(()=>host.state().members===3&&guest.state().status==='online'&&other.state().status==='online');
+        const bytes=crypto.randomBytes(800000),uploaded=await put(host,bytes),{hash}=await uploaded.json();
+        const download=guest.request(new Request('oneyes-canvas://app/collaboration/assets/'+hash));await wait(()=>!!release);
+        const doc=await snapshot(guest);doc.getMap('test').set('drag','moving before media finishes');await guest.call('update',{data:Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64')});
+        const presence={cursor:{x:321,y:123},selected:['node'],action:'move'};await guest.call('presence',{presence});
+        await wait(async()=> (await snapshot(host)).getMap('test').get('drag')==='moving before media finishes' && (await snapshot(other)).getMap('test').get('drag')==='moving before media finishes');
+        await wait(()=>hostEvents.some(event=>event.kind==='presence'&&event.peers.some(peer=>peer.cursor?.x===321&&peer.action==='move')));
+        const peer=hostEvents.findLast(event=>event.kind==='presence'&&event.peers.some(peer=>peer.cursor?.x===321)).peers.find(peer=>peer.cursor?.x===321);
+        assert.deepEqual(peer.selected,['node']);assert.equal(guestEvents.findLast(event=>event.kind==='presence').peers.some(item=>item.id===peer.id),false,'own cursor is not echoed');
+        assert.equal((await snapshot(guest)).getMap('presence').size,0,'presence never enters persistent shared data');
+        await assert.rejects(guest.call('presence',{presence:{...presence,cursor:{x:Infinity,y:0}}}),/无效/);
+        release();release=undefined;const result=await download;assert.deepEqual(Buffer.from(await result.arrayBuffer()),bytes);
+        await guest.close();await wait(()=>hostEvents.findLast(event=>event.kind==='presence').peers.every(item=>item.id!==peer.id));
+        await host.close();await wait(()=>other.state().status==='offline');
+    } finally {release?.();await Promise.allSettled([host.close(),guest.close(),other.close()]);await rm(directory,{recursive:true,force:true});}
+});

@@ -1,4 +1,5 @@
 import * as Y from 'yjs';
+import { simpleDiffString } from 'lib0/diff';
 import type { CanvasConnection, CanvasNodeData } from '@/types/canvas';
 
 export const LOCAL_EDIT = Symbol('local-canvas-edit');
@@ -9,6 +10,7 @@ const privateFields = /api.?key|access.?token|refresh.?token|secret|password|aut
 const localFields = new Set(['imageTaskId', 'videoTaskId', 'videoTaskProvider', 'status', 'loadingMessage', 'errorDetails', 'taskId', 'editorOutputId', 'model', 'assistantModel', 'imageModel', 'videoModel', 'audioModel']);
 const plain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const textFields = new Set(['title','content','prompt','note']);
 
 export function sanitizeSharedValue(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(sanitizeSharedValue);
@@ -20,13 +22,14 @@ export function sanitizeSharedValue(value: unknown): unknown {
     }
     return result;
 }
-export function canonicalCanvas(canvas: SharedCanvas): SharedCanvas {
+export function canonicalCanvas(canvas: SharedCanvas, cache?: WeakMap<CanvasNodeData, CanvasNodeData>): SharedCanvas {
     const nodes = canvas.nodes.map(node => {
+        const cached=cache?.get(node); if(cached)return cached;
         const value = sanitizeSharedValue(node) as CanvasNodeData;
         const metadata = { ...(value.metadata || {}) };
         if (['image', 'video', 'audio'].includes(String(node.type)) && !metadata.storageKey && /^(?:data:|blob:|file:|https?:)/i.test(String(node.metadata?.content || ''))) delete metadata.content;
         if (Array.isArray(metadata.references)) metadata.references = metadata.references.filter(item => typeof item === 'string' && /^(image|video|audio|file|video-reference|audio-reference):.+/.test(item));
-        return { ...value, metadata };
+        const shared={ ...value, metadata }; cache?.set(node,shared); return shared;
     });
     return { ...canvas, nodes };
 }
@@ -36,7 +39,13 @@ function patchRecord(target: Y.Map<unknown>, next: Record<string, unknown>, prev
     for (const key of Object.keys(previous)) if (!(key in next)) target.delete(key);
     for (const [key, value] of Object.entries(next)) {
         if (equal(value, previous[key])) continue;
-        if (plain(value)) {
+        if (typeof value === 'string' && textFields.has(key)) {
+            let text = target.get(key);
+            if (!(text instanceof Y.Text)) { text = new Y.Text(); target.set(key,text); }
+            const change=simpleDiffString((text as Y.Text).toString(),value);
+            if(change.remove)(text as Y.Text).delete(change.index,change.remove);
+            if(change.insert)(text as Y.Text).insert(change.index,change.insert);
+        } else if (plain(value)) {
             let child = target.get(key);
             if (!(child instanceof Y.Map)) { child = new Y.Map(); target.set(key, child); }
             patchRecord(child as Y.Map<unknown>, value, plain(previous[key]) ? previous[key] : {});
@@ -98,5 +107,6 @@ export function mergeSharedWithLocal(shared: CanvasNodeData[], local: CanvasNode
         if ((value.storageKey || typeof value.content === 'string' && value.content) && !result.status) result.status = 'success';
         return result;
     };
-    return shared.map(node => restore(node, existing.get(node.id)) as CanvasNodeData);
+    const nodes=shared.map(node => {const old=existing.get(node.id),next=restore(node,old) as CanvasNodeData;return equal(next,old)?old!:next;});
+    return nodes.length===local.length&&nodes.every((node,index)=>node===local[index])?local:nodes;
 }

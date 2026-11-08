@@ -13,6 +13,12 @@ const Y = require('yjs');
 const prefix = 'ONEYESCANVAS1.';
 const hashPattern = /^[a-f0-9]{64}$/;
 const random = () => crypto.randomBytes(32).toString('base64url');
+const blankPresence = () => ({ cursor: null, selected: [], action: null,connection:null });
+function readPresence(value) {
+    if (!value || typeof value !== 'object' || (value.cursor !== null && (!value.cursor || !Number.isFinite(value.cursor.x) || !Number.isFinite(value.cursor.y))) || !Array.isArray(value.selected) || value.selected.some(id => typeof id !== 'string') || ![null,'move','resize','connect','edit'].includes(value.action)) throw Error('无效协作状态');
+    if(value.connection!=null&&(typeof value.connection.nodeId!=='string'||!['source','target'].includes(value.connection.handleType)))throw Error('无效协作连线预览');
+    return { cursor: value.cursor && {x:value.cursor.x,y:value.cursor.y}, selected: [...new Set(value.selected)], action: value.action,connection:value.connection?{nodeId:value.connection.nodeId,handleType:value.connection.handleType}:null };
+}
 function lanAddress(host) {
     if (typeof host !== 'string' || !/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
     const parts = host.split('.').map(Number);
@@ -57,10 +63,16 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
     let doc = new Y.Doc();
     const peers = new Set(), pending = new Map(), incoming = new Map(), available = new Set();
     let closing;
-    const state = () => ({ status, role: room?.role, roomId: room?.room, projectId: room?.projectId, invite: room?.invite, invitations: room?.invitations, members: room?.role === 'host' ? peers.size + 1 : status === 'online' ? 2 : 0 });
+    const state = () => ({ status, role: room?.role, roomId: room?.room, projectId: room?.projectId, invite: room?.invite, invitations: room?.invitations, members: room?.role === 'host' ? peers.size + 1 : status === 'online' ? room?.members || 2 : 0 });
     const emit = () => changed({ kind: 'state', ...state() });
     const send = (peer, value) => peer?.secure && peer.readyState === WebSocket.OPEN ? peer.secure.send(value) : Promise.reject(Error('协作连接已断开，恢复后继续同步'));
-    const broadcast = (value, except) => Promise.allSettled([...peers].filter(peer => peer !== except).map(peer => send(peer, value)));
+    const broadcast = (value, except) => Promise.allSettled([...peers].filter(peer => peer !== except).map(peer => send(peer, value).catch(() => peer.terminate())));
+    const publishPresence = () => {
+        if (room?.role !== 'host') return;
+        const list = [{id:room.peerId,name:'房主',...room.presence},...[...peers].map(peer=>({id:peer.peerId,name:`协作者 ${peer.peerId.slice(0,4)}`,...peer.presence}))];
+        changed({kind:'presence',peers:list.filter(peer=>peer.id!==room.peerId)});
+        void broadcast({type:'presence',peers:list});
+    };
     const filePath = hash => { if (!hashPattern.test(hash) || !cache) throw Error('无效素材标识'); return join(cache, hash); };
     const digest = async path => { const hash = crypto.createHash('sha256'); for await (const chunk of createReadStream(path)) hash.update(chunk); return hash.digest('hex'); };
     const publishAsset = async (temp, hash) => {
@@ -88,7 +100,17 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
             const update = Buffer.from(value.data, 'base64');
             Y.applyUpdate(doc, update, peer);
             changed({ kind: 'update', data: update.toString('base64') });
-        } else if (value.type === 'members') { changed({ kind: 'state', ...state(), members: value.count }); }
+        } else if (value.type === 'presence') {
+            if (room?.role === 'host') { peer.presence = readPresence(value.presence); publishPresence(); }
+            else {
+                if (!Array.isArray(value.peers)) throw Error('无效协作者列表');
+                const list=value.peers.map(item=>{if(typeof item.id!=='string'||typeof item.name!=='string')throw Error('无效协作者');return {id:item.id,name:item.name,...readPresence(item)};});
+                changed({kind:'presence',peers:list.filter(item=>item.id!==room?.peerId)});
+            }
+        } else if (value.type === 'members') {
+            if(room?.role!=='guest'||!Number.isSafeInteger(value.count)||value.count<1)throw Error('无效协作成员数量');
+            room.members=value.count;emit();
+        }
         else if (value.type === 'end') { if (room?.role !== 'guest') throw Error('只有房主可以结束协作'); await close(); changed({ kind: 'ended' }); return; }
         else if (value.type === 'asset-get') await sendAsset(peer, value.hash);
         else if (value.type === 'asset-start') {
@@ -111,14 +133,18 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
         } else if (value.type === 'asset-ack') { const waiter = pending.get(value.hash); pending.delete(value.hash); waiter?.resolve(); }
         else if (value.type === 'asset-missing') { const waiter = pending.get(value.hash); pending.delete(value.hash); waiter?.reject(Error('房间暂缺原始素材，请让素材所在设备保持连接后重试同步')); }
         else throw Error('不支持的协作消息');
-        if (room?.role === 'host' && value.type === 'update') await broadcast(value, peer);
+        if (room?.role === 'host' && value.type === 'update') void broadcast(value, peer);
     };
     const attach = peer => {
-        // Keep file chunks ordered while allowing control frames in the same authenticated stream.
+        // Authenticate in wire order; only file writes wait for earlier file work.
+        const current = epoch;
         peer.queue = Promise.resolve();
         peer.on('message', raw => {
             let value; try { value = peer.secure.read(raw); } catch { peer.close(); return; }
-            peer.queue = peer.queue.then(() => receive(peer, value)).catch(() => { peer.close(); });
+            if (current !== epoch) return;
+            if (!value || typeof value !== 'object') { peer.close(); return; }
+            if (['update','presence','members','end'].includes(value.type) || value.type === 'asset-get') void receive(peer,value).catch(()=>peer.close());
+            else peer.queue = peer.queue.then(() => current === epoch ? receive(peer, value) : undefined).catch(() => { peer.close(); });
         });
     };
     const hostPeer = peer => {
@@ -130,17 +156,19 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 const auth = JSON.parse(String(raw));
                 if (current !== epoch || !/^[\w-]{43}$/.test(auth.nonce) || !same(auth.proof, proof(room.secret, `guest:${challenge}:${auth.nonce}:${room.room}`))) throw Error();
                 peer.secure = channel(peer, room.secret, challenge, auth.nonce, true);
-                peer.send(JSON.stringify({ type: 'authenticated', proof: proof(room.secret, `host:${challenge}:${auth.nonce}:${room.room}`) }));
+                peer.peerId = crypto.randomBytes(8).toString('hex'); peer.presence = blankPresence();
+                peer.send(JSON.stringify({ type: 'authenticated', peerId:peer.peerId, proof: proof(room.secret, `host:${challenge}:${auth.nonce}:${room.room}:${peer.peerId}`) }));
                 peers.add(peer); attach(peer); emit();
                 void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') }).catch(() => peer.terminate());
                 void send(peer, { type: 'members', count: peers.size + 1 }).catch(() => peer.terminate());
                 void broadcast({ type: 'members', count: peers.size + 1 }, peer);
+                publishPresence();
             } catch { peer.close(); }
         });
         peer.on('close', () => {
             peers.delete(peer); const entry = incoming.get(peer); incoming.delete(peer);
             if (entry) void entry.handle.close().then(() => fs.rm(entry.path, { force: true })).catch(() => {});
-            if (current === epoch && room?.role === 'host') { emit(); void broadcast({ type: 'members', count: peers.size + 1 }); }
+            if (current === epoch && room?.role === 'host') { emit(); void broadcast({ type: 'members', count: peers.size + 1 }); publishPresence(); }
         });
     };
     const connect = current => {
@@ -155,10 +183,13 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                     if (value.room !== room.room || !/^[\w-]{43}$/.test(value.challenge)) throw Error();
                     challenge = value.challenge; nonce = random();
                     peer.send(JSON.stringify({ nonce, proof: proof(room.secret, `guest:${challenge}:${nonce}:${room.room}`) }));
-                } else if (value.type === 'authenticated' && challenge && same(value.proof, proof(room.secret, `host:${challenge}:${nonce}:${room.room}`))) {
+                } else if (value.type === 'authenticated' && challenge && same(value.proof, proof(room.secret, `host:${challenge}:${nonce}:${room.room}:${value.peerId}`))) {
+                    if (!/^[a-f0-9]{16}$/.test(value.peerId)) throw Error();
+                    room.peerId = value.peerId;
                     peer.removeListener('message', handshake); peer.secure = channel(peer, room.secret, challenge, nonce, false); attach(peer);
                     status = 'online'; emit();
                     void send(peer, { type: 'update', data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') }).catch(() => peer.terminate());
+                    void send(peer, { type:'presence',presence:room.presence }).catch(()=>peer.terminate());
                 } else throw Error();
             } catch { peer.close(); }
         };
@@ -167,6 +198,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
             if (current !== epoch) return;
             failPending(); const entry = incoming.get(peer); incoming.delete(peer);
             if (entry) void entry.handle.close().then(() => fs.rm(entry.path, { force: true })).catch(() => {});
+            room.presence = blankPresence(); changed({kind:'presence',peers:[]});
             status = 'reconnecting'; emit(); reconnectTimer = setTimeout(() => connect(current), 3000);
         });
     };
@@ -179,7 +211,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
         if (server) { for (const peer of server.clients) peer.terminate(); await new Promise(resolve => server.close(resolve)); server = undefined; }
         await Promise.allSettled([...incoming.values()].map(entry => entry.handle.close())); incoming.clear(); peers.clear();
         if (cache) await fs.rm(cache, { recursive: true, force: true }); cache = undefined; available.clear();
-        doc.destroy(); doc = new Y.Doc(); room = undefined; status = 'offline'; emit();
+        doc.destroy(); doc = new Y.Doc(); room = undefined; status = 'offline'; changed({kind:'presence',peers:[]}); emit();
         })();
         try { await closing; } finally { closing = undefined; }
     }
@@ -193,7 +225,7 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 const hosts = [...new Set(Object.values(os.networkInterfaces()).flat().filter(item => item?.family === 'IPv4' && !item.internal && lanAddress(item.address)).map(item => item.address))];
                 if (address) hosts.unshift(address);
                 if (!hosts.length) throw Error('未找到局域网地址，请连接 Wi-Fi 或网线后重试');
-                room = { role: 'host', projectId: args.projectId, room: crypto.randomBytes(16).toString('hex'), secret: random(), host: hosts[0], port: 0 };
+                room = { role: 'host', projectId: args.projectId, room: crypto.randomBytes(16).toString('hex'), secret: random(), host: hosts[0], port: 0, peerId:crypto.randomBytes(8).toString('hex'),presence:blankPresence() };
                 server = new WebSocketServer({ host: '0.0.0.0', port: 0, perMessageDeflate: false, maxPayload: 0, verifyClient: info => !info.origin && info.req.url === `/canvas/${room?.room}` });
                 await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
                 room.port = server.address().port;
@@ -201,12 +233,19 @@ function createCollaboration({ directory = os.tmpdir(), changed = () => {}, addr
                 room.invite = room.invitations[0].invite;
                 server.on('connection', hostPeer); status = 'online'; emit(); return state();
             }
-            if (operation === 'join') { const invite = parseInvite(args.invite); await close(); await ensure(); room = { ...invite, role: 'guest', projectId: args.projectId }; status = 'reconnecting'; emit(); connect(epoch); return state(); }
+            if (operation === 'join') { const invite = parseInvite(args.invite); await close(); await ensure(); room = { ...invite, role: 'guest', projectId: args.projectId,presence:blankPresence() }; status = 'reconnecting'; emit(); connect(epoch); return state(); }
+            if (operation === 'presence') {
+                if (!room) throw Error('协作房间已关闭');
+                room.presence = readPresence(args.presence);
+                if (room.role === 'host') publishPresence();
+                else if (status === 'online') { const peer=socket; void send(peer,{type:'presence',presence:room.presence}).catch(()=>peer?.terminate()); }
+                return state();
+            }
             if (operation === 'update') {
                 if (!room) throw Error('协作房间已关闭');
                 const data = Buffer.from(args.data, 'base64'); Y.applyUpdate(doc, data, 'local');
-                if (room.role === 'host') await broadcast({ type: 'update', data: data.toString('base64') });
-                else if (status === 'online') await send(socket, { type: 'update', data: data.toString('base64') });
+                if (room.role === 'host') void broadcast({ type: 'update', data: data.toString('base64') });
+                else if (status === 'online') { const peer=socket; void send(peer, { type: 'update', data: data.toString('base64') }).catch(()=>peer?.terminate()); }
                 return state();
             }
             if (operation === 'snapshot') return { data: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') };

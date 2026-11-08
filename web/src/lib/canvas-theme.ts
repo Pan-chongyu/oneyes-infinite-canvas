@@ -3,6 +3,7 @@ export type CanvasBackgroundMode = "dots" | "lines" | "blank";
 
 export const canvasThemes = {
     light: {
+        collaboration: ['#2563eb','#9333ea','#0f766e','#b45309'],
         canvas: {
             background: "#f4f2ed",
             dot: "rgba(68,64,60,.28)",
@@ -31,6 +32,7 @@ export const canvasThemes = {
         },
     },
     dark: {
+        collaboration: ['#60a5fa','#c084fc','#2dd4bf','#fbbf24'],
         canvas: {
             background: "#181715",
             dot: "rgba(245,245,244,.24)",

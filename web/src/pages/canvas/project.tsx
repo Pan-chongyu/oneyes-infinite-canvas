@@ -52,6 +52,7 @@ import { flushCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-s
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { useCanvasCollaboration } from "@/pages/canvas/hooks/use-canvas-collaboration";
 import { useCollaborationStore } from "@/stores/canvas/use-collaboration-store";
+import { CanvasCollaborationPresence } from "@/components/canvas/canvas-collaboration-presence";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
@@ -3376,6 +3377,7 @@ function InfiniteCanvasPage() {
                         />
                     ))}
 
+                    <CanvasCollaborationPresence projectId={projectId} containerRef={containerRef} nodes={nodes} viewport={viewport} selectedNodeIds={selectedNodeIds} action={isNodeDragging?'move':isNodeResizing?'resize':connectingParams?'connect':null} connection={connectingParams}/>
                     {selectionBox ? (
                         <svg
                             className="pointer-events-none absolute z-[100] overflow-visible"
