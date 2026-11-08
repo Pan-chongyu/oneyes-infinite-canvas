@@ -64,6 +64,7 @@ app.whenReady().then(async () => {
         win.show(); if (process.platform === 'darwin') app.focus({ steal: true }); win.focus();
         await wait(() => win.isFocused());
         await wait('!!window.playbackTest && document.querySelector("video").readyState >= 2');
+        await js('window.playbackTrace=[];for(const type of ["play","pause","seeking","seeked","mousedown","mouseup","click"]){document.addEventListener(type,event=>{const video=document.querySelector("video");window.playbackTrace.push({type,time:video.currentTime,paused:video.paused,x:event.clientX,y:event.clientY,events:{...playbackTest.events()}})},{capture:true})}');
         for (const [scale, dark] of [[1, false], [0.7, true]]) {
             console.log('VIDEO_SCALE_CASE', scale, dark);
             // Dragging the video body can toggle playback on macOS. Isolate each scale case.
@@ -96,7 +97,7 @@ app.whenReady().then(async () => {
         }
         console.log('VIDEO_PLAYBACK_NATIVE_OK: native play/fullscreen, Escape, scaled canvas, light/dark, no control drag, video drag preserved');
     } catch (error) {
-        console.error('Playback state:', await js('(()=>{const video=document.querySelector("video"),rect=video?.getBoundingClientRect();return {focused:document.hasFocus(),paused:video?.paused,ended:video?.ended,readyState:video?.readyState,currentTime:video?.currentTime,error:video?.error?.message,rect:rect?.toJSON()}})()'));
+        console.error('Playback state:', JSON.stringify(await js('(()=>{const video=document.querySelector("video"),rect=video?.getBoundingClientRect();return {focused:document.hasFocus(),paused:video?.paused,ended:video?.ended,readyState:video?.readyState,currentTime:video?.currentTime,error:video?.error?.message,rect:rect?.toJSON(),events:playbackTest.events(),trace:window.playbackTrace}})()')));
         throw error;
     } finally { win.webContents.debugger.detach(); win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });
