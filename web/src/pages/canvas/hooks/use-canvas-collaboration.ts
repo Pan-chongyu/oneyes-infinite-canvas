@@ -3,7 +3,7 @@ import * as Y from 'yjs';
 import { useNavigate } from 'react-router-dom';
 import { flushCanvasStorage, useCanvasStore } from '@/stores/canvas/use-canvas-store';
 import { useCollaborationStore, type CollaborationPresence } from '@/stores/canvas/use-collaboration-store';
-import { base64ToBytes, bytesToBase64, canonicalCanvas, LOCAL_EDIT, REMOTE_EDIT, mergeSharedWithLocal, patchSharedCanvas, readSharedCanvas, sharedAssetKeys, type SharedCanvas, type SharedAsset } from '@/lib/canvas/collaboration-document';
+import { base64ToBytes, bytesToBase64, canonicalCanvas, LOCAL_EDIT, REMOTE_EDIT, mergeSharedWithLocal, patchSharedCanvas, readSharedCanvas, sharedAssetKeys, trackSharedUndoAction, type SharedCanvas, type SharedAsset } from '@/lib/canvas/collaboration-document';
 import { getImageBlob, setImageBlob, resolveImageUrl } from '@/services/image-storage';
 import { getMediaBlob, setMediaBlob, resolveMediaUrl } from '@/services/file-storage';
 import type { CanvasNodeData, CanvasConnection } from '@/types/canvas';
@@ -80,6 +80,7 @@ async function start(role: 'host' | 'guest', projectId: string, initial: SharedC
     const doc = new Y.Doc();
     if (role === 'host') patchSharedCanvas(doc, canonicalCanvas(initial), empty());
     const undo = new Y.UndoManager([doc.getMap('nodes'), doc.getMap('connections'), doc.getMap('meta')], { trackedOrigins: new Set([LOCAL_EDIT]) });
+    const undoAction = trackSharedUndoAction(undo);
     const active: NonNullable<typeof session> = { projectId, doc, undo, baseline: role === 'host' ? canonicalCanvas(initial) : empty(),canonical:new WeakMap(), origin: role, ready: role === 'host', assets: new Set(), jobs: new Map(), unsubscribe: () => {}, serial: Promise.resolve(), abort: new AbortController() };
     session = active;
     state.setState({ projectId, error: undefined, status: role === 'host' ? 'online' : 'reconnecting', role });
@@ -111,7 +112,7 @@ async function start(role: 'host' | 'guest', projectId: string, initial: SharedC
     let presence:CollaborationPresence={cursor:null,selected:[],action:null},presenceFrame:number|undefined;
     const publishPresence=(patch:Partial<CollaborationPresence>)=>{
         if(active!==session)return;
-        if(patch.action!==undefined&&patch.action!==presence.action)undo.stopCapturing();
+        if(patch.action!==undefined)undoAction(patch.action);
         presence={...presence,...patch};
         const send=()=>{presenceFrame=undefined;if(active===session&&state.getState().status==='online')void native()?.call('presence',{presence}).catch(error=>{if(active===session)state.setState({error:errorMessage(error)});});};
         if(patch.cursor===null){if(presenceFrame!==undefined)cancelAnimationFrame(presenceFrame);send();}

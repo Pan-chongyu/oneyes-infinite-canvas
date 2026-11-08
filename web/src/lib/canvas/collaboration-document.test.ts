@@ -2,10 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as Y from 'yjs';
 import type { CanvasNodeMetadata } from '@/types/canvas';
-import { canonicalCanvas, patchSharedCanvas, readSharedCanvas, LOCAL_EDIT, REMOTE_EDIT, mergeSharedWithLocal, sharedAssetKeys, type SharedCanvas } from './collaboration-document';
+import { canonicalCanvas, patchSharedCanvas, readSharedCanvas, LOCAL_EDIT, REMOTE_EDIT, mergeSharedWithLocal, sharedAssetKeys, trackSharedUndoAction, type SharedCanvas } from './collaboration-document';
 const empty = (): SharedCanvas => ({ title: '', nodes: [], connections: [] });
 const canvas = (): SharedCanvas => ({ title: '创作', nodes: [{ id: 'one', type: 'text', title: '文字', position: { x: 0, y: 0 }, width: 200, height: 100, metadata: { content: '原文' } }], connections: [] });
 const sync = (from: Y.Doc, to: Y.Doc) => Y.applyUpdate(to, Y.encodeStateAsUpdate(from), REMOTE_EDIT);
+
+test('a held gesture is one undo across pauses, including its final commit, without undoing remote edits', async () => {
+    const a = new Y.Doc(), b = new Y.Doc(), initial = canvas();
+    patchSharedCanvas(a, initial, empty()); sync(a, b);
+    const undo = new Y.UndoManager([a.getMap('nodes')], { trackedOrigins: new Set([LOCAL_EDIT]) });
+    const timeout = undo.captureTimeout, action = trackSharedUndoAction(undo);
+    action('move');
+    const moved = structuredClone(initial); moved.nodes[0].position.x = 20;
+    patchSharedCanvas(a, moved, initial);
+    await new Promise(resolve => setTimeout(resolve, timeout + 1));
+    const edited = structuredClone(initial); edited.nodes[0].metadata!.content = '协作者继续输入';
+    patchSharedCanvas(b, edited, initial); sync(b, a);
+    action(null);
+    const final = structuredClone(moved); final.nodes[0].position.x = 60;
+    patchSharedCanvas(a, final, moved);
+    await Promise.resolve();
+    assert.equal(undo.captureTimeout, timeout);
+    assert.equal(undo.undoStack.length, 1);
+    undo.undo(); assert.equal(readSharedCanvas(a).nodes[0].position.x, 0);
+    assert.equal(readSharedCanvas(a).nodes[0].metadata!.content, '协作者继续输入');
+    undo.redo(); assert.equal(readSharedCanvas(a).nodes[0].position.x, 60);
+    action('resize');
+    const previous = readSharedCanvas(a), resized = structuredClone(previous); resized.nodes[0].width = 320;
+    patchSharedCanvas(a, resized, previous); action(null); await Promise.resolve();
+    assert.equal(undo.undoStack.length, 2);
+    undo.undo(); assert.equal(readSharedCanvas(a).nodes[0].width, 200);
+    assert.equal(readSharedCanvas(a).nodes[0].position.x, 60);
+    undo.destroy(); a.destroy(); b.destroy();
+});
 
 test('concurrent field changes converge and local undo preserves collaborator edits', () => {
     const a = new Y.Doc(), b = new Y.Doc(), initial = canvas();

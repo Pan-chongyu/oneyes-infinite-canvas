@@ -6,6 +6,22 @@ export const LOCAL_EDIT = Symbol('local-canvas-edit');
 export const REMOTE_EDIT = Symbol('remote-canvas-edit');
 export type SharedCanvas = { title: string; nodes: CanvasNodeData[]; connections: CanvasConnection[] };
 export type SharedAsset = { hash: string; mime: string; bytes: number };
+export function trackSharedUndoAction(undo: Y.UndoManager) {
+    const captureTimeout = undo.captureTimeout;
+    let action: string | null = null, revision = 0;
+    return (next: string | null) => {
+        if (next === action) return;
+        action = next;
+        const current = ++revision;
+        const boundary = () => {
+            if (current !== revision) return;
+            undo.stopCapturing();
+            undo.captureTimeout = next === 'move' || next === 'resize' || next === 'connect' ? Infinity : captureTimeout;
+        };
+        // React may commit the final geometry with mouseup. Include that commit before closing the gesture.
+        if (next === null) queueMicrotask(boundary); else boundary();
+    };
+}
 const privateFields = /api.?key|access.?token|refresh.?token|secret|password|authorization|cookie|^(?:headers|auth|token|__proto__|constructor|prototype)$/i;
 const localFields = new Set(['imageTaskId', 'videoTaskId', 'videoTaskProvider', 'status', 'loadingMessage', 'errorDetails', 'taskId', 'editorOutputId', 'model', 'assistantModel', 'imageModel', 'videoModel', 'audioModel']);
 const plain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);

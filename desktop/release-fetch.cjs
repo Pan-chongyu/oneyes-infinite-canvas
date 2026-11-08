@@ -17,7 +17,9 @@ function createReleaseFetcher({ request = fetch, token } = {}) {
         if (!asset || !Number.isSafeInteger(asset.id) || asset.id <= 0 || asset.state !== 'uploaded') throw Error(`GitHub release asset is unavailable: ${decodeURIComponent(file)}`);
         const forwarded = new Headers();
         for (const key of ['Range', 'If-Range']) { const value = new Headers(init.headers).get(key); if (value) forwarded.set(key, value); }
-        const response = await request(`${root}/assets/${asset.id}`, { headers: { ...headers, ...Object.fromEntries(forwarded), Accept: 'application/octet-stream' }, redirect: 'manual', signal: init.signal });
+        const endpointUrl = new URL(asset.url || `${root}/assets/${asset.id}`);
+        if (endpointUrl.origin !== 'https://api.github.com' || endpointUrl.username || endpointUrl.password || endpointUrl.search || endpointUrl.hash || !new RegExp(`^/(?:repos/[^/]+/[^/]+|repositories/[0-9]+)/releases/assets/${asset.id}$`).test(endpointUrl.pathname)) throw Error('Invalid GitHub asset API address');
+        const response = await request(endpointUrl.href, { headers: { ...headers, ...Object.fromEntries(forwarded), Accept: 'application/octet-stream' }, redirect: 'manual', signal: init.signal });
         if (response.status !== 302) return response;
         const location = response.headers.get('location'), target = location && new URL(location);
         if (!target || target.protocol !== 'https:' || !['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(target.hostname)) throw Error('Invalid GitHub build asset redirect');

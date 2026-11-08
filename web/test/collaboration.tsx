@@ -46,6 +46,7 @@ function Fixture() {
     Object.assign(window, { collabTest: {
         host: () => useCollaborationStore.getState().host!(), join: (invite: string) => useCollaborationStore.getState().join!(invite), leave: () => useCollaborationStore.getState().leave!(),
         room: () => useCollaborationStore.getState(), state: () => ({ id, nodes, connections, title: project?.title }),
+        interaction: () => action,
         modify: (nodeId: string, patch: Partial<CanvasNodeData>) => flushSync(() => setNodes(old => old.map(node => node.id === nodeId ? { ...node, ...patch } : node))),
         add: () => flushSync(() => setNodes(old => [...old, { ...seed, id: 'extra', title: '新增',position:{x:650,y:180} }])),
         connect: () => flushSync(() => setConnections([{ id: 'link', fromNodeId: 'text', toNodeId: 'extra' }])),

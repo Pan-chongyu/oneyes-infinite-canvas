@@ -44,7 +44,8 @@ app.whenReady().then(async () => {
     try {
         configurePermissions(win.webContents.session);
         await win.loadURL('oneyes-canvas://app/');
-        win.show(); win.focus();
+        win.show(); if (process.platform === 'darwin') app.focus({ steal: true }); win.focus();
+        await wait(() => win.isFocused());
         await wait('!!window.playbackTest && document.querySelector("video").readyState >= 2');
         for (const [scale, dark] of [[1, false], [0.7, true]]) {
             await js(`playbackTest.configure(${scale},${dark})`);
@@ -75,5 +76,8 @@ app.whenReady().then(async () => {
             assert.equal((await js('playbackTest.events()')).drag, 1, 'video content outside the controls still starts node dragging');
         }
         console.log('VIDEO_PLAYBACK_NATIVE_OK: native play/fullscreen, Escape, scaled canvas, light/dark, no control drag, video drag preserved');
+    } catch (error) {
+        console.error('Playback state:', await js('(()=>{const video=document.querySelector("video"),rect=video?.getBoundingClientRect();return {focused:document.hasFocus(),paused:video?.paused,ended:video?.ended,readyState:video?.readyState,currentTime:video?.currentTime,error:video?.error?.message,rect:rect?.toJSON()}})()'));
+        throw error;
     } finally { win.webContents.debugger.detach(); win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

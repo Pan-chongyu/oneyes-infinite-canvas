@@ -56,6 +56,25 @@ test('the runner relay only resolves fixed official repositories and rejects pat
     for (const path of ['/other/v1/file', '/electron/v1/../file', '/electron/v1/%2fsecret', '/electron/v1/%5csecret', '/electron/../file', '/electron/%2e%2e/file', '/electron/v1/file?target=other', '/electron/v1/%ZZ']) assert.throws(() => relayResource(path));
 });
 
+test('transferred repositories use the canonical asset API from release metadata without forwarding credentials to storage', async () => {
+    const calls = [];
+    const resource = 'https://github.com/old-owner/repo/releases/download/v1/original.zip';
+    const download = createBuildDownloader({ token: 'fixture-secret', request: async (url, options) => {
+        calls.push({ url, options });
+        if (url.includes('/releases/tags/')) return Response.json({ assets: [{ name: 'original.zip', id: 9, state: 'uploaded', url: 'https://api.github.com/repos/new-owner/repo/releases/assets/9' }] });
+        if (url.startsWith('https://api.github.com/')) return new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/original' } });
+        return new Response('pinned original bytes');
+    } });
+    assert.equal(await (await download(resource)).text(), 'pinned original bytes');
+    assert.equal(calls[1].url, 'https://api.github.com/repos/new-owner/repo/releases/assets/9');
+    assert.equal(calls[1].options.headers.Authorization, 'Bearer fixture-secret');
+    assert.equal(new Headers(calls[2].options.headers).has('authorization'), false);
+    for (const url of ['https://example.test/releases/assets/9', 'https://api.github.com/repos/new/repo/releases/assets/10', 'https://api.github.com/user', 'https://secret@api.github.com/repositories/1/releases/assets/9']) {
+        const invalid = createBuildDownloader({ request: async () => Response.json({ assets: [{ name: 'original.zip', id: 9, state: 'uploaded', url }] }) });
+        await assert.rejects(invalid(resource), /Invalid GitHub asset API address/);
+    }
+});
+
 test('the desktop updater verifies the signed manifest and package after official API resolution', async t => {
     const { publicKey, privateKey } = generateKeyPairSync('ed25519'), payload = Buffer.from('original package bytes');
     const target = { platform: 'win32', arch: 'arm64', format: 'nsis', destination: 'C:\\Canvas', executable: 'C:\\Canvas\\OneYes Canvas.exe' };
