@@ -41,6 +41,12 @@ app.whenReady().then(async () => {
         const { model } = await win.webContents.debugger.sendCommand('DOM.getBoxModel', { nodeId: node.nodeId });
         return { x: Math.round((model.content[0] + model.content[4]) / 2), y: Math.round((model.content[1] + model.content[5]) / 2) };
     };
+    const clickControl = async pseudo => {
+        win.focus(); await wait(() => win.isFocused());
+        win.webContents.sendInputEvent({ type: 'mouseMove', ...await controlPoint(pseudo) });
+        await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        click(await controlPoint(pseudo));
+    };
     try {
         configurePermissions(win.webContents.session);
         await win.loadURL('oneyes-canvas://app/');
@@ -52,9 +58,9 @@ app.whenReady().then(async () => {
             await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
             const middle = await js('(()=>{const r=document.querySelector("video").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
             win.webContents.sendInputEvent({ type: 'mouseMove', ...middle });
-            click(await controlPoint('-webkit-media-controls-play-button'));
+            await clickControl('-webkit-media-controls-play-button');
             await wait('!document.querySelector("video").paused');
-            click(await controlPoint('-webkit-media-controls-fullscreen-button'));
+            await clickControl('-webkit-media-controls-fullscreen-button');
             await wait('document.fullscreenElement === document.querySelector("video")');
             await wait(() => nativeFullscreen);
             assert.equal(win.webContents.isDestroyed(), false);
@@ -66,7 +72,7 @@ app.whenReady().then(async () => {
             // Native window fullscreen transitions are asynchronous on macOS.
             await wait('document.querySelector("video").getBoundingClientRect().width < innerWidth');
             win.webContents.sendInputEvent({ type: 'mouseMove', ...middle });
-            click(await controlPoint('-webkit-media-controls-play-button'));
+            await clickControl('-webkit-media-controls-play-button');
             await wait('document.querySelector("video").paused');
             const events = await js('playbackTest.events()');
             assert.equal(events.drag, 0); assert.equal(events.resize, 0); assert.equal(events.background, 0); assert.equal(events.viewport, 0);

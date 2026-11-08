@@ -22,7 +22,8 @@ app.whenReady().then(async()=>{
  const external=[];win.webContents.session.webRequest.onBeforeRequest((details,callback)=>{const blocked=/^https?:/.test(details.url);if(blocked)external.push(details.url);callback({cancel:blocked});});
  let exportedFile,downloads=0;
  win.webContents.session.on('will-download',(_event,item)=>{item.setSavePath(join(process.env.CANVAS_DIRECTOR_TEST_PROFILE,item.getFilename()));item.once('done',(_event,state)=>{exportedFile=state==='completed'?item.getSavePath():state;downloads++;});});
- const wait=async(code)=>{const until=Date.now()+20000;while(!await js(code)){if(Date.now()>until)throw Error('Timed out: '+code);await new Promise(resolve=>setTimeout(resolve,25));}};
+ const wait=async(code)=>{const until=Date.now()+20000;while(!(typeof code==='function'?await code():await js(code))){if(Date.now()>until)throw Error('Timed out: '+code);await new Promise(resolve=>setTimeout(resolve,25));}};
+ const phase=async(name,task)=>{console.log('DIRECTOR_PHASE',name);await task();console.log('DIRECTOR_PHASE_OK',name);};
  const step=async(label)=>{const selector=`button[aria-label="导演台步骤：${label}"]`;await js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'nearest'})`);await pointerClick(selector);await wait(`document.querySelector('button[aria-label="导演台步骤：${label}"]')?.getAttribute('aria-current')==='step'`);};
  const click=async(text)=>{
   if(text==='输出取景图')await step('导出');
@@ -34,8 +35,9 @@ app.whenReady().then(async()=>{
 
  const settings=async(value)=>{if(!await js('document.querySelector("aside[aria-label=导演台设置]").checkVisibility()'))await step('布景');const label={object:'物体',camera:'镜头',light:'环境'}[value];await js(`Array.from(document.querySelectorAll('aside[aria-label="导演台设置"] .ant-segmented-item')).find(item=>item.textContent.trim()===${JSON.stringify(label)}).click()`);await wait(`document.querySelector('aside[aria-label="导演台设置"] .ant-segmented-item-selected')?.textContent.trim()===${JSON.stringify(label)}`);};
  const pointerClick=async(selector,edge=false,button='left')=>{
-  await js('Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{})))');
-  const point=await js(`(()=>{const rect=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(rect.x+${edge==='end'?'rect.width-12':edge?'4':'rect.width/2'}),y:Math.round(rect.y+${edge==='end'?'rect.height-12':edge?'4':'rect.height/2'})};})()`);
+  // Unrelated spinners may run forever. Wait for this target's layout and hit test instead.
+  let point;
+  await wait(async()=>{const next=await js(`(()=>{const target=document.querySelector(${JSON.stringify(selector)});if(!target?.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})||target.disabled)return null;const rect=target.getBoundingClientRect(),point={x:Math.round(rect.x+${edge==='end'?'rect.width-12':edge?'4':'rect.width/2'}),y:Math.round(rect.y+${edge==='end'?'rect.height-12':edge?'4':'rect.height/2'})};return target.contains(document.elementFromPoint(point.x,point.y))?point:null;})()`);const stable=next&&point&&next.x===point.x&&next.y===point.y;point=next;return stable;});
   win.webContents.sendInputEvent({type:'mouseMove',...point});win.webContents.sendInputEvent({type:'mouseDown',button,clickCount:1,...point});win.webContents.sendInputEvent({type:'mouseUp',button,clickCount:1,...point});
  };
  const verifyDismissal=async()=>{
@@ -188,7 +190,7 @@ app.whenReady().then(async()=>{
    }
    await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');
    await step('导出');assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出取景图").disabled'),true);
-   await verifyEditing();await verifySceneExchange();await verifyAssistant();await wait('document.body.textContent.includes("无法启动三维视窗")');await settings('camera');await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
+   await phase('editing',verifyEditing);await phase('scene-exchange',verifySceneExchange);await phase('assistant',verifyAssistant);await wait('document.body.textContent.includes("无法启动三维视窗")');await settings('camera');await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
    await js('directorTest.save()');await verifyDismissal();await js('document.querySelector("button[aria-label=Close]").click()');await wait('!document.querySelector("[data-director-editor]")');
    await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');await settings('camera');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');
    await js('directorTest.switch()');await wait('!document.querySelector("[data-director-editor]")');
@@ -207,7 +209,9 @@ app.whenReady().then(async()=>{
    assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});
    const runtime=await js('directorTest.runtime()');assert.deepEqual(runtime.sizes,[[317,191],[317,191]]);assert.equal(runtime.differs,true);assert.equal(runtime.portraitControls,true);assert.equal(runtime.cleanExport,true,'guides and selection must not leak into PNG');assert.equal(runtime.visibility,true);assert.ok(Math.abs(runtime.grounded)<0.01,'ground uses actual geometry bounds');assert.equal(runtime.lock,true);assert.equal(runtime.focused,true);assert.match(runtime.reason,/不会自动降低分辨率/);
    await js('directorTest.configure()');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas") && !Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="下一步：排镜头").disabled');
-   await verifyEditing();await verifySceneExchange();await verifyTimeline();await verifyAssistant();await verifyRemote();
+   await js('(()=>{const status=document.createElement("span");status.id="independent-animation";status.className="animate-pulse";status.textContent="其他任务处理中";document.body.append(status)})()');
+   await step('排镜头');await step('布景');await js('document.querySelector("#independent-animation").remove()');
+   await phase('editing',verifyEditing);await phase('scene-exchange',verifySceneExchange);await phase('timeline',verifyTimeline);await phase('assistant',verifyAssistant);await phase('remote-scene',verifyRemote);
    const sequence=await js('directorTest.sequence()');assert.equal(sequence.progress,4);assert.deepEqual(sequence.sizes,[[317,191],[317,191],[193,311],[193,311]]);
    await click('输出取景图');await wait('directorTest.state().nodes.filter(n=>n.type==="image").length===1 && document.body.textContent.includes("已保存到画布")');
    await step('布景');await screenshot('oneyes-director-light.png');await step('排镜头');await screenshot('oneyes-director-shots.png');await step('预演');await screenshot('oneyes-director-preview.png');await step('导出');await screenshot('oneyes-director-deliver.png');
