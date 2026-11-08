@@ -1,6 +1,6 @@
 const { app, BrowserWindow, protocol, net } = require('electron');
 const assert = require('node:assert/strict');
-const { writeFile } = require('node:fs/promises');
+const { writeFile, readFile } = require('node:fs/promises');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { route } = require('../../desktop/protocol.cjs');
@@ -12,6 +12,8 @@ app.whenReady().then(async()=>{
  const win=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}}),js=code=>win.webContents.executeJavaScript(code).catch(error=>{throw new Error(error.message+' Fixture: '+code);});
  const screenshot=async(name)=>{if(!process.env.CANVAS_DIRECTOR_SCREENSHOT)return;win.showInactive();await js('Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{}))).then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');await new Promise(resolve=>setTimeout(resolve,500));await writeFile(join(tmpdir(),name),(await win.capturePage()).toPNG());win.hide();};
  const external=[];win.webContents.session.webRequest.onBeforeRequest((details,callback)=>{const blocked=/^https?:/.test(details.url);if(blocked)external.push(details.url);callback({cancel:blocked});});
+ let exportedFile;
+ win.webContents.session.on('will-download',(_event,item)=>{item.setSavePath(join(process.env.CANVAS_DIRECTOR_TEST_PROFILE,'director-scene.json'));item.once('done',(_event,state)=>{exportedFile=state==='completed'?item.getSavePath():state;});});
  const wait=async(code)=>{const until=Date.now()+20000;while(!await js(code)){if(Date.now()>until)throw Error('Timed out: '+code);await new Promise(resolve=>setTimeout(resolve,25));}};
  const click=async(text)=>{await js(`Array.from(document.querySelectorAll('button')).find(item=>item.textContent.trim()===${JSON.stringify(text)}||item.getAttribute('aria-label')===${JSON.stringify(text)}).click()`);};
  const settings=async(value)=>{const label={object:'物体',camera:'镜头',light:'环境'}[value];await js(`Array.from(document.querySelectorAll('aside[aria-label="导演台设置"] .ant-segmented-item')).find(item=>item.textContent.trim()===${JSON.stringify(label)}).click()`);await wait(`document.querySelector('aside[aria-label="导演台设置"] .ant-segmented-item-selected')?.textContent.trim()===${JSON.stringify(label)}`);};
@@ -68,6 +70,30 @@ app.whenReady().then(async()=>{
   await click('恢复此机位');await wait(`directorTest.state().nodes[0].metadata.directorScene.camera.lens===${saved.camera.lens}`);
   const restored=await js('directorTest.state().nodes[0].metadata.directorScene');assert.deepEqual(restored.camera,saved.camera);assert.equal(restored.width,saved.width);assert.equal(restored.height,saved.height);
  };
+ const verifySceneExchange=async()=>{
+  const original=await js('directorTest.state().nodes[0].metadata.directorScene');
+  const imported=structuredClone(original);imported.note='雨夜对话';imported.objects[0].joints={head:[0,45,0],leftArm:[0,0,80]};imported.objects[0].roughness=0.4;imported.light={...imported.light,fill:1,rim:2,ambient:0.5};
+  const file=JSON.stringify({format:'oneyes-director',version:1,scene:imported});
+  const upload=async(text)=>js(`(()=>{const input=document.querySelector('input[aria-label="导入导演台场景文件"]'),transfer=new DataTransfer();transfer.items.add(new File([${JSON.stringify(text)}],'场景.json',{type:'application/json'}));input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await upload(file);await wait('directorTest.state().nodes[0].metadata.directorScene.note==="雨夜对话"');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),imported);
+  await click('导出场景');
+  const until=Date.now()+20000;while(!exportedFile){if(Date.now()>until)throw Error('Scene export did not download');await new Promise(resolve=>setTimeout(resolve,25));}
+  assert.deepEqual(JSON.parse(await readFile(exportedFile,'utf8')),{format:'oneyes-director',version:1,scene:imported});
+  await upload('{');await wait('document.body.textContent.includes("不是有效的 JSON")');assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),imported,'invalid file cannot overwrite scene');
+  await click('撤销');await wait('directorTest.state().nodes[0].metadata.directorScene.note!=="雨夜对话"');assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),original,'scene import must be one undo step');
+  await settings('object');await js('Array.from(document.querySelectorAll("summary")).find(item=>item.textContent==="精细调姿").click()');
+  await wait(`document.querySelector('input[aria-label="关节旋转（度） Y"]')`);
+  await js(`(()=>{const input=document.querySelector('input[aria-label="关节旋转（度） Y"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'35');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].joints?.head?.[1]===35');
+  await click('重置此关节');await wait('!directorTest.state().nodes[0].metadata.directorScene.objects[0].joints?.head');
+  await click('撤销');await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].joints?.head?.[1]===35');await click('撤销');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),original);
+  await settings('camera');await click('保存当前机位');await click('复制机位');await wait(`directorTest.state().nodes[0].metadata.directorScene.shots.length===${original.shots.length+2}`);
+  const copy=await js('directorTest.state().nodes[0].metadata.directorScene.shots.at(-1)');assert.notEqual(copy.id,original.shots.at(-1).id);
+  await click('机位前移');await wait(`directorTest.state().nodes[0].metadata.directorScene.shots[${original.shots.length}].id===${JSON.stringify(copy.id)}`);await click('撤销');await click('撤销');await click('撤销');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),original);
+ };
  try{
   await win.loadURL(process.argv[2]);await wait('window.directorTest && document.querySelector("button")');
   const webgl=await js('(()=>{const gl=document.createElement("canvas").getContext("webgl2");if(gl)gl.getExtension("WEBGL_lose_context")?.loseContext();return Boolean(gl);})()');
@@ -81,7 +107,7 @@ app.whenReady().then(async()=>{
    }
    await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');
    assert.equal(await js('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出取景图").disabled'),true);
-   await verifyEditing();await settings('camera');await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
+   await verifyEditing();await verifySceneExchange();await wait('document.body.textContent.includes("无法启动三维视窗")');await settings('camera');await click('85 mm');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===85');
    await js('directorTest.save()');await verifyDismissal();await js('document.querySelector("button[aria-label=Close]").click()');await wait('!document.querySelector("[data-director-editor]")');
    await click('打开导演台');await wait('document.body.textContent.includes("无法启动三维视窗")');await settings('camera');assert.equal(await js('document.querySelector("input[aria-label=镜头焦距]").value'),'85');
    await js('directorTest.switch()');await wait('!document.querySelector("[data-director-editor]")');
@@ -98,7 +124,7 @@ app.whenReady().then(async()=>{
    assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});
    const runtime=await js('directorTest.runtime()');assert.deepEqual(runtime.sizes,[[317,191],[317,191]]);assert.equal(runtime.differs,true);assert.equal(runtime.portraitControls,true);assert.equal(runtime.cleanExport,true,'guides and selection must not leak into PNG');assert.equal(runtime.visibility,true);assert.ok(Math.abs(runtime.grounded)<0.01,'ground uses actual geometry bounds');assert.equal(runtime.lock,true);assert.equal(runtime.focused,true);assert.match(runtime.reason,/不会自动降低分辨率/);
    await js('directorTest.configure()');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas") && !Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="输出取景图").disabled');
-   await verifyEditing();
+   await verifyEditing();await verifySceneExchange();
    await click('输出取景图');await wait('directorTest.state().nodes.filter(n=>n.type==="image").length===1 && document.body.textContent.includes("已保存到画布")');
    await screenshot('oneyes-director-light.png');
    const first=await js('directorTest.image()');assert.equal(first.width,321);assert.equal(first.height,197);assert.ok(first.colors>30);
@@ -109,6 +135,9 @@ app.whenReady().then(async()=>{
    await screenshot('oneyes-director-dark.png');
    await verifyDismissal();
    await js('directorTest.save()');
+   await click('创建生图工作流');await wait('directorTest.state().nodes.filter(n=>n.type==="text").length===1 && document.body.textContent.includes("已保存到画布")');
+   const workflow=await js('directorTest.state()'),text=workflow.nodes.find(node=>node.type==='text'),target=workflow.nodes.find(node=>node.title==='导演台 · 待生成');
+   assert.equal(target.metadata.status,'idle');assert.equal(target.metadata.generationType,'edit');assert.match(text.metadata.content,/保持人物位置/);assert.equal(workflow.connections.filter(edge=>edge.toNodeId===target.id).length,2);assert.equal(workflow.nodes.filter(node=>node.type==='image').length,4);
    console.log('DIRECTOR_3D_OK: real scaled canvas, native close/Esc/Space/mask input without portal capture or drag, scene retained, WebGL, precise PNG, cleanup, light/dark, linked results');
   }
   assert.deepEqual(external,[],'director must load fully offline');

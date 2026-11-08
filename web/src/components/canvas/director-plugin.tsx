@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button, Modal } from "antd";
 import { Box, Camera, Clapperboard, LoaderCircle } from "lucide-react";
-import { readDirectorScene } from "@/lib/canvas/director-scene";
+import { directorPrompt, readDirectorScene } from "@/lib/canvas/director-scene";
+import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import { createCanvasNode, imageMetadata } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { uploadImage, deleteStoredImages } from "@/services/image-storage";
@@ -18,7 +19,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     useEffect(() => ctx.on("director:open", payload => { if (payload === ctx.node.id) start(); }), [ctx.node.id]);
     useEffect(() => { generation.current++; setOpen(false); setScene(null); return () => { generation.current++; controller.current?.abort(); }; }, [ctx.node.id, ctx.projectId]);
     const change = (next: DirectorScene) => { setScene(next); latest.current.updateMetadata({ directorScene: next }); };
-    const capture = async (blob: Blob, scene: DirectorScene,label?:string) => {
+    const capture = async (blob: Blob, scene: DirectorScene,label?:string,workflow=false,note?:string) => {
         if (exporting.current) return;
         exporting.current = true;
         const token = generation.current, origin = latest.current, abort = new AbortController(); controller.current = abort;
@@ -29,11 +30,20 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
             if (image.width !== scene.width || image.height !== scene.height) throw new Error("取景图尺寸不符合设置，已停止保存；请释放显存后重试");
             const metadata = imageMetadata(image), output = createCanvasNode("image", { x: 0, y: 0 }, metadata);
             const size = fitNodeSize(image.width, image.height, 460, 360), node = latest.current.node;
+            const text = workflow ? createCanvasNode("text", { x: 0, y: 0 }, { content: directorPrompt(scene,note), status: "success" }) : null;
+            const target = workflow ? createCanvasNode("image", { x: 0, y: 0 }, { generationType: "edit" }) : null;
+            const footprint = { width: size.width + (target ? 80 + target.width : 0), height: size.height + (text ? 32 + text.height : 0) };
             const position = { x: node.position.x + node.width + 100, y: node.position.y };
             for (const neighbor of [...latest.current.getNodes()].sort((a,b) => a.position.y - b.position.y)) {
-                if (position.x < neighbor.position.x + neighbor.width && position.x + size.width > neighbor.position.x && position.y < neighbor.position.y + neighbor.height && position.y + size.height > neighbor.position.y) position.y = neighbor.position.y + neighbor.height + 32;
+                if (position.x < neighbor.position.x + neighbor.width && position.x + footprint.width > neighbor.position.x && position.y < neighbor.position.y + neighbor.height && position.y + footprint.height > neighbor.position.y) position.y = neighbor.position.y + neighbor.height + 32;
             }
-            latest.current.applyOps([{ type: "add_node", id: output.id, nodeType: "image", title: `导演台${label||'取景'} · ${scene.camera.lens}mm`, position, ...size, metadata }, { type: "connect_nodes", fromNodeId: node.id, toNodeId: output.id }]);
+            const ops: CanvasAgentOp[] = [{ type: "add_node", id: output.id, nodeType: "image", title: `导演台${label||'取景'} · ${scene.camera.lens}mm`, position, ...size, metadata }, { type: "connect_nodes", fromNodeId: node.id, toNodeId: output.id }];
+            if (text && target) ops.push(
+                { type: "add_node", id: text.id, nodeType: "text", title: "导演台 · 构图说明", position: { x: position.x, y: position.y + size.height + 32 }, width: size.width, height: text.height, metadata: text.metadata },
+                { type: "add_node", id: target.id, nodeType: "image", title: "导演台 · 待生成", position: { x: position.x + size.width + 80, y: position.y }, width: target.width, height: target.height, metadata: target.metadata },
+                { type: "connect_nodes", fromNodeId: output.id, toNodeId: target.id }, { type: "connect_nodes", fromNodeId: text.id, toNodeId: target.id },
+            );
+            latest.current.applyOps(ops);
             committed = true;
         } catch (error) { if (!abort.signal.aborted) { reportError("image", "save", error); throw error; } }
         finally { if (!committed && key) await deleteStoredImages([key]); if (controller.current === abort) controller.current = null; exporting.current = false; }
@@ -52,7 +62,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     </>;
 }
 export const directorPlugin: CanvasPlugin = {
-    id: "director", name: "3D 导演台", version: "1.1.0", description: "本地三维布景、物体管理、机位保存与镜头取景，输出构图参考图。",
+    id: "director", name: "3D 导演台", version: "1.2.0", description: "人物关节调姿、道具材质、三点布光、分镜机位、场景导入导出与参考图生图工作流。",
     nodes: [{ type: "director:stage", title: "3D 导演台", icon: <Clapperboard size={18} />, description: "人物与道具布景、相机、灯光及原尺寸取景图", defaultSize: { width: 320, height: 190 }, hidePanel: true, renderOwnStatus: true, Content: DirectorContent,
         toolbar: ctx => [{ id: "director-open", title: "打开 3D 导演台", label: "导演台", icon: <Camera size={14} />, onClick: () => ctx.emit("director:open", ctx.node.id) }],
         onDoubleClick: ctx => { ctx.emit("director:open", ctx.node.id); return true; },

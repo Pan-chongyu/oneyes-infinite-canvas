@@ -10,6 +10,7 @@
 
 ## Canvas Guide
 
+- [3D 导演台：布景、调姿、分镜和生图](DIRECTOR.zh-CN.md)
 - [局域网共同创作（仓库说明）](COLLABORATION.zh-CN.md)
 
 - [智能剪辑节点（仓库说明）](SMART_EDIT.zh-CN.md)

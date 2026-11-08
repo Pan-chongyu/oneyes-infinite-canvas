@@ -6,7 +6,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SobelOperatorShader } from 'three/addons/shaders/SobelOperatorShader.js';
 import { LuminosityShader } from 'three/addons/shaders/LuminosityShader.js';
-import type { DirectorObject, DirectorScene, DirectorVector } from "@/types/director";
+import type { DirectorJoint, DirectorObject, DirectorOutput, DirectorScene, DirectorVector } from "@/types/director";
 
 function disposeObject(root: THREE.Object3D) {
     const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
@@ -17,35 +17,46 @@ function disposeObject(root: THREE.Object3D) {
     });
     geometries.forEach(geometry => geometry.dispose()); materials.forEach(material => material.dispose());
 }
-function mannequin(material: THREE.Material, pose: DirectorObject["pose"]) {
+function mannequin(material: THREE.Material, object: DirectorObject) {
     const group = new THREE.Group();
-    const part = (geometry: THREE.BufferGeometry, position: DirectorVector) => { const mesh = new THREE.Mesh(geometry, material); mesh.position.fromArray(position); group.add(mesh); return mesh; };
-    const bone = (a: DirectorVector, b: DirectorVector, radius: number) => {
+    const pose = object.pose;
+    const joint = (parent: THREE.Group, name: DirectorJoint, position: DirectorVector) => { const pivot = new THREE.Group(); pivot.position.fromArray(position); pivot.rotation.set(...(object.joints?.[name] || [0, 0, 0]).map(THREE.MathUtils.degToRad) as DirectorVector); parent.add(pivot); return pivot; };
+    const part = (parent: THREE.Group, geometry: THREE.BufferGeometry, position: DirectorVector) => { const mesh = new THREE.Mesh(geometry, material); mesh.position.fromArray(position); parent.add(mesh); return mesh; };
+    const bone = (parent: THREE.Group, name: DirectorJoint, a: DirectorVector, b: DirectorVector, radius: number) => {
         const from = new THREE.Vector3(...a), to = new THREE.Vector3(...b), direction = to.clone().sub(from);
-        const mesh = part(new THREE.CylinderGeometry(radius, radius * 0.9, direction.length(), 16), from.clone().add(to).multiplyScalar(0.5).toArray());
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
-        part(new THREE.SphereGeometry(radius * 1.08, 16, 12), b);
+        const pivot = joint(parent, name, a);
+        const mesh = part(pivot, new THREE.CylinderGeometry(radius, radius * 0.9, direction.length(), 16), direction.clone().multiplyScalar(0.5).toArray());
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
+        part(pivot, new THREE.SphereGeometry(radius * 1.08, 16, 12), direction.toArray());
+        return { pivot, end: direction.toArray() };
     };
     const seated = pose === "sit", hip = seated ? 0.55 : 0.94, shoulder = hip + 0.46;
-    part(new THREE.SphereGeometry(0.14, 24, 18), [0, shoulder + 0.3, 0]);
-    const torso = part(new THREE.SphereGeometry(1, 24, 18), [0, hip + 0.24, 0]); torso.scale.set(0.23, 0.32, 0.13);
+    const upper = joint(group, "torso", [0, hip, 0]), head = joint(upper, "head", [0, shoulder - hip + 0.16, 0]);
+    part(head, new THREE.SphereGeometry(0.14, 24, 18), [0, 0.14, 0]);
+    // The nose makes head direction visible while posing and in exported references.
+    part(head, new THREE.SphereGeometry(0.04, 12, 8), [0, 0.13, 0.13]);
+    const torso = part(upper, new THREE.SphereGeometry(1, 24, 18), [0, 0.24, 0]); torso.scale.set(0.23, 0.32, 0.13);
     for (const side of [-1, 1]) {
         const x = side * 0.12, stride = pose === "walk" ? side * 0.23 : 0;
         const knee: DirectorVector = [x, seated ? hip : 0.52, seated ? 0.4 : stride];
         const ankle: DirectorVector = [x, 0.1, seated ? 0.43 : -stride];
-        bone([x, hip, 0], knee, 0.09); bone(knee, ankle, 0.07);
-        const foot = part(new THREE.BoxGeometry(0.14, 0.1, 0.25), [x, 0.05, ankle[2] + 0.06]); foot.rotation.x = 0;
+        const sideName = side === -1 ? "left" : "right";
+        const thigh = bone(group, `${sideName}Leg`, [x, hip, 0], knee, 0.09);
+        const shin = bone(thigh.pivot, `${sideName}Knee`, thigh.end, new THREE.Vector3(...ankle).sub(new THREE.Vector3(x, hip, 0)).toArray(), 0.07);
+        part(shin.pivot, new THREE.BoxGeometry(0.14, 0.1, 0.25), [shin.end[0], shin.end[1] - 0.05, shin.end[2] + 0.06]);
         const elbow: DirectorVector = pose === "reach" ? [side * 0.3, shoulder - 0.08, 0.3] : [side * 0.31, shoulder - 0.25, -stride];
         const hand: DirectorVector = pose === "reach" ? [side * 0.27, shoulder - 0.02, 0.6] : [side * 0.3, shoulder - 0.5, stride];
-        bone([side * 0.22, shoulder, 0], elbow, 0.055); bone(elbow, hand, 0.045);
+        const shoulderPoint: DirectorVector = [side * 0.22, shoulder - hip, 0];
+        const arm = bone(upper, `${sideName}Arm`, shoulderPoint, [elbow[0], elbow[1] - hip, elbow[2]], 0.055);
+        bone(arm.pivot, `${sideName}Elbow`, arm.end, [hand[0] - shoulderPoint[0], hand[1] - shoulder, hand[2]], 0.045);
     }
     return group;
 }
 function buildObject(object: DirectorObject) {
-    const material = new THREE.MeshStandardMaterial({ color: object.color, roughness: 0.72 });
-    const group = object.kind === "person" ? mannequin(material, object.pose) : new THREE.Group();
+    const material = new THREE.MeshStandardMaterial({ color: object.color, roughness: object.roughness ?? 0.72, metalness: object.metalness ?? 0 });
+    const group = object.kind === "person" ? mannequin(material, object) : new THREE.Group();
     if (object.kind !== "person") {
-        const geometry = object.kind === "box" ? new THREE.BoxGeometry(1, 1, 1) : object.kind === "sphere" ? new THREE.SphereGeometry(0.5, 32, 24) : new THREE.CylinderGeometry(0.4, 0.4, 1, 32);
+        const geometry = object.kind === "box" ? new THREE.BoxGeometry(1, 1, 1) : object.kind === "sphere" ? new THREE.SphereGeometry(0.5, 32, 24) : object.kind === "cone" ? new THREE.ConeGeometry(0.5, 1, 32) : object.kind === "torus" ? new THREE.TorusGeometry(0.35, 0.15, 16, 48) : object.kind === "plane" ? new THREE.BoxGeometry(2, 2, 0.05) : new THREE.CylinderGeometry(0.4, 0.4, 1, 32);
         group.add(new THREE.Mesh(geometry, material));
     }
     group.position.fromArray(object.position); group.rotation.set(...object.rotation.map(THREE.MathUtils.degToRad) as DirectorVector); group.scale.fromArray(object.scale);
@@ -56,7 +67,7 @@ function buildObject(object: DirectorObject) {
 
 export type DirectorRuntime = ReturnType<typeof createDirectorRuntime>;
 export function createDirectorRuntime(container: HTMLElement, initial: DirectorScene, callbacks: { camera: (camera: DirectorScene["camera"]) => void; object: (id: string, patch: Partial<DirectorObject>) => void; select: (id: string | null) => void; error: (message: string) => void }) {
-    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true });
     renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.domElement.setAttribute("aria-label", "3D 导演台取景视窗"); renderer.domElement.style.touchAction = "none";
@@ -73,6 +84,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     const selection = new THREE.Box3Helper(new THREE.Box3(), 0xd5a454); helpers.add(selection); selection.visible = false;
     const grid = new THREE.GridHelper(100, 100, "#8c8881", "#b0aba2"); helpers.add(grid);
     const ambient = new THREE.HemisphereLight("#ffffff", "#6b6260", 2), key = new THREE.DirectionalLight("#ffffff", 3); scene.add(ambient, key);
+    const fill = new THREE.DirectionalLight("#dce8ff", 0), rim = new THREE.DirectionalLight("#ffffff", 0); fill.position.set(7, 4, 3); rim.position.set(-3, 5, -7); scene.add(fill, rim);
     key.castShadow = true; key.shadow.mapSize.set(1024,1024); Object.assign(key.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 0.1, far: 80 }); key.shadow.bias = -0.0001;
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: initial.floor, roughness: 1 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.005; scene.add(floor);
     floor.receiveShadow = true;
@@ -133,12 +145,13 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         state = next; selected = selection; syncing = true;
         try {
             const attached = transform.object?.userData.directorId;
-            for (const [id, object] of objects) if (!next.objects.some(item => item.id === id && `${item.kind}:${item.pose}` === object.userData.shape)) { if (attached === id) transform.detach(); subjects.remove(object); disposeObject(object); objects.delete(id); }
+            const shape = (item: DirectorObject) => JSON.stringify([item.kind, item.pose, item.joints]);
+            for (const [id, object] of objects) if (!next.objects.some(item => item.id === id && shape(item) === object.userData.shape)) { if (attached === id) transform.detach(); subjects.remove(object); disposeObject(object); objects.delete(id); }
             for (const item of next.objects) {
                 let object = objects.get(item.id);
-                if (!object) { object = buildObject(item); object.userData.shape = `${item.kind}:${item.pose}`; objects.set(item.id, object); subjects.add(object); }
+                if (!object) { object = buildObject(item); object.userData.shape = shape(item); objects.set(item.id, object); subjects.add(object); }
                 object.position.fromArray(item.position); object.rotation.set(...item.rotation.map(THREE.MathUtils.degToRad) as DirectorVector); object.scale.fromArray(item.scale); object.visible = item.visible !== false;
-                object.traverse(child => { if (child instanceof THREE.Mesh) (child.material as THREE.MeshStandardMaterial).color.set(item.color); });
+                object.traverse(child => { if (child instanceof THREE.Mesh) { const material = child.material as THREE.MeshStandardMaterial; material.color.set(item.color); material.roughness = item.roughness ?? 0.72; material.metalness = item.metalness ?? 0; } });
             }
             const target = selected && objects.get(selected), editable = next.objects.find(item => item.id === selected);
             if (target && editable?.visible !== false && !editable?.locked) { if (transform.object !== target) transform.attach(target); } else transform.detach();
@@ -147,6 +160,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
             if (mode === "camera") { controls.target.fromArray(next.camera.target); controls.update(); }
             const azimuth = THREE.MathUtils.degToRad(next.light.azimuth), elevation = THREE.MathUtils.degToRad(next.light.elevation);
             key.position.set(Math.sin(azimuth) * Math.cos(elevation) * 10, Math.sin(elevation) * 10, Math.cos(azimuth) * Math.cos(elevation) * 10); key.intensity = next.light.intensity;
+            key.color.set(next.light.color || "#ffffff"); key.castShadow = next.light.shadows !== false; ambient.intensity = next.light.ambient ?? 2; fill.intensity = next.light.fill ?? 0; rim.intensity = next.light.rim ?? 0; floor.visible = next.floorVisible !== false;
             scene.background = new THREE.Color(next.background); floor.material.color.set(next.floor); cameraHelper.update(); render();
             guide.replaceChildren();
             const divisions = next.guide === "thirds" ? [1 / 3, 2 / 3] : next.guide === "center" ? [0.5] : [];
@@ -172,18 +186,20 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         view(value: "front" | "back" | "left" | "right" | "top" | "perspective") { const axes = { front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0], top: [0, 1, 0.001], perspective: [1, 0.6, 1] }; frame(new THREE.Vector3(...axes[value]).normalize(), selected); },
         ground(id: string) { const object = objects.get(id); if (!object || state.objects.find(item => item.id === id)?.locked) return; const bounds = new THREE.Box3().setFromObject(object); callbacks.object(id, { position: [object.position.x, object.position.y - bounds.min.y, object.position.z] }); },
         adoptView() { callbacks.camera({ position: editor.position.toArray(), target: controls.target.toArray(), lens: state.camera.lens }); },
-        async capture(output: 'color'|'depth'|'outline'|'mask'='color',maskId?:string) {
+        async capture(output: DirectorOutput='color',maskId?:string) {
             if (disposed || capturing || renderer.getContext().isContextLost()) throw new Error("三维渲染尚未就绪，请重新打开导演台");
             const context = renderer.getContext(), maxSize = Math.min(context.getParameter(context.MAX_TEXTURE_SIZE), context.getParameter(context.MAX_RENDERBUFFER_SIZE));
             const viewport = context.getParameter(context.MAX_VIEWPORT_DIMS) as Int32Array;
             if (state.width > Math.min(maxSize, viewport[0]) || state.height > Math.min(maxSize, viewport[1])) throw new Error(`当前显卡不支持 ${state.width} × ${state.height} 输出，请手动调整尺寸；不会自动降低分辨率`);
             capturing = true; controls.enabled = false; transform.enabled = false;
-            const background=scene.background,override=scene.overrideMaterial,tone=renderer.toneMapping;
+            const background=scene.background,override=scene.overrideMaterial,tone=renderer.toneMapping,floorVisible=floor.visible;
             const materials=new Map<THREE.Mesh,THREE.Material|THREE.Material[]>(),temporary:THREE.Material[]=[];
             let composer:EffectComposer|undefined;
             try {
                 helpers.visible = false; renderer.setScissorTest(false); renderer.setSize(state.width, state.height, false); renderer.setViewport(0, 0, state.width, state.height);
-                if(output==='mask'){
+                if(output==='transparent'){scene.background=null;floor.visible=false;}
+                else if(output==='normal'){const normal=new THREE.MeshNormalMaterial();scene.overrideMaterial=normal;temporary.push(normal);renderer.toneMapping=THREE.NoToneMapping;scene.background=new THREE.Color(0);}
+                else if(output==='mask'){
                     if(!maskId||!objects.has(maskId)||!objects.get(maskId)!.visible)throw Error('请先选择可见物体，再输出蒙版');
                     const white=new THREE.MeshBasicMaterial({color:0xffffff}),black=new THREE.MeshBasicMaterial({color:0x000000});temporary.push(white,black);
                     for(const [id,object] of objects)object.traverse(child=>{if(child instanceof THREE.Mesh){materials.set(child,child.material);child.material=id===maskId?white:black;}});
@@ -205,7 +221,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
                 const blob = await new Promise<Blob>((resolve, reject) => renderer.domElement.toBlob(blob => blob ? resolve(blob) : reject(new Error("取景图导出失败，请重试")), "image/png"));
                 if (disposed || context.isContextLost()) throw new Error("导出已中断，场景设置保持不变");
                 return blob;
-            } finally {scene.background=background;scene.overrideMaterial=override;renderer.toneMapping=tone;materials.forEach((material,mesh)=>{mesh.material=material;});if(composer){composer.passes.forEach(pass=>pass.dispose());composer.dispose();}temporary.forEach(material=>material.dispose()); capturing = false; helpers.visible = true; controls.enabled = true; transform.enabled = true; if (!disposed) { renderer.setSize(width, height, false); render(); } }
+            } finally {scene.background=background;floor.visible=floorVisible;scene.overrideMaterial=override;renderer.toneMapping=tone;materials.forEach((material,mesh)=>{mesh.material=material;});if(composer){composer.passes.forEach(pass=>pass.dispose());composer.dispose();}temporary.forEach(material=>material.dispose()); capturing = false; helpers.visible = true; controls.enabled = true; transform.enabled = true; if (!disposed) { renderer.setSize(width, height, false); render(); } }
         },
         dispose() { disposed = true; cancelAnimationFrame(pending); resize.disconnect(); controls.dispose(); transform.dispose(); surface.removeEventListener("pointerdown", down); surface.removeEventListener("pointerup", up); surface.remove(); renderer.domElement.removeEventListener("webglcontextlost", contextLost); disposeObject(scene); key.shadow.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); objects.clear(); },
     };

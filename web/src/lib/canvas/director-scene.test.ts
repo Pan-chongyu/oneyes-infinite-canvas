@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { directorHistory, directorPreset, readDirectorScene } from "./director-scene";
+import { directorHistory, directorObject, directorPreset, directorPrompt, directorSceneFile, parseDirectorSceneFile, readDirectorScene } from "./director-scene";
 
 test("director history groups a field edit, keeps independent snapshots and invalidates redo only on new work", () => {
     const original = directorPreset(), history = directorHistory(original);
@@ -19,6 +19,25 @@ test("director history groups a field edit, keeps independent snapshots and inva
     locked.objects[0].name = "caller mutated";
     assert.deepEqual(history.undo(), second);
     assert.notEqual(history.redo()!.objects[0].name, locked.objects[0].name);
+});
+
+test("director scene exchange preserves articulation, materials, lights and ordered shot notes as independent data", () => {
+    const scene = directorPreset();
+    scene.objects[0].name = "主角 A"; scene.objects[0].joints = { head: [0, 45, 0], leftArm: [40, 0, 30], leftElbow: [-90, 0, 0] };
+    scene.objects[0].roughness = 0.2; scene.objects[0].metalness = 0.8;
+    scene.objects.push(directorObject("torus"), directorObject("plane"), directorObject("cone"));
+    scene.light = { ...scene.light, color: "#ffd9b8", fill: 2, rim: 1, ambient: 0.5, shadows: false };
+    scene.floorVisible = false; scene.note = "电影感对话";
+    scene.shots = ["反打", "主镜头"].map((name,id) => ({ id: String(id), name, note: "情绪克制", camera: structuredClone(scene.camera), width: 864, height: 1536 }));
+    const restored = parseDirectorSceneFile(directorSceneFile(scene));
+    assert.deepEqual(restored, scene); restored.objects[0].joints!.head![1] = 90;
+    assert.equal(scene.objects[0].joints.head![1], 45);
+    assert.match(directorPrompt(scene, scene.shots[0].note), /电影感对话\n情绪克制/);
+    scene.objects[0].visible = false;
+    assert.doesNotMatch(directorPrompt(scene), /主角 A/);
+    for (const text of ['{', '{}', JSON.stringify({ format: "oneyes-director", version: 2, scene }), JSON.stringify({ format: "oneyes-director", version: 1, scene: { ...scene, width: 0 } })]) assert.throws(() => parseDirectorSceneFile(text));
+    for (const patch of [ { joints: { unknown: [0,0,0] } }, { joints: { head: [NaN,0,0] } }, { joints: [] }, { roughness: -1 }, { metalness: 1.1 } ]) assert.throws(() => readDirectorScene({ ...scene, objects: [{ ...scene.objects[0], ...patch }] }), /无效/);
+    for (const patch of [{ floorVisible: "false" }, { note: {} }, { light: { ...scene.light, fill: -1 } }, { light: { ...scene.light, color: "url(external)" } }, { light: { ...scene.light, shadows: 1 } }]) assert.throws(() => readDirectorScene({ ...scene, ...patch }), /无效/);
 });
 
 test("scene validates shot identities, camera/dimensions and visibility/locking without changing saved metadata", () => {

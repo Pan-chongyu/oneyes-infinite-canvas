@@ -1,5 +1,7 @@
 export type DirectorVector = [number, number, number];
-export type DirectorKind = "person" | "box" | "sphere" | "cylinder";
+export type DirectorKind = "person" | "box" | "sphere" | "cylinder" | "cone" | "torus" | "plane";
+export type DirectorJoint = "torso" | "head" | "leftArm" | "leftElbow" | "rightArm" | "rightElbow" | "leftLeg" | "leftKnee" | "rightLeg" | "rightKnee";
+export type DirectorOutput = "color" | "depth" | "outline" | "mask" | "normal" | "transparent";
 export type DirectorPose = "stand" | "walk" | "sit" | "reach";
 export type DirectorObject = {
     id: string;
@@ -12,14 +14,17 @@ export type DirectorObject = {
     color: string;
     visible?: boolean;
     locked?: boolean;
+    joints?: Partial<Record<DirectorJoint, DirectorVector>>;
+    roughness?: number;
+    metalness?: number;
 };
 export type DirectorCamera = { position: DirectorVector; target: DirectorVector; lens: number };
-export type DirectorShot = { id: string; name: string; camera: DirectorCamera; width: number; height: number };
+export type DirectorShot = { id: string; name: string; camera: DirectorCamera; width: number; height: number; note?: string };
 export type DirectorScene = {
     schema: 1;
     objects: DirectorObject[];
     camera: DirectorCamera;
-    light: { azimuth: number; elevation: number; intensity: number };
+    light: { azimuth: number; elevation: number; intensity: number; color?: string; ambient?: number; fill?: number; rim?: number; shadows?: boolean };
     background: string;
     floor: string;
     width: number;
@@ -27,4 +32,6 @@ export type DirectorScene = {
     grid: boolean;
     guide?: "none" | "thirds" | "center";
     shots?: DirectorShot[];
+    floorVisible?: boolean;
+    note?: string;
 };
