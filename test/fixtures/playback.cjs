@@ -39,13 +39,17 @@ app.whenReady().then(async () => {
         };
         const node = find(root); assert.ok(node, 'Native media control exists: ' + pseudo);
         const { model } = await win.webContents.debugger.sendCommand('DOM.getBoxModel', { nodeId: node.nodeId });
+        console.log('MEDIA_CONTROL',pseudo,node.attributes,model.content);
         return { x: Math.round((model.content[0] + model.content[4]) / 2), y: Math.round((model.content[1] + model.content[5]) / 2) };
     };
     const clickControl = async pseudo => {
         win.focus(); await wait(() => win.isFocused());
         win.webContents.sendInputEvent({ type: 'mouseMove', ...await controlPoint(pseudo) });
         await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        click(await controlPoint(pseudo));
+        const point = await controlPoint(pseudo);
+        const location=await win.webContents.debugger.sendCommand('DOM.getNodeForLocation',{...point,includeUserAgentShadowDOM:true});const hit=await win.webContents.debugger.sendCommand('DOM.describeNode',{backendNodeId:location.backendNodeId});
+        console.log('MEDIA_CLICK',pseudo,point,hit.node.nodeName,hit.node.attributes,await js('(()=>{const v=document.querySelector("video");return {paused:v.paused,time:v.currentTime,rect:v.getBoundingClientRect().toJSON(),fullscreen:!!document.fullscreenElement}})()'));
+        click(point);
     };
     try {
         configurePermissions(win.webContents.session);
@@ -84,6 +88,6 @@ app.whenReady().then(async () => {
         console.log('VIDEO_PLAYBACK_NATIVE_OK: native play/fullscreen, Escape, scaled canvas, light/dark, no control drag, video drag preserved');
     } catch (error) {
         console.error('Playback state:', await js('(()=>{const video=document.querySelector("video"),rect=video?.getBoundingClientRect();return {focused:document.hasFocus(),paused:video?.paused,ended:video?.ended,readyState:video?.readyState,currentTime:video?.currentTime,error:video?.error?.message,rect:rect?.toJSON()}})()'));
-        throw error;
+        require('fs').writeFileSync('playback-failure.png',(await win.webContents.capturePage()).toPNG());throw error;
     } finally { win.webContents.debugger.detach(); win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

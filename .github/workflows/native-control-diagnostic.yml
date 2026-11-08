@@ -1,0 +1,35 @@
+name: Canvas native control diagnostic
+on:
+  push:
+    branches: ['codex/native-control-diagnostic']
+permissions:
+  contents: read
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: node scripts/build-resource-relay.mjs start "${{ runner.temp }}/canvas-build-relay.json"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: npm ci
+      - run: npm ci --prefix web
+      - run: npm run media:prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: npm run test:playback
+        continue-on-error: true
+      - run: npm run test:director
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Native-playback-diagnostic
+          path: playback-failure.png
+          if-no-files-found: ignore
+      - run: node scripts/build-resource-relay.mjs stop "${{ runner.temp }}/canvas-build-relay.json"
+        if: always()
