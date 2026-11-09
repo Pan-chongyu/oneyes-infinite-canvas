@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Input, InputNumber, Segmented, Select } from "antd";
+import { App, Button, Checkbox, Input, InputNumber, Select } from "antd";
 import { Copy, Eye, Film, Sparkles, Upload, X } from "lucide-react";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { readFileAsDataUrl } from "@/lib/image-utils";
-import { directorAiRequest, formatVideoPrompt, readDirectorDraft, readVideoPrompt, videoPromptSystem, type DirectorAiMode, type DirectorDraft } from "@/lib/canvas/director-assistant";
+import { formatVideoPrompt, readVideoPrompt, videoPromptSystem, type DirectorAiMode, type DirectorDraft } from "@/lib/canvas/director-assistant";
+import { directorInputSnapshot } from "@/lib/canvas/director-inputs";
+import { DirectorSetup } from "./director-setup";
+import type { DirectorDraftController } from "./use-director-draft";
 import { sequenceDuration } from "@/lib/canvas/director-sequence";
 import { studioModelChoice } from "@/lib/canvas/studio-assistant";
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
@@ -13,9 +16,11 @@ import { reportError } from "@/services/diagnostics";
 import type { DirectorAssistantSettings, DirectorScene } from "@/types/director";
 import type { CanvasNodeContext } from "@/types/canvas-plugin";
 
-export function DirectorAssistant({ctx,scene,disabled,onApply,onPreview}:{ctx:CanvasNodeContext;scene:DirectorScene;disabled:boolean;onApply:(draft:DirectorDraft)=>boolean;onPreview:(scene:DirectorScene|null)=>void}) {
+export function DirectorAssistant({ctx,scene,disabled,onApply,onPreview,creation}:{ctx:CanvasNodeContext;scene:DirectorScene;disabled:boolean;onApply:(draft:DirectorDraft)=>boolean;onPreview:(scene:DirectorScene|null)=>void;creation:DirectorDraftController}) {
     const settings=ctx.node.metadata?.directorAssistant || {}, mode=settings.mode || "scene", prompt=settings.prompt || "", choice=studioModelChoice(ctx.ai,settings.model,"text");
-    const [busy,setBusy]=useState(false),[progress,setProgress]=useState(""),[error,setError]=useState(""),[draft,setDraft]=useState<DirectorDraft|null>(null);
+    const [videoBusy,setBusy]=useState(false),[progress,setProgress]=useState(""),[error,setError]=useState("");
+    const {draft}=creation, busy=videoBusy||creation.busy;
+    const [expanded,setExpanded]=useState(creation.autoPreview);
     const latest=useRef({ctx,scene});latest.current={ctx,scene};
     const controller=useRef<AbortController|null>(null),mounted=useRef(true),input=useRef<HTMLInputElement>(null);
     const videos=ctx.getNodes().filter(node=>node.type==="video"&&(node.metadata?.content||node.metadata?.storageKey));
@@ -29,6 +34,8 @@ export function DirectorAssistant({ctx,scene,disabled,onApply,onPreview}:{ctx:Ca
     useEffect(()=>{controller.current?.abort();setSamples(null);setSelected([]);},[source]);
     useEffect(()=>{const urls=samples?.frames.map(frame=>URL.createObjectURL(frame.blob)) || [];setThumbnails(urls);return()=>urls.forEach(url=>URL.revokeObjectURL(url));},[samples]);
     useEffect(()=>{onPreview(null);},[scene,onPreview]);
+    useEffect(()=>{if(draft||creation.busy)setExpanded(true);},[draft,creation.busy]);
+    useEffect(()=>{if(draft&&creation.autoPreview)onPreview(draft.preview);},[draft,creation.autoPreview,onPreview]);
     const run=async(task:(signal:AbortSignal,check:()=>void)=>Promise<void>)=>{
         if(controller.current)return;
         const abort=new AbortController(),origin={projectId:ctx.projectId,nodeId:ctx.node.id};controller.current=abort;setBusy(true);setError("");
@@ -37,14 +44,7 @@ export function DirectorAssistant({ctx,scene,disabled,onApply,onPreview}:{ctx:Ca
         catch(error){if(!abort.signal.aborted&&mounted.current){setError(error instanceof Error?error.message:"AI 处理失败，请检查模型配置后重试");reportError("agent","request",error);}}
         finally{if(controller.current===abort)controller.current=null;if(mounted.current){setBusy(false);setProgress("");}}
     };
-    const generate=(target:DirectorAiMode)=>void run(async(signal,check)=>{
-        if(!choice.ready)throw Error("请先在模型配置中接入可用的文本模型");
-        if(!prompt.trim())throw Error("请先描述希望调整的场景或制作的动作");
-        onPreview(null);setProgress(target==="animation"?"AI 正在编排动作与运镜关键帧…":"AI 正在调整布景与镜头…");
-        const source=structuredClone(scene),request=directorAiRequest(source,prompt,target);
-        const result=await ctx.ai.generateText(request.prompt,{system:request.system,model:choice.value,signal});check();
-        const next=readDirectorDraft(result.text,source,target);check();setDraft(next);
-    });
+    const generate=(target:DirectorAiMode)=>{setError("");onPreview(null);void creation.generate(target,scene);};
     const extract=()=>void run(async(signal,check)=>{
         if(!file&&!video)throw Error("请选择画布视频或导入本机视频");
         const original=file || await creatorSourceBlob(video!,signal);check();
@@ -67,11 +67,10 @@ export function DirectorAssistant({ctx,scene,disabled,onApply,onPreview}:{ctx:Ca
         for(const neighbor of [...ctx.getNodes()].sort((a,b)=>a.position.y-b.position.y))if(node.position.x<neighbor.position.x+neighbor.width&&node.position.x+node.width>neighbor.position.x&&node.position.y<neighbor.position.y+neighbor.height&&node.position.y+node.height>neighbor.position.y)node.position.y=neighbor.position.y+neighbor.height+32;
         ctx.applyOps([{type:"add_node",id:node.id,nodeType:"text",title:"视频反推 · 提示词",position:node.position,width:node.width,height:node.height,metadata:node.metadata},{type:"connect_nodes",fromNodeId:ctx.node.id,toNodeId:node.id}]);void message.success("提示词已加入画布");
     };
-    return <details className="border-t pt-2 text-xs" style={{borderColor:ctx.theme.toolbar.border}} data-director-assistant>
+    return <details className="border-t pt-2 text-xs" style={{borderColor:ctx.theme.toolbar.border}} data-director-assistant open={expanded} onToggle={event=>setExpanded(event.currentTarget.open)}>
         <summary className="cursor-pointer py-1 font-medium"><Sparkles size={13} className="mr-1 inline"/>AI 调台、动画与视频反推</summary>
         <div className="mt-2 space-y-2">
-            <div className="flex flex-wrap items-center gap-2"><Segmented size="small" aria-label="导演台 AI 功能" value={mode} disabled={busy||disabled} options={[{value:"scene",label:"调整场景"},{value:"animation",label:"制作动画"},{value:"video",label:"视频反推"}]} onChange={mode=>{onPreview(null);patch({mode:mode as DirectorAssistantSettings["mode"]});}}/><Select size="small" className="min-w-48 flex-1" showSearch optionFilterProp="label" aria-label="导演台 AI 模型" placeholder="选择已接入的文本模型" value={choice.value||undefined} options={choice.options} disabled={busy||disabled} onChange={model=>patch({model})}/></div>
-            <Input.TextArea aria-label="导演台 AI 提示词" autoSize={{minRows:2,maxRows:6}} value={prompt} disabled={busy||disabled} onChange={event=>patch({prompt:event.target.value})} placeholder={mode==="video"?"默认详细分析全部可见维度；可补充重点，例如人物服饰、动作起止、运镜、光影材质及跨镜头一致性。":"例如：让两人面对面，暖色侧光；制作 5 秒镜头，左侧人物走近并挥手，相机缓缓推进。"}/>
+            <DirectorSetup ctx={ctx} disabled={busy||disabled}/>
             {mode==="video"?<>
                 <div className="flex flex-wrap items-center gap-2"><Select size="small" className="min-w-48 flex-1" aria-label="反推参考视频" placeholder="选择画布视频" value={file?undefined:videoId||undefined} disabled={busy||disabled} options={videos.map(node=>({value:node.id,label:node.title}))} onChange={id=>{setFile(null);setVideoId(id);}}/><input ref={input} type="file" accept="video/*,.mkv,.avi" className="hidden" aria-label="导入反推视频" onChange={event=>{if(event.target.files?.[0])setFile(event.target.files[0]);event.target.value="";}}/><Button type="text" size="small" icon={<Upload size={13}/>} disabled={busy||disabled} onClick={()=>input.current?.click()}>导入视频</Button>{file&&<span className="max-w-48 truncate">{file.name}</span>}<label className="inline-flex items-center gap-1">采样<InputNumber size="small" className="!w-20" aria-label="视频参考帧数量" min={1} precision={0} value={count} disabled={busy||disabled} onChange={value=>{if(value!==null&&Number.isSafeInteger(value)&&value>0)setCount(value);}}/>帧</label><Button type="text" size="small" icon={<Film size={13}/>} disabled={busy||disabled||!file&&!video} onClick={extract}>提取参考帧</Button></div>
                 {samples&&<><div className="flex flex-wrap items-center gap-2" style={{color:ctx.theme.node.muted}}><span>{samples.duration.toFixed(2)} 秒 · {samples.width} × {samples.height} · 已选 {selected.length} / {samples.frames.length} 帧</span><Button type="text" size="small" disabled={busy||disabled} onClick={()=>setSelected(selected.length===samples.frames.length?[]:samples.frames.map((_,i)=>i))}>{selected.length===samples.frames.length?"取消全选":"全选帧"}</Button></div><div className="flex gap-2 overflow-x-auto pb-1">{samples.frames.map((frame,index)=><label key={index} className="w-28 shrink-0 cursor-pointer space-y-1"><img src={thumbnails[index]} alt={`参考帧 ${index+1}`} className="h-16 w-full rounded object-contain"/><Checkbox disabled={busy||disabled} checked={selected.includes(index)} onChange={event=>setSelected(old=>event.target.checked?[...old,index].sort((a,b)=>a-b):old.filter(i=>i!==index))}>{frame.time.toFixed(2)}s</Checkbox></label>)}</div></>}
@@ -95,12 +94,12 @@ export function DirectorAssistant({ctx,scene,disabled,onApply,onPreview}:{ctx:Ca
                     <div className="flex flex-wrap gap-1"><Button type="text" size="small" icon={<Copy size={13}/>} onClick={()=>void copy(text)}>复制完整提示词</Button><Button type="text" size="small" disabled={busy||disabled} onClick={addText}>加入画布文本</Button><Button type="text" size="small" disabled={busy||disabled} onClick={()=>useReverse("scene")}>用于调整场景</Button><Button type="text" size="small" disabled={busy||disabled} onClick={()=>useReverse("animation")}>用于制作动画</Button></div>
                 </section>}
             </>:<>
-                <div className="flex flex-wrap items-center gap-2"><Button type="text" size="small" icon={<Sparkles size={13}/>} disabled={busy||disabled||!choice.ready||!prompt.trim()} onClick={()=>generate(mode)}>生成{mode==="animation"?"动画":"场景"}草稿</Button><span style={{color:ctx.theme.node.muted}}>{mode==="animation"?"新增动画分镜，保留已有镜头。":"调整当前场景，保存机位保持不变。"}锁定物体保留；应用可撤销。</span></div>
-                {draft&&<section aria-label="导演台 AI 草稿" className="space-y-2"><p role="status" className="font-medium">AI 草稿已就绪：{draft.summary}</p><p style={{color:ctx.theme.node.muted}}>{draft.scene.objects.length} 个物体{draft.added.length?` · 新增 ${draft.added.length} 镜 · ${sequenceDuration(draft.added)} 秒`:""}</p>{draft.added.map(shot=><p key={shot.id}>{shot.name} · {shot.duration}s · {shot.keyframes?.length || 0} 个运动关键帧</p>)}{stale&&<p role="alert">场景已变化，此草稿不能覆盖新修改，请重新生成。</p>}<div className="flex flex-wrap gap-1"><Button type="text" size="small" icon={<Eye size={13}/>} disabled={busy||disabled||stale} onClick={()=>onPreview(draft.preview)}>预览 AI 草稿</Button><Button type="text" size="small" disabled={busy} onClick={()=>onPreview(null)}>退出草稿预览</Button><Button type="text" size="small" disabled={busy||disabled||stale} onClick={()=>{if(onApply(draft))setDraft(null);}}>应用 AI 草稿</Button><Button type="text" size="small" icon={<X size={13}/>} disabled={busy} onClick={()=>{setDraft(null);onPreview(null);}}>丢弃草稿</Button></div></section>}
+                <div className="flex flex-wrap items-center gap-2"><Button type="text" size="small" icon={<Sparkles size={13}/>} disabled={busy||disabled||!choice.ready||(!prompt.trim()&&!directorInputSnapshot(ctx).inputs.length)} onClick={()=>generate(mode)}>生成{mode==="animation"?"动画":"场景"}草稿</Button><span style={{color:ctx.theme.node.muted}}>{mode==="animation"?"新增动画分镜，保留已有镜头。":"调整当前场景，保存机位保持不变。"}锁定物体保留；应用可撤销。</span></div>
+                {draft&&<section aria-label="导演台 AI 草稿" className="space-y-2"><p role="status" className="font-medium">AI 草稿已就绪：{draft.summary}</p><p style={{color:ctx.theme.node.muted}}>{draft.scene.objects.length} 个物体{draft.added.length?` · 新增 ${draft.added.length} 镜 · ${sequenceDuration(draft.added)} 秒`:""}</p>{draft.added.map(shot=><p key={shot.id}>{shot.name} · {shot.duration}s · {shot.keyframes?.length || 0} 个运动关键帧</p>)}{stale&&<p role="alert">场景已变化，此草稿不能覆盖新修改，请重新生成。</p>}<div className="flex flex-wrap gap-1"><Button type="text" size="small" icon={<Eye size={13}/>} disabled={busy||disabled||stale} onClick={()=>onPreview(draft.preview)}>预览 AI 草稿</Button><Button type="text" size="small" disabled={busy} onClick={()=>onPreview(null)}>退出草稿预览</Button><Button type="text" size="small" disabled={busy||disabled||stale} onClick={()=>{if(onApply(draft))creation.clear();}}>{creation.autoPreview?"应用并微调":"应用 AI 草稿"}</Button><Button type="text" size="small" icon={<X size={13}/>} disabled={busy} onClick={()=>{creation.clear();onPreview(null);}}>丢弃草稿</Button></div></section>}
             </>}
-            {busy&&<div className="flex items-center gap-2" role="status"><Sparkles size={13} className="animate-pulse motion-reduce:animate-none"/>{progress}<Button type="text" size="small" onClick={()=>controller.current?.abort()}>取消 AI 操作</Button></div>}
+            {busy&&<div className="flex items-center gap-2" role="status"><Sparkles size={13} className="animate-pulse motion-reduce:animate-none"/>{creation.progress||progress}<Button type="text" size="small" onClick={()=>{controller.current?.abort();creation.cancel();}}>取消 AI 操作</Button></div>}
             <p style={{color:ctx.theme.node.muted}}>点击生成或反推会调用所选模型，按站点计费；未应用的草稿不改动场景，不会自动重发调用。</p>
-            {error&&<p role="alert">{error}</p>}
+            {(error||creation.error)&&<p role="alert">{error||creation.error}</p>}
         </div>
     </details>;
 }

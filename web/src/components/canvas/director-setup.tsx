@@ -1,0 +1,22 @@
+import { Button, Input, Segmented, Select } from "antd";
+import { Box, FileText, Image, Link2, Play, Settings2 } from "lucide-react";
+import { directorInputs } from "@/lib/canvas/director-inputs";
+import { studioModelChoice } from "@/lib/canvas/studio-assistant";
+import { useConfigStore } from "@/stores/use-config-store";
+import type { CanvasNodeContext } from "@/types/canvas-plugin";
+import type { DirectorAssistantSettings } from "@/types/director";
+
+export function DirectorSetup({ ctx, disabled, compact = false }: { ctx: CanvasNodeContext; disabled: boolean; compact?: boolean }) {
+    const settings = ctx.node.metadata?.directorAssistant || {}, inputs = directorInputs(ctx), choice = studioModelChoice(ctx.ai, settings.model, "text");
+    const patch = (patch: Partial<DirectorAssistantSettings>) => ctx.updateMetadata({ directorAssistant: { ...settings, ...patch } });
+    const selected = inputs.filter(input => !settings.sourceIds || settings.sourceIds.includes(input.nodeId)).map(input => input.nodeId), mode = settings.mode === "video" && compact ? "scene" : settings.mode || "scene";
+    return <div className="space-y-2 text-xs" data-director-setup onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} onWheel={event => event.stopPropagation()} data-canvas-shortcuts-ignore data-canvas-no-zoom>
+        <Segmented block={compact} size="small" aria-label={compact ? "导演台生成类型" : "导演台 AI 功能"} value={mode} disabled={disabled} options={[{ value: "scene", label: <span className="inline-flex items-center gap-1"><Box size={13} />{compact ? "布景" : "调整场景"}</span> }, { value: "animation", label: <span className="inline-flex items-center gap-1"><Play size={13} />{compact ? "预演" : "制作动画"}</span> }, ...(!compact ? [{ value: "video", label: "视频反推" }] : [])]} onChange={mode => patch({ mode: mode as DirectorAssistantSettings["mode"] })} />
+        <Input.TextArea aria-label={compact ? "导演台创作提示词" : "导演台 AI 提示词"} autoSize={{ minRows: 2, maxRows: compact ? 4 : 6 }} value={settings.prompt || ""} disabled={disabled} onChange={event => patch({ prompt: event.target.value })} placeholder={mode === "video" ? "详细分析视频；也可补充人物、动作或镜头重点。" : mode === "animation" ? "描述人物动作、镜头运动与时长，也可直接使用连接的内容。" : "描述想要的场景、人物和光线，也可连接文本或参考图。"} />
+        {mode !== "video" && <div aria-label="导演台连接输入" className="space-y-1.5">
+            <div className="flex items-center justify-between" style={{ color: ctx.theme.node.muted }}><span className="inline-flex items-center gap-1"><Link2 size={12} />{inputs.length ? `参考节点 · 已选 ${inputs.filter(input => selected.includes(input.nodeId)).length}` : "可连接文本、剧本或参考图"}</span>{inputs.length > 0 && <button type="button" className="cursor-pointer hover:underline disabled:opacity-50" disabled={disabled} onClick={() => patch({ sourceIds: selected.length ? [] : undefined })}>{selected.length ? "取消全选" : "全选"}</button>}</div>
+            {!!inputs.length && <div className="flex max-h-16 flex-wrap gap-1 overflow-y-auto overscroll-contain">{inputs.map(input => <button key={input.nodeId} type="button" aria-pressed={selected.includes(input.nodeId)} disabled={disabled} title={input.title} aria-label={`参考：${input.title}`} className="inline-flex h-6 max-w-full cursor-pointer items-center gap-1 rounded px-1.5 text-[11px] transition-colors hover:opacity-80 disabled:opacity-50" style={{ background: selected.includes(input.nodeId) ? ctx.theme.toolbar.activeBg : "transparent", color: selected.includes(input.nodeId) ? ctx.theme.node.text : ctx.theme.node.muted }} onClick={() => patch({ sourceIds: selected.includes(input.nodeId) ? selected.filter(id => id !== input.nodeId) : [...selected, input.nodeId] })}>{input.kind === "image" ? <Image size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}<span className="truncate">{input.title}</span></button>)}</div>}
+        </div>}
+        <div className="flex min-w-0 items-center gap-1"><Select size="small" className="min-w-0 flex-1" showSearch optionFilterProp="label" aria-label={compact ? "导演台创作模型" : "导演台 AI 模型"} placeholder="选择已接入的文本模型" value={choice.value || undefined} options={choice.options} disabled={disabled} onChange={model => patch({ model })} /><Button type="text" size="small" aria-label="配置导演台模型" title="模型配置；参考图需使用支持看图的模型" icon={<Settings2 size={13} />} disabled={disabled} onClick={() => useConfigStore.getState().openConfigDialog(true)} /></div>
+    </div>;
+}

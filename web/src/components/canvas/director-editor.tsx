@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
 import { DirectorTimeline } from "./director-timeline";
 import { DirectorAssistant } from "./director-assistant";
+import type { DirectorDraftController } from "./use-director-draft";
 import { useDirectorPlayback } from "./use-director-playback";
 import { exportDirectorBundle } from "@/lib/canvas/director-export";
 import { directorFrameChanged, directorMotionPrompt, recordDirectorFrame, sequenceDuration, shotDuration, shotListCsv, shotScene } from "@/lib/canvas/director-sequence";
@@ -14,8 +15,8 @@ import type { DirectorJoint, DirectorKind, DirectorObject, DirectorOutput, Direc
 import type { CanvasNodeContext } from "@/types/canvas-plugin";
 
 const icons = { person: UserRound, box: Box, sphere: Circle, cylinder: Cylinder, cone: Cylinder, torus: Circle, plane: Box };
-type Props = { scene: DirectorScene; ctx: CanvasNodeContext; onChange: (scene: DirectorScene) => void; onCapture: (blob: Blob, scene: DirectorScene,label?:string,workflow?:boolean|"video",note?:string,seconds?:number) => Promise<void> };
-export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Props) {
+type Props = { scene: DirectorScene; ctx: CanvasNodeContext; creation: DirectorDraftController; onChange: (scene: DirectorScene) => void; onCapture: (blob: Blob, scene: DirectorScene,label?:string,workflow?:boolean|"video",note?:string,seconds?:number) => Promise<void> };
+export default function DirectorEditor({ scene, ctx, creation, onChange, onCapture }: Props) {
     const theme = ctx.theme;
     const container = useRef<HTMLDivElement>(null), fileInput = useRef<HTMLInputElement>(null), runtime = useRef<DirectorRuntime | null>(null);
     const current = useRef({ scene, onChange }); current.current = { scene, onChange };
@@ -160,7 +161,7 @@ export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Prop
             </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: theme.node.muted }}><span>{step==='stage'?'添加人物或道具，调整姿态和镜头；也可展开 AI 描述你的想法。':step==='shots'?'保存起始机位，调整画面后记录末帧，完成一段动作与运镜。':step==='preview'?'播放或拖动时间轴检查效果；点「编辑此帧」继续调整。':'选择当前画面或已保存分镜，输出到画布或导出文件。'}</span><div className="flex items-center gap-1"><input ref={fileInput} type="file" accept=".json,application/json" aria-label="导入导演台场景文件" className="hidden" onChange={event => { void importScene(event.target.files?.[0]); event.target.value = ""; }} /><Button type="text" size="small" disabled={busy} icon={<Upload size={13} />} onClick={() => fileInput.current?.click()}>导入场景</Button><Button type="text" size="small" disabled={busy} icon={<Download size={13} />} onClick={() => { try { saveAs(new Blob([directorSceneFile(scene)], { type: "application/json" }), "OneYes-导演台.json"); } catch (error) { setError(error instanceof Error ? error.message : "场景导出失败"); } }}>导出场景</Button></div></div>
-        <DirectorAssistant ctx={ctx} scene={scene} disabled={working || !!playback.preview && !aiPreview} onPreview={previewDraft} onApply={draft => { if (draft.source !== JSON.stringify(current.current.scene) || draft.source !== JSON.stringify(ctx.node.metadata?.directorScene)) { setError("场景已变化，AI 草稿未应用，请重新生成"); return false; } playback.stop(true); setAiPreview(null); commit(draft.scene); setEditTime(0); if(draft.added.length) {setShotId(draft.added[0].id);setStep('shots');} else setStep('stage');setSelected(draft.scene.objects[0]?.id || null);return true; }} />
+        <DirectorAssistant ctx={ctx} creation={creation} scene={scene} disabled={working || !!playback.preview && !aiPreview} onPreview={previewDraft} onApply={draft => { if (draft.source !== JSON.stringify(current.current.scene) || draft.source !== JSON.stringify(ctx.node.metadata?.directorScene)) { setError("场景已变化，AI 草稿未应用，请重新生成"); return false; } playback.stop(true); setAiPreview(null); commit(draft.scene); setEditTime(0); if(draft.added.length) {setShotId(draft.added[0].id);setStep('shots');} else setStep('stage');setSelected(draft.scene.objects[0]?.id || null);return true; }} />
         {step==='stage'&&sizeControls}
         <div className={`grid min-h-0 grid-cols-1 gap-3 ${step==='stage'||step==='shots'?'md:grid-cols-[minmax(0,1fr)_264px]':''}`}>
             <div className={`relative overflow-hidden rounded-xl border ${step==='stage'?'min-h-[280px] md:h-[clamp(300px,40vh,520px)]':step==='shots'?'min-h-[180px] md:h-[clamp(180px,22vh,300px)]':'min-h-[200px] md:h-[clamp(220px,28vh,360px)]'}`} style={{ borderColor: theme.toolbar.border, background: scene.background }}>

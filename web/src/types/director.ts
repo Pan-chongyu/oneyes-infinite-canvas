@@ -54,4 +54,4 @@ export type DirectorVideoPrompt = {
     shots: {start:number;end:number;description:string;camera:string;action:string;prompt:string}[];
     uncertainties?: string[];
 };
-export type DirectorAssistantSettings = {mode?: "scene"|"animation"|"video";model?:string;prompt?:string;reverse?:DirectorVideoPrompt;reverseSource?:{name:string;duration:number;times:number[]}};
+export type DirectorAssistantSettings = {mode?: "scene"|"animation"|"video";model?:string;prompt?:string;sourceIds?:string[];reverse?:DirectorVideoPrompt;reverseSource?:{name:string;duration:number;times:number[]}};

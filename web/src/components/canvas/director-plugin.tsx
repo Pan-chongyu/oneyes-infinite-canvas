@@ -1,6 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button, Modal } from "antd";
-import { Box, Camera, Clapperboard, LoaderCircle } from "lucide-react";
+import { Box, Camera, Clapperboard, LoaderCircle, Play, Sparkles } from "lucide-react";
+import { DirectorSetup } from "./director-setup";
+import { useDirectorDraft } from "./use-director-draft";
+import { directorInputSnapshot } from "@/lib/canvas/director-inputs";
+import { studioModelChoice } from "@/lib/canvas/studio-assistant";
+import type { DirectorAiMode } from "@/lib/canvas/director-assistant";
 import { directorPrompt, readDirectorScene } from "@/lib/canvas/director-scene";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import { createCanvasNode, imageMetadata } from "@/lib/canvas/canvas-node-factory";
@@ -13,9 +18,10 @@ import type { DirectorScene } from "@/types/director";
 const Editor = lazy(() => import("./director-editor"));
 function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     const [open, setOpen] = useState(false), [scene, setScene] = useState<DirectorScene | null>(null), [error, setError] = useState("");
+    const creation = useDirectorDraft(ctx);
     const latest = useRef(ctx); latest.current = ctx;
     const generation = useRef(0), exporting = useRef(false), controller = useRef<AbortController | null>(null);
-    const start = () => { try { const scene = readDirectorScene(latest.current.node.metadata?.directorScene); if (!latest.current.node.metadata?.directorScene) latest.current.updateMetadata({ directorScene: scene }); setScene(scene); setError(""); setOpen(true); } catch (error) { setError(error instanceof Error ? error.message : "场景读取失败"); } };
+    const start = (mode?: DirectorAiMode) => { try { const scene = readDirectorScene(latest.current.node.metadata?.directorScene); if (!latest.current.node.metadata?.directorScene || mode) latest.current.updateMetadata({ ...(!latest.current.node.metadata?.directorScene ? { directorScene: scene } : {}), ...(mode ? { directorAssistant: { ...latest.current.node.metadata?.directorAssistant, mode } } : {}) }); creation.clear(); setScene(scene); setError(""); setOpen(true); if (mode) void creation.generate(mode, scene, true); } catch (error) { setError(error instanceof Error ? error.message : "场景读取失败"); } };
     useEffect(() => ctx.on("director:open", payload => { if (payload === ctx.node.id) start(); }), [ctx.node.id]);
     useEffect(() => { generation.current++; setOpen(false); setScene(null); return () => { generation.current++; controller.current?.abort(); }; }, [ctx.node.id, ctx.projectId]);
     const change = (next: DirectorScene) => { setScene(next); latest.current.updateMetadata({ directorScene: next }); };
@@ -53,22 +59,27 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
         } catch (error) { if (!abort.signal.aborted) { reportError("image", "save", error); throw error; } }
         finally { if (!committed && key) await deleteStoredImages([key]); if (controller.current === abort) controller.current = null; exporting.current = false; }
     };
-    const summary = ctx.node.metadata?.directorScene;
+    const summary = ctx.node.metadata?.directorScene, settings = ctx.node.metadata?.directorAssistant || {}, mode = settings.mode === "animation" ? "animation" : "scene";
+    const canGenerate = studioModelChoice(ctx.ai, settings.model, "text").ready && Boolean(settings.prompt?.trim() || directorInputSnapshot(ctx).inputs.length);
     return <>
-        <div className="flex h-full flex-col justify-between gap-3 p-4" style={{ color: ctx.theme.node.text }}>
-            <div className="flex items-start gap-3"><Clapperboard size={23} className="shrink-0" /><div><div className="text-sm font-medium">3D 导演台</div><p className="mt-1 text-xs leading-relaxed" style={{ color: ctx.theme.node.muted }}>布景、分镜、走位与运镜预演，一站交付创作参考。</p></div></div>
-            <div className="flex items-center gap-4 text-xs" style={{ color: ctx.theme.node.muted }}><span className="inline-flex items-center gap-1"><Box size={13} />{summary?.objects?.length ?? 1} 个物体</span><span className="inline-flex items-center gap-1"><Camera size={13} />{summary?.camera?.lens ?? 50} mm</span></div>
+        <div className="flex h-full w-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain p-3 pt-6" style={{ color: ctx.theme.node.text }} data-director-node onWheel={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between gap-2"><div className="inline-flex items-center gap-1.5 text-sm font-semibold"><Clapperboard size={16} />3D 导演台</div><span className="text-[11px]" style={{color:ctx.theme.node.muted}}>描述想法 → 预览 → 微调</span></div>
+            <DirectorSetup ctx={ctx} disabled={open || creation.busy} compact />
             {error && <p role="alert" className="max-h-16 overflow-auto text-xs">{error}</p>}
-            <Button type="text" className="self-start" size="small" icon={<Camera size={14} />} onPointerDown={event => event.stopPropagation()} onClick={start}>打开导演台</Button>
+            <div className="mt-auto space-y-1.5" onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+                <Button type="primary" className="!h-8 !w-full !rounded-lg" disabled={!canGenerate || open || creation.busy} icon={creation.busy ? <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" /> : mode === "animation" ? <Play size={14} /> : <Sparkles size={14} />} onClick={() => start(mode)}>{creation.busy ? "正在准备…" : mode === "animation" ? "生成预演" : "生成布景"}</Button>
+                <div className="flex items-center justify-between gap-1 text-[11px]" style={{color:ctx.theme.node.muted}}><span className="inline-flex min-w-0 items-center gap-1 truncate"><Box size={12} />{summary?.objects?.length ?? 1} 个物体 · {summary?.shots?.length ?? 0} 镜</span><Button type="text" className="!px-1 !text-xs" size="small" icon={<Camera size={13} />} disabled={creation.busy} onClick={() => start()}>打开导演台</Button></div>
+                <p className="text-[10px] leading-relaxed" style={{color:ctx.theme.node.muted}}>生成调用所选模型；预览后应用，再手动调整。</p>
+            </div>
         </div>
-        <Modal title="3D 导演台" open={open} width="min(1180px, calc(100vw - 32px))" centered footer={null} destroyOnHidden data-canvas-shortcuts-ignore data-canvas-no-zoom onCancel={() => { controller.current?.abort(); setOpen(false); }} styles={{ body: { paddingTop: 8, maxHeight: "calc(100dvh - 120px)", overflowY: "auto", overscrollBehavior: "contain" } }}>
-            {open && scene && <Suspense fallback={<div className="flex min-h-80 items-center justify-center gap-2 text-sm" role="status"><LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" />正在准备导演台…</div>}><Editor scene={scene} ctx={ctx} onChange={change} onCapture={capture} /></Suspense>}
+        <Modal title="3D 导演台" open={open} width="min(1180px, calc(100vw - 32px))" centered footer={null} destroyOnHidden data-canvas-shortcuts-ignore data-canvas-no-zoom onCancel={() => { controller.current?.abort(); creation.clear(); setOpen(false); }} styles={{ body: { paddingTop: 8, maxHeight: "calc(100dvh - 120px)", overflowY: "auto", overscrollBehavior: "contain" } }}>
+            {open && scene && <Suspense fallback={<div className="flex min-h-80 items-center justify-center gap-2 text-sm" role="status"><LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" />正在准备导演台…</div>}><Editor scene={scene} ctx={ctx} creation={creation} onChange={change} onCapture={capture} /></Suspense>}
         </Modal>
     </>;
 }
 export const directorPlugin: CanvasPlugin = {
-    id: "director", name: "3D 导演台", version: "1.5.0", description: "按步骤布景、排镜头、预演与交付，支持 AI 调台、视频反推、关键帧与原尺寸输出。",
-    nodes: [{ type: "director:stage", title: "3D 导演台", icon: <Clapperboard size={18} />, description: "人物与道具布景、相机、灯光及原尺寸取景图", defaultSize: { width: 320, height: 190 }, hidePanel: true, renderOwnStatus: true, Content: DirectorContent,
+    id: "director", name: "3D 导演台", version: "1.6.0", description: "提示词或连线直接生成布景与预演，预览后手动微调，支持视频反推与原尺寸输出。",
+    nodes: [{ type: "director:stage", title: "3D 导演台", icon: <Clapperboard size={18} />, description: "提示词或连接文本／图片生成三维布景、动作预演，再手动微调", defaultSize: { width: 400, height: 370 }, hidePanel: true, renderOwnStatus: true, Content: DirectorContent,
         toolbar: ctx => [{ id: "director-open", title: "打开 3D 导演台", label: "导演台", icon: <Camera size={14} />, onClick: () => ctx.emit("director:open", ctx.node.id) }],
         onDoubleClick: ctx => { ctx.emit("director:open", ctx.node.id); return true; },
     }],

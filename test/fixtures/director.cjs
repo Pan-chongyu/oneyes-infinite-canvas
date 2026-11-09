@@ -208,11 +208,46 @@ app.whenReady().then(async()=>{
   assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),remote,'undo after a shared update must not restore an earlier complete scene');
   await js(`directorTest.remote(${JSON.stringify(original)})`);await wait('document.querySelector("button[aria-label=撤销]").disabled');
  };
+ const verifyQuickSetup=async()=>{
+  const validation=await js('directorTest.inputValidation()');assert.deepEqual(validation.inputs,[['script','text'],['reference','image'],['config','text'],['role','text']]);assert.match(validation.role,/蓝色外套/);assert.equal(validation.selected,1);assert.equal(validation.changed,true);assert.equal(validation.empty,0,'explicit empty selection never falls back to all inputs');
+  const input=async(value)=>js(`(()=>{const field=document.querySelector('textarea[aria-label="导演台创作提示词"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,${JSON.stringify(value)});field.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await js('directorTest.inputs()');await wait(`document.querySelector('button[aria-label="参考：构图参考"]')`);
+  await input('按参考布景，焦距改为 70mm');
+  await screenshot('oneyes-director-setup-light.png');await js('directorTest.theme(true)');await screenshot('oneyes-director-setup-dark.png');await js('directorTest.theme(false)');
+  const count=await js('directorTest.ai().length');assert.equal(count,0,'mounting, connecting and configuring never submits AI calls');
+  await js('directorTest.assistantSettings({mode:"video"});directorTest.reply(JSON.stringify({summary:"参考布景",scene:{camera:{lens:70}}}),true);directorTest.resetEvents()');
+  await pointerClick('[data-director-node] button.ant-btn-primary');
+  await wait(`directorTest.ai().length===${count+1} && document.body.textContent.includes("取消 AI 操作")`);
+  assert.equal(await js('directorTest.state().nodes[0].metadata.directorAssistant.mode'),'scene','quick generation exits a previously saved video reverse mode');
+  const source=await js('directorTest.state().nodes[0].metadata.directorScene'),call=await js('directorTest.ai().at(-1)');
+  assert.match(call.prompt,/按参考布景/);assert.match(call.prompt,/两人在雨夜街道面对面/);assert.equal(call.references.length,1);assert.match(call.references[0],/^data:image\//);
+  const dimensions=await js('createImageBitmap(new Blob([Uint8Array.from(atob(directorTest.ai().at(-1).references[0].split(",")[1]),c=>c.charCodeAt(0))])).then(image=>{const size=[image.width,image.height];image.close();return size;})');assert.deepEqual(dimensions,[37,23],'references retain original dimensions');
+  assert.equal((await js('directorTest.events()')).drag,0,'generating in a node cannot initiate a canvas drag');
+  await js('directorTest.resolveAi()');await wait('document.body.textContent.includes("AI 草稿预览")');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),source,'quick setup previews before applying');
+  await click('应用并微调');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===70');await click('撤销');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),source,'quick setup applies as one undoable edit');
+  await click('Close');await wait('!document.querySelector("[data-director-editor]")');
+  await click('参考：构图参考');await input('');
+  await js('directorTest.reply(JSON.stringify({summary:"过时参考",scene:{camera:{lens:85}}}),true)');await click('生成布景');
+  await wait('directorTest.ai().length===2');assert.equal((await js('directorTest.ai().at(-1)')).references.length,0,'unchecked image is not transmitted');
+  await js('directorTest.changeInput();directorTest.resolveAi()');await wait('document.body.textContent.includes("连接内容或提示词已变化")');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),source);assert.equal(await js(`document.querySelector('[aria-label="导演台 AI 草稿"]')`),null);
+  await click('Close');await wait('!document.querySelector("[data-director-editor]")');
+  await js('Array.from(document.querySelectorAll("[data-director-node] .ant-segmented-item")).find(item=>item.textContent==="预演").click();directorTest.reply(JSON.stringify({summary:"连线动作预演",shots:[{name:"推进",duration:0.2,keyframes:[{time:0.2,scene:{camera:{lens:65}}}]}]}))');
+  await click('生成预演');await wait('document.body.textContent.includes("AI 草稿预览") && document.querySelector("[data-director-time]")?.textContent.startsWith("0.20")');
+  assert.match((await js('directorTest.ai().at(-1)')).prompt,/已修改为室内对白/);
+  await click('应用并微调');await settings('object');
+  await js('(()=>{const field=document.querySelector("input[aria-label=物体名称]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(field,"人工微调的人物");field.dispatchEvent(new Event("input",{bubbles:true}));})()');
+  await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].name==="人工微调的人物"');await click('撤销');await click('撤销');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),source,'manual details and generated animation have independent undo steps');
+  await click('Close');await wait('!document.querySelector("[data-director-editor]")');await js('directorTest.clearInputs()');
+ };
  const verifyAssistant=async()=>{
   const original=await js('directorTest.state().nodes[0].metadata.directorScene');
   const input=async(label,value)=>js(`(()=>{const field=document.querySelector('input[aria-label=${JSON.stringify(label)}],textarea[aria-label=${JSON.stringify(label)}]');const prototype=field.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(field,${JSON.stringify(String(value))});field.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   const mode=async(text)=>{await js(`Array.from(document.querySelectorAll('[data-director-assistant] .ant-segmented-item')).find(item=>item.textContent===${JSON.stringify(text)}).click()`);await wait(`document.querySelector('[data-director-assistant] .ant-segmented-item-selected')?.textContent===${JSON.stringify(text)}`);};
-  await js('document.querySelector("[data-director-assistant] summary").click()');await input('导演台 AI 提示词','暖色逆光，85mm 反打');
+  await js('document.querySelector("[data-director-assistant] summary").click()');await mode('调整场景');await input('导演台 AI 提示词','暖色逆光，85mm 反打');
   const scenePlan={summary:'暖光反打',scene:{camera:{lens:85},light:{fill:2}}};await js(`directorTest.reply(${JSON.stringify(JSON.stringify(scenePlan))})`);await click('生成场景草稿');await wait('document.body.textContent.includes("AI 草稿已就绪")');
   assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),original,'AI replies must remain drafts until explicit application');
   await click('预览 AI 草稿');await wait('document.body.textContent.includes("AI 草稿预览")');assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),original);
@@ -268,6 +303,7 @@ app.whenReady().then(async()=>{
   }else{
    assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});
    const runtime=await js('directorTest.runtime()');assert.deepEqual(runtime.sizes,[[317,191],[317,191]]);assert.equal(runtime.differs,true);assert.equal(runtime.portraitControls,true);assert.equal(runtime.cleanExport,true,'guides and selection must not leak into PNG');assert.equal(runtime.visibility,true);assert.ok(Math.abs(runtime.grounded)<0.01,'ground uses actual geometry bounds');assert.equal(runtime.lock,true);assert.equal(runtime.focused,true);assert.match(runtime.reason,/不会自动降低分辨率/);
+   await phase('quick-setup',verifyQuickSetup);
    await js('directorTest.configure()');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas") && !Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="下一步：排镜头").disabled');
    await js('(()=>{const status=document.createElement("span");status.id="independent-animation";status.className="animate-pulse";status.textContent="其他任务处理中";document.body.append(status)})()');
    await step('排镜头');await step('布景');await js('document.querySelector("#independent-animation").remove()');

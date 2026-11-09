@@ -8,6 +8,8 @@ import '@/styles/globals.css';
 import { directorPlugin } from '@/components/canvas/director-plugin';
 import { createDirectorRuntime } from '@/components/canvas/director-runtime';
 import { directorPreset, readDirectorScene } from '@/lib/canvas/director-scene';
+import { directorInputs, directorInputSnapshot } from '@/lib/canvas/director-inputs';
+import type { CanvasNodeContext } from '@/types/canvas-plugin';
 import { createDirectorShot, recordDirectorFrame, shotScene } from '@/lib/canvas/director-sequence';
 import { exportDirectorBundle } from '@/lib/canvas/director-export';
 import { unzipSync } from 'fflate';
@@ -17,16 +19,16 @@ import { applyCanvasAgentOps } from '@/lib/canvas/canvas-agent-ops';
 import { CanvasNode } from '@/components/canvas/canvas-node';
 import { InfiniteCanvas } from '@/components/canvas/infinite-canvas';
 import { useThemeStore } from '@/stores/use-theme-store';
-import { getImageBlob, deleteStoredImages } from '@/services/image-storage';
+import { getImageBlob, deleteStoredImages, uploadImage } from '@/services/image-storage';
 import { localForageStorage } from '@/lib/localforage-storage';
 import { canvasThemes } from '@/lib/canvas-theme';
 import { uploadMediaFile } from '@/services/file-storage';
-import { createCanvasNode, videoMetadata } from '@/lib/canvas/canvas-node-factory';
+import { createCanvasNode, imageMetadata, videoMetadata } from '@/lib/canvas/canvas-node-factory';
 import { getAntThemeConfig } from '@/lib/app-theme';
 import type { CanvasNodeData, CanvasConnection } from '@/types/canvas';
 import type { CanvasPluginHost } from '@/types/canvas-plugin';
 registerBuiltinNodes(); registerNodeDefinitions(directorPlugin.nodes, 'director');
-const seed: CanvasNodeData = {id:'director',type:'director:stage',title:'3D 导演台',position:{x:0,y:0},width:320,height:190};
+const seed: CanvasNodeData = {id:'director',type:'director:stage',title:'3D 导演台',position:{x:0,y:0},width:400,height:370};
 const saved = JSON.parse(await localForageStorage.getItem('director-fixture') || 'null');
 function Fixture() {
  const [nodes,setNodes] = useState<CanvasNodeData[]>(saved?.nodes || [seed]), [connections,setConnections] = useState<CanvasConnection[]>(saved?.connections || []);
@@ -37,7 +39,7 @@ function Fixture() {
  document.documentElement.classList.toggle('dark',dark);
  document.documentElement.style.colorScheme=dark?'dark':'light';
  const applyOps:CanvasPluginHost['applyOps']=ops=>{const result=applyCanvasAgentOps({nodes,connections,projectId,title:'test',viewport:{x:0,y:0,k:1},selectedNodeIds:[]},ops);setNodes(result.nodes);setConnections(result.connections);};
- const host:CanvasPluginHost={projectId,getNode:id=>nodes.find(n=>n.id===id)||null,getNodes:()=>nodes,getConnections:()=>connections,getUpstream:()=>[],getDownstream:()=>[],updateMetadata:(id,patch)=>setNodes(old=>old.map(n=>n.id===id?{...n,metadata:{...n.metadata,...patch}}:n)),updateNode:()=>{},applyOps,ai:{generateText:async(prompt,options)=>{aiCalls.current.push({prompt,model:options?.model,system:options?.system,references:options?.references});if(held.current)return new Promise(resolve=>{pending.current=resolve;});return{text:reply.current};},listModels:()=>[{value:'fixture-text',label:'隔离测试模型'}],defaultModel:()=> 'fixture-text',isModelReady:()=>true,generateImage:async()=>{throw Error('Unexpected paid image call');},generateVideo:async()=>{throw Error('Unexpected paid video call');}},openPanel:()=>{},closePanel:()=>{}};
+ const host:CanvasPluginHost={projectId,getNode:id=>nodes.find(n=>n.id===id)||null,getNodes:()=>nodes,getConnections:()=>connections,getUpstream:id=>connections.filter(link=>link.toNodeId===id).map(link=>nodes.find(n=>n.id===link.fromNodeId)!).filter(Boolean),getDownstream:()=>[],updateMetadata:(id,patch)=>setNodes(old=>old.map(n=>n.id===id?{...n,metadata:{...n.metadata,...patch}}:n)),updateNode:()=>{},applyOps,ai:{generateText:async(prompt,options)=>{aiCalls.current.push({prompt,model:options?.model,system:options?.system,references:options?.references});if(held.current)return new Promise(resolve=>{pending.current=resolve;});return{text:reply.current};},listModels:()=>[{value:'fixture-text',label:'隔离测试模型'}],defaultModel:()=> 'fixture-text',isModelReady:()=>true,generateImage:async()=>{throw Error('Unexpected paid image call');},generateVideo:async()=>{throw Error('Unexpected paid video call');}},openPanel:()=>{},closePanel:()=>{}};
  const node=nodes.find(n=>n.id==='director'),theme=canvasThemes[dark?'dark':'light'];
  Object.assign(window,{directorTest:{
   state:()=>({nodes,connections,projectId}),
@@ -45,6 +47,17 @@ function Fixture() {
   reply:(text:string,hold=false)=>{reply.current=text;held.current=hold;},
   resolveAi:()=>{pending.current?.({text:reply.current});pending.current=null;held.current=false;},
   ai:()=>aiCalls.current,
+  assistantSettings:(settings:any)=>flushSync(()=>setNodes(old=>old.map(n=>n.id==='director'?{...n,metadata:{...n.metadata,directorAssistant:{...n.metadata?.directorAssistant,...settings}}}:n))),
+  inputValidation:()=>{
+   const node=(id:string,type:string,metadata:CanvasNodeData['metadata']={}):CanvasNodeData=>({id,type,title:id,metadata,position:{x:0,y:0},width:100,height:100});
+   const group=node('group','group'),text=node('script','text',{content:'雨夜对白',groupId:'group'}),image=node('reference','image',{content:'data:image/png;base64,a',storageKey:'original',groupId:'group'}),config=node('config','config',{prompt:'远景与侧光'}),reference=node('role','studio:reference',{studio:{role:'戴帽子的主角',outfit:'蓝色外套',style:'电影感'}}),empty=node('empty','text',{content:'   '}),video=node('video','video',{content:'video.mp4'}),director=node('director','director:stage');
+   const nodes=[director,group,text,image,config,reference,empty,video],ctx={node:director,getNodes:()=>nodes,getNode:(id:string)=>nodes.find(n=>n.id===id)||null,getUpstream:()=>[group,image,config,reference,empty,video],getConnections:()=>[]} as unknown as CanvasNodeContext;
+   const inputs=directorInputs(ctx);director.metadata={directorAssistant:{sourceIds:['script']}};const snapshot=directorInputSnapshot(ctx);text.metadata!.content='晴天重逢';const changed=directorInputSnapshot(ctx).fingerprint!==snapshot.fingerprint;director.metadata.directorAssistant!.sourceIds=[];
+   return {inputs:inputs.map(input=>[input.nodeId,input.kind]),role:inputs.at(-1)?.text,selected:snapshot.inputs.length,changed,empty:directorInputSnapshot(ctx).inputs.length};
+  },
+  inputs:async()=>{const canvas=new OffscreenCanvas(37,23);const paint=canvas.getContext('2d')!;paint.fillStyle='#765432';paint.fillRect(0,0,37,23);const image=await uploadImage(await canvas.convertToBlob({type:'image/png'}));const text=createCanvasNode('text',{x:1000,y:800},{content:'两人在雨夜街道面对面，暖色侧光。'}),reference=createCanvasNode('image',{x:1000,y:1000},imageMetadata(image));text.id='setup-text';text.title='连线剧本';reference.id='setup-image';reference.title='构图参考';flushSync(()=>{setNodes(old=>[...old,text,reference]);setConnections(old=>[...old,...[text,reference].map((n,index)=>({id:'setup-'+index,fromNodeId:n.id,toNodeId:'director'}))]);});},
+  changeInput:()=>flushSync(()=>setNodes(old=>old.map(n=>n.id==='setup-text'?{...n,metadata:{...n.metadata,content:'已修改为室内对白'}}:n))),
+  clearInputs:async()=>{await deleteStoredImages(nodes.filter(n=>n.id==='setup-image').map(n=>n.metadata!.storageKey!));flushSync(()=>{setNodes(old=>old.filter(n=>!n.id.startsWith('setup-')));setConnections(old=>old.filter(link=>!link.id.startsWith('setup-')));});},
   video:async()=>{const response=await fetch('oneyes-canvas://app/director-reference.mp4');const file=await uploadMediaFile(new Blob([await response.arrayBuffer()],{type:'video/mp4'}),'video');const node=createCanvasNode('video',{x:900,y:600},videoMetadata(file));node.id='reference-video';node.title='反推测试视频';flushSync(()=>setNodes(old=>[...old,node]));},
   removeVideo:()=>flushSync(()=>{const removed=new Set(nodes.filter(n=>n.id==='reference-video'||n.title==='视频反推 · 提示词').map(n=>n.id));setNodes(old=>old.filter(n=>!removed.has(n.id)));setConnections(old=>old.filter(link=>!removed.has(link.fromNodeId)&&!removed.has(link.toNodeId)));}),
   events:()=>events.current,
