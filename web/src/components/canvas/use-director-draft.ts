@@ -33,7 +33,7 @@ export function useDirectorDraft(ctx: CanvasNodeContext) {
             setProgress(mode === "animation" ? "正在编排动作与运镜，完成后即可预演…" : "正在搭建布景，完成后即可微调…");
             const result = await origin.ai.generateText(request.prompt, { system: request.system, model: choice.value, references: references.map(image => image.dataUrl), signal: abort.signal }); check();
             if (directorInputSnapshot(latest.current).fingerprint !== snapshot.fingerprint) throw Error("连接内容或提示词已变化，返回的草稿未采用，请确认后重新生成");
-            setDraft(readDirectorDraft(result.text, source, mode));
+            const draft = readDirectorDraft(result.text, source, mode); setDraft(draft); return draft;
         } catch (error) { if (!abort.signal.aborted && mounted.current) { setError(error instanceof Error ? error.message : "AI 处理失败，请检查模型配置后重试"); reportError("agent", "request", error); } }
         finally { if (controller.current === abort) { controller.current = null; if (mounted.current) { setBusy(false); setProgress(""); } } }
     };
