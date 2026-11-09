@@ -48,14 +48,15 @@ Object.assign(window, { videoWorkflowTest: {
     state, flush: flushCanvasStorage, calls: () => calls, errors: () => errors, mode: (value: string) => { mode = value; },
     original: async () => { const source = state().nodes.find(node => node.id === "source-video")!; return { node: source, bytes: (await getMediaBlob(source.metadata!.storageKey!))!.size }; },
     theme: (dark: boolean) => useThemeStore.getState().setTheme(dark ? "dark" : "light"),
-    service: async (kind: "cancel" | "invalid" | "missing" | "mixed") => {
+    service: async (kind: "cancel" | "invalid" | "missing" | "mixed" | "existing" | "ordinary") => {
         const source = state().nodes.find(node => node.id === "source-video")!, flow = createVideoNodeWorkflow(source, useConfigStore.getState().config, "reverse");
         const context = buildNodeGenerationContext(flow.configNode.id, [source, ...flow.nodes], flow.connections, flow.configNode.metadata!.composerContent!);
         const controller = new AbortController(); let stages = 0;
         if (kind === "invalid") context.referenceVideos[0] = { ...context.referenceVideos[0], storageKey: undefined, url: URL.createObjectURL(new Blob(["bad video"])) };
         if (kind === "missing") context.referenceVideos = [];
         if (kind === "mixed") { context.referenceImages.push({ id: "cover", name: "cover.png", type: "image/png", dataUrl: "data:image/png;base64,Y292ZXI=" }); context.referenceVideos.push({ ...context.referenceVideos[0], id: "second" }); }
-        const prepared = await prepareNodeTextContext(context, 3, controller.signal, () => { if (kind === "cancel" && ++stages > 1) controller.abort(); }, source.id);
+        if (kind === "existing" || kind === "ordinary") context.prompt = "自定义重点：仔细描述衣服与镜头运动。";
+        const prepared = await prepareNodeTextContext(context, 3, controller.signal, () => { if (kind === "cancel" && ++stages > 1) controller.abort(); }, kind === "ordinary" ? undefined : source.id);
         return { prepared, messages: buildNodeResponseMessages(prepared) };
     },
     missingRecipe: () => { try { createVideoNodeWorkflow({ ...state().nodes[0], metadata: { ...state().nodes[0].metadata, references: ["image:missing"] } }, useConfigStore.getState().config, "generate"); return ""; } catch (error) { return (error as Error).message; } },

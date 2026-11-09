@@ -55,6 +55,10 @@ app.whenReady().then(async () => {
         const images = content.filter(item => item.type === 'input_image'); assert.equal(images.length, 3);
         for (const frame of images) { const bytes = Buffer.from(frame.image_url.split(',')[1], 'base64'); assert.equal(bytes.readUInt32BE(16), 192); assert.equal(bytes.readUInt32BE(20), 128); }
         assert.notEqual(images[0].image_url, images[2].image_url); assert.match(JSON.stringify(content), /0\.000s/); assert.match(JSON.stringify(content), /1\.333s/); assert.match(JSON.stringify(content), /不包含音轨/);
+        assert.match(JSON.stringify(content), /逐镜头检查/);assert.match(JSON.stringify(content), /主体运动和相机运动/);assert.match(JSON.stringify(content), /采样间隔不等于镜头时长/);
+        const existing=await js("videoWorkflowTest.service('existing')"),ordinary=await js("videoWorkflowTest.service('ordinary')");
+        assert.ok(existing.prepared.prompt.startsWith('自定义重点：'));assert.match(existing.prepared.prompt,/逐镜头检查/);assert.match(existing.prepared.prompt,/不擅自降低分辨率/);
+        assert.ok(!ordinary.prepared.prompt.includes('逐镜头检查'),'ordinary video-to-text requests must retain their own task');
         assert.deepEqual(await js('videoWorkflowTest.original()'), original);
         for (const kind of ['cancel', 'invalid', 'missing']) await assert.rejects(js(`videoWorkflowTest.service('${kind}')`));
         const mixed = await js("videoWorkflowTest.service('mixed')"); assert.equal(mixed.prepared.referenceImages.length, 7); assert.equal(mixed.prepared.referenceImages[0].id, 'cover'); assert.match(mixed.prepared.prompt, /参考视频 2/);

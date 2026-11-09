@@ -1,6 +1,7 @@
 import { directorNames, directorObject, readDirectorScene } from "./director-scene";
 import { nanoid } from "nanoid";
 import { createDirectorShot, directorFrame, shotScene } from "./director-sequence";
+import { videoReverseAnalysis } from "./video-reverse-prompt";
 import type { DirectorKind, DirectorScene, DirectorShot, DirectorVideoPrompt } from "@/types/director";
 
 export type DirectorAiMode = "scene" | "animation";
@@ -97,9 +98,19 @@ export function readVideoPrompt(text: string, duration: number): DirectorVideoPr
     let end = 0;
     for (const value of data.shots) {
         const shot = fields(value,["start","end","description","camera","action","prompt"]);
-        if (typeof shot.start!=="number"||!Number.isFinite(shot.start)||typeof shot.end!=="number"||!Number.isFinite(shot.end)||shot.start<end||shot.end<=shot.start||shot.end>duration||[shot.description,shot.camera,shot.action,shot.prompt].some(value=>typeof value!=="string")) throw Error("视频反推镜头时间或内容无效，请重新分析；原结果已保留");
+        if (typeof shot.start!=="number"||!Number.isFinite(shot.start)||typeof shot.end!=="number"||!Number.isFinite(shot.end)||shot.start<end||shot.end<=shot.start||shot.end>duration||[shot.description,shot.camera,shot.action,shot.prompt].some(value=>typeof value!=="string"||!value.trim())) throw Error("视频反推镜头时间或内容无效，请重新分析；原结果已保留");
         end = shot.end;
     }
     return data as DirectorVideoPrompt;
 }
-export const videoPromptSystem = '你是视频提示词分析师。只依据按时间顺序传入的抽样原帧和时间标注描述画面、人物动作、景别、可能的运镜、光线与风格。采样不是完整视频：不要声称已观看未提供帧或听到音轨，不能确认的速度、镜头转场和声音写入 uncertainties，不猜测身份。返回 JSON：{"summary":"中文概括","prompt":"可复用的完整中文视频生成提示词","negativePrompt":"需要避免的画面问题","shots":[{"start":开始秒,"end":结束秒,"description":"主体场景光线构图","camera":"可判断的镜头变化","action":"主体动作","prompt":"这段画面的生成提示词"}],"uncertainties":["无法从采样确认的内容"]}。shots 按时间排序、不重叠，0<=start<end<=提供的完整视频时长，可只覆盖有依据的区间，不编造已知外的对白与情节。';
+export const videoPromptSystem = `${videoReverseAnalysis}
+
+只返回以下 JSON，不添加其他字段或 Markdown 代码块。各字段用中文，长文本可用换行分段，必须正确转义 JSON：
+{"summary":"画面和叙事的简明概括","prompt":"可直接生成的详细整体正文：主体一致性、场景空间、镜头构图、光影色彩与材质、按时间组织的动作运镜和结束画面","negativePrompt":"针对原片的连续性约束和需要避免的画面问题","shots":[{"start":开始秒,"end":结束秒,"description":"详细的主体外观、空间层次、构图景别、光线色彩、材质和可见风格；注明参考帧时间","camera":"机位角度、焦点景深、起止构图及有依据的运镜方向与衔接；不确定的部分明确说明","action":"按参考帧时间写起始状态、可见动作变化、方向、互动及结束状态，保持主体 A／B 一致","prompt":"该镜可独立复用的完整视频提示词，不省略主体外观、场景光色和动作运镜细节"}],"uncertainties":["逐项列出采样不能确认的动作／切点／音轨／参数；切点只能估计时说明对应时间区间"]}。
+shots 按时间排序、不重叠，0<=start<end<=提供的完整视频时长；可只覆盖有依据的区间，不把采样间隔直接当成切点。不得把待确认的推断写成已发生的事实。`;
+
+export function formatVideoPrompt(value: DirectorVideoPrompt) {
+    return [`【完整视频生成提示词】\n${value.prompt}`, value.negativePrompt && `【一致性与避免项】\n${value.negativePrompt}`,
+        `【逐镜头详细提示词】\n${value.shots.map((shot,index)=>`${index+1}. ${shot.start}–${shot.end}s\n画面与构图：${shot.description}\n镜头与运镜：${shot.camera}\n动作与时间：${shot.action}\n本镜提示词：${shot.prompt}`).join("\n\n")}`,
+        value.uncertainties?.length && `【待确认】\n${value.uncertainties.map(item=>`- ${item}`).join("\n")}`].filter(Boolean).join("\n\n");
+}

@@ -198,7 +198,7 @@ export async function prepareNodeTextContext(context: NodeGenerationContext, cou
     }
     signal.throwIfAborted();
     progress(i18n.t("canvas.videoWorkflow.analyzing"));
-    return { ...context, prompt: `${context.prompt}\n\n${i18n.t("canvas.videoWorkflow.frameContext")}\n${descriptions.join("\n")}`, referenceImages, referenceVideos: [], imageCount: referenceImages.length };
+    return { ...context, prompt: [context.prompt, sourceId && i18n.t("canvas.videoWorkflow.analysis"), `${i18n.t("canvas.videoWorkflow.frameContext")}\n${descriptions.join("\n")}`].filter(Boolean).join("\n\n"), referenceImages, referenceVideos: [], imageCount: referenceImages.length };
 }
 
 function readNodeTextInput(node: CanvasNodeData) {

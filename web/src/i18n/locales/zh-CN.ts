@@ -1,3 +1,5 @@
+import { videoReverseAnalysis, videoReverseTextTask } from "../../lib/canvas/video-reverse-prompt";
+
 export default {
     meta: {
         title: "无限画布",
@@ -289,7 +291,8 @@ export default {
             missingVideo: "反推所用的视频已移除或断开，请重新连接原视频后生成",
             reverse: "创建反推提示词", generate: "创建生成配置", generateHint: "复制视频提示词、模型、参数和原参考素材，手动开始新的视频生成",
             empty: "视频节点为空，请先上传或生成视频", taskTitle: "视频反推任务", promptTitle: "视频提示词", configTitle: "视频反推配置",
-            preset: "请依据参考视频按时间顺序排列的抽样画面，反推可直接用于 AI 视频生成的中文提示词。\n覆盖主体、场景、构图、画面风格、光线、色彩、镜头运动与可观察到的动作变化。多镜头按时间段组织，保持人物和环境的一致性。\n只输出提示词正文，不解释；不要把未观察到的细节、音轨或推测当作事实，无法确定的运动不要编造。",
+            preset: videoReverseTextTask,
+            analysis: videoReverseAnalysis,
             missingReference: "此视频的原参考素材已不在画布中，请先恢复素材再创建配置", notSampled: "请先提取视频参考帧再调用文本模型",
             reading: "正在读取参考视频 {{index}}…", analyzing: "正在分析视频画面…", frameCount: "每段视频抽帧", frames: "{{count}} 帧",
             sampleHint: "按时间顺序抽取原尺寸画面，需选择支持图片的视觉模型；仅在开始生成后发送所选数量的画面，不分析音轨。",

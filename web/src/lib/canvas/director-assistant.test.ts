@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { directorPreset } from "./director-scene";
 import { createDirectorShot, shotScene } from "./director-sequence";
-import { directorAiRequest, readDirectorDraft, readVideoPrompt } from "./director-assistant";
+import { directorAiRequest, formatVideoPrompt, readDirectorDraft, readVideoPrompt } from "./director-assistant";
 
 test("AI stage patches preserve unmentioned objects, locked subjects, original dimensions and saved shots",()=>{
     const scene=directorPreset("dialogue"), id=scene.objects[0].id;scene.objects[0].joints={leftArm:[0,0,30],head:[0,10,0]};scene.shots=[createDirectorShot(scene)];scene.objects[1].locked=true;
@@ -30,6 +30,15 @@ test("invalid AI fields, geometry, dimensions, locks and timelines never change 
 test("reverse video output validates ordered time ranges and preserves inference uncertainty",()=>{
     const value={summary:"城市推进",prompt:"雨夜街道，缓慢推进",negativePrompt:"模糊",shots:[{start:0,end:2,description:"雨夜街道",camera:"可能推进",action:"车辆经过",prompt:"电影感街道"}],uncertainties:["未读取音轨，无法确认声音"]};
     assert.deepEqual(readVideoPrompt(JSON.stringify(value),2),value);
-    for(const shot of [{...value.shots[0],end:3},{...value.shots[0],start:-1},{...value.shots[0],end:0},{...value.shots[0],camera:{}},{...value.shots[0],url:"https://bad"}])assert.throws(()=>readVideoPrompt(JSON.stringify({...value,shots:[shot]}),2));
+    for(const shot of [{...value.shots[0],end:3},{...value.shots[0],start:-1},{...value.shots[0],end:0},{...value.shots[0],camera:{}},{...value.shots[0],prompt:" \n"},{...value.shots[0],description:""},{...value.shots[0],url:"https://bad"}])assert.throws(()=>readVideoPrompt(JSON.stringify({...value,shots:[shot]}),2));
     assert.throws(()=>readVideoPrompt(JSON.stringify({...value,shots:[...value.shots,...value.shots]}),2));
+});
+
+test("detailed reverse prompts retain every shot field, full prose, Unicode and uncertainty when exported",()=>{
+    const prose='主体 A 穿深蓝外套，位于画面左侧；前景玻璃有暖光反射，背景为冷色街道。\n0.3s 抬头，0.8s 视线转向右侧，期间是否推进待确认。';
+    const value={summary:'夜景双镜头',prompt:prose.repeat(60),negativePrompt:'保持服装与人物数量，避免手部畸变、时序闪烁。',shots:[{start:0,end:1,description:'左侧主体 A，前景玻璃；高光呈金色。',camera:'平视中景，背景视差不足，不能确认推进。',action:'0.3s 抬头；0.8s 视线转向右侧。',prompt:prose},{start:1.2,end:2,description:'主体 B 在右侧，<标记> 是画中文字；保留 🎬。',camera:'过肩，切点在 1–1.2s 内待确认。',action:'主体 B 右手抬起，后续动作不可见。',prompt:'主体 B 背景虚化，右手抬至胸前；不要添加未见动作。'}],uncertainties:['未读取音轨，不推断对白。','原片帧率／焦距未知。']};
+    const read=readVideoPrompt(JSON.stringify(value),2), formatted=formatVideoPrompt(read);
+    assert.deepEqual(read,value);
+    for(const text of [value.prompt,value.negativePrompt,...value.shots.flatMap(shot=>[shot.description,shot.camera,shot.action,shot.prompt]),...value.uncertainties])assert.ok(formatted.includes(text),'copy/export retains the complete detailed result');
+    assert.match(formatted,/1\.2–2s/);assert.match(formatted,/【待确认】/);assert.deepEqual(value,read,'formatting must not mutate saved results');
 });
