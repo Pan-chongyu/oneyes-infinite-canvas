@@ -25,9 +25,12 @@ import { canvasThemes } from '@/lib/canvas-theme';
 import { uploadMediaFile } from '@/services/file-storage';
 import { createCanvasNode, imageMetadata, videoMetadata } from '@/lib/canvas/canvas-node-factory';
 import { getAntThemeConfig } from '@/lib/app-theme';
+import { encodeChannelModel } from '@/stores/use-config-store';
 import type { CanvasNodeData, CanvasConnection } from '@/types/canvas';
 import type { CanvasPluginHost } from '@/types/canvas-plugin';
 registerBuiltinNodes(); registerNodeDefinitions(directorPlugin.nodes, 'director');
+const modelNames=['gpt-5.2-2025-12-11','gpt-5.1-2025-11-13','gpt-5.2-a-very-long-official-model-version-2025-12-11'];
+const modelOptions=[{value:'fixture-text',label:'隔离测试模型'},...['svip','vip'].flatMap(group=>modelNames.map(name=>({value:encodeChannelModel('fixture-'+group,name),label:`OneYes OpenAI 平台 / ${group.toUpperCase()} 高速稳定专线 / ${name}`})))];
 const seed: CanvasNodeData = {id:'director',type:'director:stage',title:'3D 导演台',position:{x:0,y:0},width:400,height:370};
 const saved = JSON.parse(await localForageStorage.getItem('director-fixture') || 'null');
 function Fixture() {
@@ -39,7 +42,7 @@ function Fixture() {
  document.documentElement.classList.toggle('dark',dark);
  document.documentElement.style.colorScheme=dark?'dark':'light';
  const applyOps:CanvasPluginHost['applyOps']=ops=>{const result=applyCanvasAgentOps({nodes,connections,projectId,title:'test',viewport:{x:0,y:0,k:1},selectedNodeIds:[]},ops);setNodes(result.nodes);setConnections(result.connections);};
- const host:CanvasPluginHost={projectId,getNode:id=>nodes.find(n=>n.id===id)||null,getNodes:()=>nodes,getConnections:()=>connections,getUpstream:id=>connections.filter(link=>link.toNodeId===id).map(link=>nodes.find(n=>n.id===link.fromNodeId)!).filter(Boolean),getDownstream:()=>[],updateMetadata:(id,patch)=>setNodes(old=>old.map(n=>n.id===id?{...n,metadata:{...n.metadata,...patch}}:n)),updateNode:()=>{},applyOps,ai:{generateText:async(prompt,options)=>{aiCalls.current.push({prompt,model:options?.model,system:options?.system,references:options?.references});if(held.current)return new Promise(resolve=>{pending.current=resolve;});return{text:reply.current};},listModels:()=>[{value:'fixture-text',label:'隔离测试模型'}],defaultModel:()=> 'fixture-text',isModelReady:()=>true,generateImage:async()=>{throw Error('Unexpected paid image call');},generateVideo:async()=>{throw Error('Unexpected paid video call');}},openPanel:()=>{},closePanel:()=>{}};
+ const host:CanvasPluginHost={projectId,getNode:id=>nodes.find(n=>n.id===id)||null,getNodes:()=>nodes,getConnections:()=>connections,getUpstream:id=>connections.filter(link=>link.toNodeId===id).map(link=>nodes.find(n=>n.id===link.fromNodeId)!).filter(Boolean),getDownstream:()=>[],updateMetadata:(id,patch)=>setNodes(old=>old.map(n=>n.id===id?{...n,metadata:{...n.metadata,...patch}}:n)),updateNode:()=>{},applyOps,ai:{generateText:async(prompt,options)=>{aiCalls.current.push({prompt,model:options?.model,system:options?.system,references:options?.references});if(held.current)return new Promise(resolve=>{pending.current=resolve;});return{text:reply.current};},listModels:()=>modelOptions,defaultModel:()=> 'fixture-text',isModelReady:()=>true,generateImage:async()=>{throw Error('Unexpected paid image call');},generateVideo:async()=>{throw Error('Unexpected paid video call');}},openPanel:()=>{},closePanel:()=>{}};
  const node=nodes.find(n=>n.id==='director'),theme=canvasThemes[dark?'dark':'light'];
  Object.assign(window,{directorTest:{
   state:()=>({nodes,connections,projectId}),

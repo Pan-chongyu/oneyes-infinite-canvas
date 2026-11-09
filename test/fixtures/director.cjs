@@ -208,6 +208,29 @@ app.whenReady().then(async()=>{
   assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),remote,'undo after a shared update must not restore an earlier complete scene');
   await js(`directorTest.remote(${JSON.stringify(original)})`);await wait('document.querySelector("button[aria-label=撤销]").disabled');
  };
+ const verifyModelLabels=async()=>{
+  const picker='[data-director-node] .ant-select',popup='.ant-select-dropdown:not(.ant-select-dropdown-hidden)',version='gpt-5.2-2025-12-11';
+  await pointerClick(picker);await wait(`document.querySelector('${popup} [data-director-model-name]')`);
+  const rows=await js(`Array.from(document.querySelectorAll('${popup} .ant-select-item-option')).map(item=>({name:item.querySelector('[data-director-model-name]')?.textContent,channel:item.querySelector('[data-director-model-channel]')?.textContent}))`);
+  assert.equal(rows.filter(row=>row.name===version).length,2);assert.ok(rows.some(row=>row.channel?.includes('SVIP 高速稳定专线')));assert.ok(rows.some(row=>row.channel?.includes('VIP 高速稳定专线')));
+  const metrics=await js(`Array.from(document.querySelectorAll('${popup} [data-director-model-name]')).map(item=>({width:item.clientWidth,scroll:item.scrollWidth,whiteSpace:getComputedStyle(item).whiteSpace}))`);assert.ok(metrics.every(item=>item.scroll<=item.width+1&&item.whiteSpace==='normal'),'long versions wrap rather than truncate');
+  await screenshot('oneyes-director-models-light.png');
+  await js(`document.querySelector('[aria-label="导演台创作模型"]').focus()`);await win.webContents.insertText('gpt-5.1');
+  await wait(`document.querySelectorAll('${popup} .ant-select-item-option').length===2`);assert.ok(await js(`Array.from(document.querySelectorAll('${popup} [data-director-model-name]')).every(item=>item.textContent==='gpt-5.1-2025-11-13')`),'search can distinguish model versions');
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});await wait(`!document.querySelector('${popup}')`);
+  await pointerClick(picker);await wait(`document.querySelector('${popup} [data-director-model-name]')`);
+  await js(`Array.from(document.querySelectorAll('${popup} .ant-select-item-option')).find(item=>item.querySelector('[data-director-model-name]')?.textContent==='${version}'&&item.textContent.includes('SVIP 高速稳定专线')).click()`);
+  await wait(`document.querySelector('${picker} [data-director-model-name]')?.textContent==='${version}'`);
+  const value=await js('directorTest.state().nodes[0].metadata.directorAssistant.model');assert.match(value,/fixture-svip/);assert.ok(value.endsWith(version),'selection retains the actual channel and complete version');
+  assert.ok(await js(`(()=>{const item=document.querySelector('${picker} [data-director-model-name]');return item.scrollWidth<=item.clientWidth+1})()`),'selected version remains readable');
+  await js('directorTest.theme(true)');await pointerClick(picker);await wait(`document.querySelector('${popup} [data-director-model-name]')`);await screenshot('oneyes-director-models-dark.png');
+  assert.equal(await js(`getComputedStyle(document.querySelector('${picker} [data-director-model-name]')).color===getComputedStyle(document.querySelector('[data-director-node]')).color`),true,'opening search does not fade the selected version into placeholder text');
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});await wait(`!document.querySelector('${popup}')`);await js('directorTest.theme(false)');
+  await click('打开导演台');await wait('document.querySelector("[data-director-editor]")');await js('document.querySelector("[data-director-assistant] summary").click()');
+  assert.equal(await js('document.querySelector("[data-director-assistant] [data-director-model-name]").textContent'),version,'editor uses the same model-first label');
+  await click('Close');await wait('!document.querySelector("[data-director-editor]")');await js('directorTest.assistantSettings({model:"fixture-text"})');
+  assert.equal(await js('directorTest.ai().length'),0,'browsing and changing models never generates content');
+ };
  const verifyQuickSetup=async()=>{
   const validation=await js('directorTest.inputValidation()');assert.deepEqual(validation.inputs,[['script','text'],['reference','image'],['config','text'],['role','text']]);assert.match(validation.role,/蓝色外套/);assert.equal(validation.selected,1);assert.equal(validation.changed,true);assert.equal(validation.empty,0,'explicit empty selection never falls back to all inputs');
   const input=async(value)=>js(`(()=>{const field=document.querySelector('textarea[aria-label="导演台创作提示词"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,${JSON.stringify(value)});field.dispatchEvent(new Event('input',{bubbles:true}));})()`);
@@ -303,7 +326,7 @@ app.whenReady().then(async()=>{
   }else{
    assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});
    const runtime=await js('directorTest.runtime()');assert.deepEqual(runtime.sizes,[[317,191],[317,191]]);assert.equal(runtime.differs,true);assert.equal(runtime.portraitControls,true);assert.equal(runtime.cleanExport,true,'guides and selection must not leak into PNG');assert.equal(runtime.visibility,true);assert.ok(Math.abs(runtime.grounded)<0.01,'ground uses actual geometry bounds');assert.equal(runtime.lock,true);assert.equal(runtime.focused,true);assert.match(runtime.reason,/不会自动降低分辨率/);
-   await phase('quick-setup',verifyQuickSetup);
+   await phase('model-labels',verifyModelLabels);await phase('quick-setup',verifyQuickSetup);
    await js('directorTest.configure()');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas") && !Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="下一步：排镜头").disabled');
    await js('(()=>{const status=document.createElement("span");status.id="independent-animation";status.className="animate-pulse";status.textContent="其他任务处理中";document.body.append(status)})()');
    await step('排镜头');await step('布景');await js('document.querySelector("#independent-animation").remove()');
