@@ -99,7 +99,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     </>;
 }
 export const directorPlugin: CanvasPlugin = {
-    id: "director", name: "3D 导演台", version: "1.6.2", description: "提示词或连线直接搭建节点布景与动画预演，节点内播放、按需打开导演台微调，支持视频反推与原尺寸输出。",
+    id: "director", name: "3D 导演台", version: "1.7.0", description: "提示词或连线直接搭建节点布景与动画预演，节点内播放、按需打开导演台微调，支持视频反推与原尺寸输出。",
     nodes: [{ type: "director:stage", title: "3D 导演台", icon: <Clapperboard size={18} />, description: "提示词或连接文本／图片生成三维布景、动作预演，再手动微调", defaultSize: { width: 400, height: 370 }, hidePanel: true, renderOwnStatus: true, Content: DirectorContent,
         toolbar: ctx => [{ id: "director-open", title: "打开 3D 导演台", label: "导演台", icon: <Camera size={14} />, onClick: () => ctx.emit("director:open", ctx.node.id) }],
         onDoubleClick: ctx => { ctx.emit("director:open", ctx.node.id); return true; },

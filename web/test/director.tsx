@@ -7,7 +7,7 @@ import '@/i18n';
 import '@/styles/globals.css';
 import { directorPlugin } from '@/components/canvas/director-plugin';
 import { createDirectorRuntime } from '@/components/canvas/director-runtime';
-import { directorPreset, readDirectorScene } from '@/lib/canvas/director-scene';
+import { directorObject, directorPreset, readDirectorScene } from '@/lib/canvas/director-scene';
 import { directorInputs, directorInputSnapshot } from '@/lib/canvas/director-inputs';
 import type { CanvasNodeContext } from '@/types/canvas-plugin';
 import { createDirectorShot, recordDirectorFrame, shotScene } from '@/lib/canvas/director-sequence';
@@ -66,6 +66,7 @@ function Fixture() {
   events:()=>events.current,
   resetEvents:()=>{events.current={selection:0,drag:0,background:0,context:0,viewport:0};},
   configure:(width=321,height=197)=>flushSync(()=>setNodes(old=>old.map(n=>n.id==='director'?{...n,metadata:{...n.metadata,directorScene:{...directorPreset('dialogue'),width,height}}}:n))),
+  modelGallery:()=>{const scene=directorPreset();scene.camera={position:[9,10,16],target:[0,0.7,0],lens:40};scene.objects=(['person','chair','table','sofa','bed','door','window','tree','car'] as const).map((kind,index)=>({...directorObject(kind),position:[(index%3-1)*4,0,(Math.floor(index/3)-1)*4] as [number,number,number]}));flushSync(()=>setNodes(old=>old.map(node=>node.id==='director'?{...node,metadata:{...node.metadata,directorScene:scene}}:node)));},
   save:()=>localForageStorage.setItem('director-fixture',JSON.stringify({nodes,connections})),
   savedMotion:()=>{const scene=nodes[0].metadata!.directorScene!,shot=scene.shots![0];return [0,2.5,5].map(time=>shotScene(scene,shot,time).camera.lens);},
   image:async(index=0)=>{const image=nodes.filter(n=>n.type==='image')[index];const blob=await getImageBlob(image.metadata!.storageKey!);if(!blob)throw Error('Missing image');const bitmap=await createImageBitmap(blob);const canvas=new OffscreenCanvas(bitmap.width,bitmap.height),ctx=canvas.getContext('2d')!;ctx.drawImage(bitmap,0,0);const pixels=ctx.getImageData(0,0,bitmap.width,bitmap.height).data;const colors=new Set<string>();for(let i=0;i<pixels.length;i+=4)colors.add(pixels.slice(i,i+4).join(','));bitmap.close();return {width:canvas.width,height:canvas.height,bytes:blob.size,colors:colors.size,hash:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))).join(',')};},

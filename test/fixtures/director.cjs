@@ -238,7 +238,7 @@ app.whenReady().then(async()=>{
   await input('按参考布景，焦距改为 70mm');
   await screenshot('oneyes-director-setup-light.png');await js('directorTest.theme(true)');await screenshot('oneyes-director-setup-dark.png');await js('directorTest.theme(false)');
   const count=await js('directorTest.ai().length');assert.equal(count,0,'mounting, connecting and configuring never submits AI calls');
-  await js('directorTest.remote(undefined);directorTest.assistantSettings({mode:"video"});directorTest.reply(JSON.stringify({summary:"参考布景",scene:{camera:{lens:70},objects:[{id:"ai-table",kind:"box",name:"AI 布景桌",position:[0,0.5,0],scale:[2,1,1]}]}}),true);directorTest.resetEvents()');
+  await js('directorTest.remote(undefined);directorTest.assistantSettings({mode:"video"});directorTest.reply(JSON.stringify({summary:"参考布景",scene:{camera:{lens:70},objects:[{id:"ai-table",kind:"table",name:"AI 布景桌",position:[0,0,1],scale:[1,1,1]}]}}),true);directorTest.resetEvents()');
   await js('document.querySelector("[data-director-node] button.ant-btn-primary").scrollIntoView({block:"nearest"})');
   await pointerClick('[data-director-node] button.ant-btn-primary');
   await wait(`directorTest.ai().length===${count+1} && document.body.textContent.includes("取消生成")`);
@@ -282,6 +282,24 @@ app.whenReady().then(async()=>{
   await js('(()=>{const field=document.querySelector("input[aria-label=物体名称]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(field,"人工微调的人物");field.dispatchEvent(new Event("input",{bubbles:true}));})()');
   await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].name==="人工微调的人物"');await click('撤销');assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),animated,'manual details can be undone independently of direct animation generation');
   await click('Close');await wait('!document.querySelector("[data-director-editor]")');await click('撤销预演');assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),source,'direct animation is undoable from the node');await js('directorTest.clearInputs()');
+ };
+ const verifyModelDetails=async()=>{
+  const original=await js('directorTest.state().nodes[0].metadata.directorScene');
+  await js('directorTest.configure(1536,864)');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas")');await settings('object');
+  await js('Array.from(document.querySelectorAll("aside summary")).find(item=>item.textContent==="外观与服装").click()');
+  const choose=async(label,text)=>{const selector=`.ant-select:has([aria-label="${label}"])`;await js(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"nearest"})`);await pointerClick(selector);await wait(`Array.from(document.querySelectorAll('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')).some(item=>item.textContent.trim()===${JSON.stringify(text)})`);await js(`Array.from(document.querySelectorAll('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')).find(item=>item.textContent.trim()===${JSON.stringify(text)}).click()`);};
+  await choose('人物发型','长发');await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].appearance?.hairStyle==="long"');
+  await js('(()=>{const field=document.querySelector("input[aria-label=人物肤色]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(field,"#a77954");field.dispatchEvent(new Event("input",{bubbles:true}));})()');
+  await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].appearance.skin==="#a77954"');await click('撤销');assert.equal(await js('directorTest.state().nodes[0].metadata.directorScene.objects[0].appearance.skin'),undefined);assert.equal(await js('directorTest.state().nodes[0].metadata.directorScene.objects[0].appearance.hairStyle'),'long');await click('重做');
+  await choose('人物姿态','招手');await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].pose==="wave"');
+  await js('Array.from(document.querySelectorAll("aside summary")).find(item=>item.textContent==="精细调姿").click()');await choose('人物关节','左腕');
+  await js('(()=>{const field=document.querySelector("input[aria-label=\\"关节旋转（度） Y\\"]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(field,"25");field.dispatchEvent(new Event("input",{bubbles:true}));})()');await wait('directorTest.state().nodes[0].metadata.directorScene.objects[0].joints.leftWrist[1]===25');
+  await screenshot('oneyes-director-character-light.png');await js('directorTest.theme(true)');await screenshot('oneyes-director-character-dark.png');await js('directorTest.theme(false)');
+  const subject=await js('directorTest.state().nodes[0].metadata.directorScene.objects[0]');await click('锁定'+subject.name);assert.equal(await js('document.querySelector("input[aria-label=人物肤色]").disabled'),true);await click('解锁'+subject.name);
+  await choose('添加物体','沙发');await wait('directorTest.state().nodes[0].metadata.directorScene.objects.at(-1).kind==="sofa"');await click('撤销');assert.equal(await js('directorTest.state().nodes[0].metadata.directorScene.objects.length'),2,'new compound props participate in undo');
+  await js('directorTest.modelGallery()');await screenshot('oneyes-director-model-gallery.png');
+  await choose('快速布景','会客室访谈');await wait('directorTest.state().nodes[0].metadata.directorScene.objects.some(item=>item.kind==="sofa") && directorTest.state().nodes[0].metadata.directorScene.objects[0].pose==="sit"');await screenshot('oneyes-director-lounge.png');
+  await click('Close');await wait('!document.querySelector("[data-director-editor]")');await js(`directorTest.remote(${JSON.stringify(original)})`);
  };
  const verifyAssistant=async()=>{
   const original=await js('directorTest.state().nodes[0].metadata.directorScene');
@@ -343,7 +361,7 @@ app.whenReady().then(async()=>{
   }else{
    assert.deepEqual(await js('directorTest.validation()'),{independent:true,invalid:4});
    const runtime=await js('directorTest.runtime()');assert.deepEqual(runtime.sizes,[[317,191],[317,191]]);assert.equal(runtime.differs,true);assert.equal(runtime.portraitControls,true);assert.equal(runtime.cleanExport,true,'guides and selection must not leak into PNG');assert.equal(runtime.visibility,true);assert.ok(Math.abs(runtime.grounded)<0.01,'ground uses actual geometry bounds');assert.equal(runtime.lock,true);assert.equal(runtime.focused,true);assert.match(runtime.reason,/不会自动降低分辨率/);
-   await phase('model-labels',verifyModelLabels);await phase('quick-setup',verifyQuickSetup);
+   await phase('model-labels',verifyModelLabels);await phase('quick-setup',verifyQuickSetup);await phase('model-details',verifyModelDetails);
    await js('directorTest.configure()');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas") && !Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="下一步：排镜头").disabled');
    await js('(()=>{const status=document.createElement("span");status.id="independent-animation";status.className="animate-pulse";status.textContent="其他任务处理中";document.body.append(status)})()');
    await step('排镜头');await step('布景');await js('document.querySelector("#independent-animation").remove()');

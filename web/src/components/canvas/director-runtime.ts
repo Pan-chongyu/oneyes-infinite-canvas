@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createDirectorModel, directorModelShape, updateDirectorModel } from "./director-models";
 import { shotScene } from "@/lib/canvas/director-sequence";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
@@ -7,7 +8,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SobelOperatorShader } from 'three/addons/shaders/SobelOperatorShader.js';
 import { LuminosityShader } from 'three/addons/shaders/LuminosityShader.js';
-import type { DirectorJoint, DirectorObject, DirectorOutput, DirectorScene, DirectorVector } from "@/types/director";
+import type { DirectorObject, DirectorOutput, DirectorScene, DirectorVector } from "@/types/director";
 
 function disposeObject(root: THREE.Object3D) {
     const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
@@ -18,54 +19,6 @@ function disposeObject(root: THREE.Object3D) {
     });
     geometries.forEach(geometry => geometry.dispose()); materials.forEach(material => material.dispose());
 }
-function mannequin(material: THREE.Material, object: DirectorObject) {
-    const group = new THREE.Group();
-    const pose = object.pose;
-    const joint = (parent: THREE.Group, name: DirectorJoint, position: DirectorVector) => { const pivot = new THREE.Group(); pivot.position.fromArray(position); pivot.userData.directorJoint = name; pivot.rotation.set(...(object.joints?.[name] || [0, 0, 0]).map(THREE.MathUtils.degToRad) as DirectorVector); parent.add(pivot); return pivot; };
-    const part = (parent: THREE.Group, geometry: THREE.BufferGeometry, position: DirectorVector) => { const mesh = new THREE.Mesh(geometry, material); mesh.position.fromArray(position); parent.add(mesh); return mesh; };
-    const bone = (parent: THREE.Group, name: DirectorJoint, a: DirectorVector, b: DirectorVector, radius: number) => {
-        const from = new THREE.Vector3(...a), to = new THREE.Vector3(...b), direction = to.clone().sub(from);
-        const pivot = joint(parent, name, a);
-        const mesh = part(pivot, new THREE.CylinderGeometry(radius, radius * 0.9, direction.length(), 16), direction.clone().multiplyScalar(0.5).toArray());
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
-        part(pivot, new THREE.SphereGeometry(radius * 1.08, 16, 12), direction.toArray());
-        return { pivot, end: direction.toArray() };
-    };
-    const seated = pose === "sit", hip = seated ? 0.55 : 0.94, shoulder = hip + 0.46;
-    const upper = joint(group, "torso", [0, hip, 0]), head = joint(upper, "head", [0, shoulder - hip + 0.16, 0]);
-    part(head, new THREE.SphereGeometry(0.14, 24, 18), [0, 0.14, 0]);
-    // The nose makes head direction visible while posing and in exported references.
-    part(head, new THREE.SphereGeometry(0.04, 12, 8), [0, 0.13, 0.13]);
-    const torso = part(upper, new THREE.SphereGeometry(1, 24, 18), [0, 0.24, 0]); torso.scale.set(0.23, 0.32, 0.13);
-    for (const side of [-1, 1]) {
-        const x = side * 0.12, stride = pose === "walk" ? side * 0.23 : 0;
-        const knee: DirectorVector = [x, seated ? hip : 0.52, seated ? 0.4 : stride];
-        const ankle: DirectorVector = [x, 0.1, seated ? 0.43 : -stride];
-        const sideName = side === -1 ? "left" : "right";
-        const thigh = bone(group, `${sideName}Leg`, [x, hip, 0], knee, 0.09);
-        const shin = bone(thigh.pivot, `${sideName}Knee`, thigh.end, new THREE.Vector3(...ankle).sub(new THREE.Vector3(x, hip, 0)).toArray(), 0.07);
-        part(shin.pivot, new THREE.BoxGeometry(0.14, 0.1, 0.25), [shin.end[0], shin.end[1] - 0.05, shin.end[2] + 0.06]);
-        const elbow: DirectorVector = pose === "reach" ? [side * 0.3, shoulder - 0.08, 0.3] : [side * 0.31, shoulder - 0.25, -stride];
-        const hand: DirectorVector = pose === "reach" ? [side * 0.27, shoulder - 0.02, 0.6] : [side * 0.3, shoulder - 0.5, stride];
-        const shoulderPoint: DirectorVector = [side * 0.22, shoulder - hip, 0];
-        const arm = bone(upper, `${sideName}Arm`, shoulderPoint, [elbow[0], elbow[1] - hip, elbow[2]], 0.055);
-        bone(arm.pivot, `${sideName}Elbow`, arm.end, [hand[0] - shoulderPoint[0], hand[1] - shoulder, hand[2]], 0.045);
-    }
-    return group;
-}
-function buildObject(object: DirectorObject) {
-    const material = new THREE.MeshStandardMaterial({ color: object.color, roughness: object.roughness ?? 0.72, metalness: object.metalness ?? 0 });
-    const group = object.kind === "person" ? mannequin(material, object) : new THREE.Group();
-    if (object.kind !== "person") {
-        const geometry = object.kind === "box" ? new THREE.BoxGeometry(1, 1, 1) : object.kind === "sphere" ? new THREE.SphereGeometry(0.5, 32, 24) : object.kind === "cone" ? new THREE.ConeGeometry(0.5, 1, 32) : object.kind === "torus" ? new THREE.TorusGeometry(0.35, 0.15, 16, 48) : object.kind === "plane" ? new THREE.BoxGeometry(2, 2, 0.05) : new THREE.CylinderGeometry(0.4, 0.4, 1, 32);
-        group.add(new THREE.Mesh(geometry, material));
-    }
-    group.position.fromArray(object.position); group.rotation.set(...object.rotation.map(THREE.MathUtils.degToRad) as DirectorVector); group.scale.fromArray(object.scale);
-    group.userData.directorId = object.id;
-    group.traverse(object => { if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; } });
-    return group;
-}
-
 export type DirectorRuntime = ReturnType<typeof createDirectorRuntime>;
 export type DirectorTool = "select" | "translate" | "rotate" | "scale";
 export function createDirectorRuntime(container: HTMLElement, initial: DirectorScene, callbacks: { camera: (camera: DirectorScene["camera"]) => void; object: (id: string, patch: Partial<DirectorObject>) => void; select: (id: string | null) => void; error: (message: string) => void }) {
@@ -159,16 +112,13 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         state = next; selected = selection; syncing = true;
         try {
             const attached = transform.object?.userData.directorId;
-            const shape = (item: DirectorObject) => `${item.kind}:${item.pose}`;
+            const shape = directorModelShape;
             for (const [id, object] of objects) if (!next.objects.some(item => item.id === id && shape(item) === object.userData.shape)) { if (attached === id) transform.detach(); subjects.remove(object); disposeObject(object); objects.delete(id); }
             for (const item of next.objects) {
                 let object = objects.get(item.id);
-                if (!object) { object = buildObject(item); object.userData.shape = shape(item); objects.set(item.id, object); subjects.add(object); }
+                if (!object) { object = createDirectorModel(item); object.userData.shape = shape(item); objects.set(item.id, object); subjects.add(object); }
                 object.position.fromArray(item.position); object.rotation.set(...item.rotation.map(THREE.MathUtils.degToRad) as DirectorVector); object.scale.fromArray(item.scale); object.visible = item.visible !== false;
-                object.traverse(child => {
-                    if (child.userData.directorJoint) child.rotation.set(...(item.joints?.[child.userData.directorJoint as DirectorJoint] || [0, 0, 0]).map(THREE.MathUtils.degToRad) as DirectorVector);
-                    if (child instanceof THREE.Mesh) { const material = child.material as THREE.MeshStandardMaterial; material.color.set(item.color); material.roughness = item.roughness ?? 0.72; material.metalness = item.metalness ?? 0; }
-                });
+                updateDirectorModel(object,item);
             }
             const target = selected && objects.get(selected), editable = next.objects.find(item => item.id === selected);
             if (interactive && tool !== "select" && target && editable?.visible !== false && !editable?.locked) { if (transform.object !== target) transform.attach(target); } else { transform.detach(); transform.axis = null; }

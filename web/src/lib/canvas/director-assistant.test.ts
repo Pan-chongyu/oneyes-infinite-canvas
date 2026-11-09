@@ -4,6 +4,15 @@ import { directorPreset } from "./director-scene";
 import { createDirectorShot, shotScene } from "./director-sequence";
 import { directorAiRequest, formatVideoPrompt, readDirectorDraft, readVideoPrompt } from "./director-assistant";
 
+test("AI can build compound props and update appearance cumulatively while preserving locks",()=>{
+    const source=directorPreset(),id=source.objects[0].id;source.objects[0].appearance={skin:"#b58661",hairStyle:"long",bottom:"#112233"};
+    const plan={summary:"坐在布好景的沙发上",scene:{objects:[{id,pose:"sit",appearance:{hair:"#432211"},joints:{leftWrist:[0,30,0]}},{id:"sofa",kind:"sofa",position:[0,0,-0.2]}]}};
+    const result=readDirectorDraft(JSON.stringify(plan),source,"scene");assert.deepEqual(result.scene.objects[0].appearance,{...source.objects[0].appearance,hair:"#432211"});assert.equal(result.scene.objects[1].kind,"sofa");
+    const request=directorAiRequest(source,"完整布景","scene");assert.match(request.system,/chair,table,sofa,bed,door,window,tree,car/);assert.match(request.system,/leftWrist/);
+    const locked=structuredClone(source);locked.objects[0].locked=true;assert.throws(()=>readDirectorDraft(JSON.stringify(plan),locked,"scene"),/锁定/);
+    assert.throws(()=>readDirectorDraft(JSON.stringify({summary:"invalid",scene:{objects:[{id,appearance:{url:"https://bad"}}]}}),source,"scene"),/不支持/);
+});
+
 test("AI stage patches preserve unmentioned objects, locked subjects, original dimensions and saved shots",()=>{
     const scene=directorPreset("dialogue"), id=scene.objects[0].id;scene.objects[0].joints={leftArm:[0,0,30],head:[0,10,0]};scene.shots=[createDirectorShot(scene)];scene.objects[1].locked=true;
     const before=structuredClone(scene), plan={summary:"暖光反打",scene:{camera:{lens:85,roll:10},light:{fill:2},objects:[{id,position:[-1,0,1],joints:{head:[0,30,0]}},{id:"prop",kind:"box",position:[0,0.5,2]}]}};

@@ -30,6 +30,7 @@ test("director scene exchange preserves articulation, materials, lights and orde
     const scene = directorPreset();
     scene.objects[0].name = "主角 A"; scene.objects[0].joints = { head: [0, 45, 0], leftArm: [40, 0, 30], leftElbow: [-90, 0, 0] };
     scene.objects[0].roughness = 0.2; scene.objects[0].metalness = 0.8;
+    scene.objects[0].appearance = {skin:"#a17d60",hairStyle:"long",bottom:"#224466"}; scene.objects[0].joints.leftWrist=[0,20,0];
     scene.objects.push(directorObject("torus"), directorObject("plane"), directorObject("cone"));
     scene.light = { ...scene.light, color: "#ffd9b8", fill: 2, rim: 1, ambient: 0.5, shadows: false };
     scene.floorVisible = false; scene.note = "电影感对话";
@@ -42,6 +43,7 @@ test("director scene exchange preserves articulation, materials, lights and orde
     assert.doesNotMatch(directorPrompt(scene), /主角 A/);
     for (const text of ['{', '{}', JSON.stringify({ format: "oneyes-director", version: 2, scene }), JSON.stringify({ format: "oneyes-director", version: 1, scene: { ...scene, width: 0 } })]) assert.throws(() => parseDirectorSceneFile(text));
     for (const patch of [ { joints: { unknown: [0,0,0] } }, { joints: { head: [NaN,0,0] } }, { joints: [] }, { roughness: -1 }, { metalness: 1.1 } ]) assert.throws(() => readDirectorScene({ ...scene, objects: [{ ...scene.objects[0], ...patch }] }), /无效/);
+    for (const appearance of [null,[],{skin:"url(external)"},{hairStyle:"remote"},{url:"https://external/model.glb"}]) assert.throws(()=>readDirectorScene({...scene,objects:[{...scene.objects[0],appearance}]}),/外观数据无效/);
     for (const patch of [{ floorVisible: "false" }, { note: {} }, { light: { ...scene.light, fill: -1 } }, { light: { ...scene.light, color: "url(external)" } }, { light: { ...scene.light, shadows: 1 } }]) assert.throws(() => readDirectorScene({ ...scene, ...patch }), /无效/);
 });
 
@@ -59,4 +61,11 @@ test("scene validates shot identities, camera/dimensions and visibility/locking 
         { objects: [{ ...scene.objects[0], visible: "false" }] }, { objects: [{ ...scene.objects[0], locked: 1 }] },
     ]) assert.throws(() => readDirectorScene({ ...scene, ...patch }), /无效/);
     assert.deepEqual(readDirectorScene(directorPreset()).shots, undefined);
+});
+
+test("complete lounge and street presets are independent, valid stages with useful props",()=>{
+    const room=directorPreset("lounge"),street=directorPreset("street");
+    for(const scene of [room,street]) { assert.deepEqual(readDirectorScene(scene),scene);assert.equal(new Set(scene.objects.map(object=>object.id)).size,scene.objects.length); }
+    assert.equal(room.objects[0].pose,"sit");assert.ok(room.objects.some(object=>object.kind==="sofa"));assert.ok(street.objects.some(object=>object.kind==="car"));
+    const next=directorPreset("lounge");room.objects[0].position[0]=99;assert.notEqual(next.objects[0].position[0],99);
 });

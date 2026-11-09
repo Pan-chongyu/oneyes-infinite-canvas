@@ -1,8 +1,9 @@
 export type DirectorVector = [number, number, number];
-export type DirectorKind = "person" | "box" | "sphere" | "cylinder" | "cone" | "torus" | "plane";
-export type DirectorJoint = "torso" | "head" | "leftArm" | "leftElbow" | "rightArm" | "rightElbow" | "leftLeg" | "leftKnee" | "rightLeg" | "rightKnee";
+export type DirectorKind = "person" | "box" | "sphere" | "cylinder" | "cone" | "torus" | "plane" | "chair" | "table" | "sofa" | "bed" | "door" | "window" | "tree" | "car";
+export type DirectorJoint = "torso" | "head" | "leftArm" | "leftElbow" | "leftWrist" | "rightArm" | "rightElbow" | "rightWrist" | "leftLeg" | "leftKnee" | "leftAnkle" | "rightLeg" | "rightKnee" | "rightAnkle";
 export type DirectorOutput = "color" | "depth" | "outline" | "mask" | "normal" | "transparent";
-export type DirectorPose = "stand" | "walk" | "sit" | "reach";
+export type DirectorPose = "stand" | "walk" | "sit" | "reach" | "wave" | "crouch";
+export type DirectorAppearance = { skin?: string; hair?: string; bottom?: string; shoes?: string; hairStyle?: "short" | "long" | "none" };
 export type DirectorObject = {
     id: string;
     name: string;
@@ -17,6 +18,7 @@ export type DirectorObject = {
     joints?: Partial<Record<DirectorJoint, DirectorVector>>;
     roughness?: number;
     metalness?: number;
+    appearance?: DirectorAppearance;
 };
 export type DirectorCamera = { position: DirectorVector; target: DirectorVector; lens: number; roll?: number };
 export type DirectorStage = Pick<DirectorScene, "objects" | "light" | "background" | "floor" | "floorVisible">;

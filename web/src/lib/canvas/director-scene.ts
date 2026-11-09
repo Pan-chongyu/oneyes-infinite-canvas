@@ -1,25 +1,40 @@
 import { nanoid } from "nanoid";
 import type { DirectorCamera, DirectorJoint, DirectorKind, DirectorObject, DirectorOutput, DirectorScene, DirectorVector } from "@/types/director";
 
-export const directorNames: Record<DirectorKind, string> = { person: "人物", box: "方块", sphere: "球体", cylinder: "圆柱", cone: "圆锥", torus: "圆环", plane: "布景板" };
-export const directorJoints: Record<DirectorJoint, string> = { torso: "上身", head: "头部", leftArm: "左肩", leftElbow: "左肘", rightArm: "右肩", rightElbow: "右肘", leftLeg: "左髋", leftKnee: "左膝", rightLeg: "右髋", rightKnee: "右膝" };
+export const directorNames: Record<DirectorKind, string> = { person: "人物", box: "方块", sphere: "球体", cylinder: "圆柱", cone: "圆锥", torus: "圆环", plane: "布景板", chair: "椅子", table: "桌子", sofa: "沙发", bed: "床", door: "门框", window: "窗框", tree: "树木", car: "汽车" };
+export const directorJoints: Record<DirectorJoint, string> = { torso: "上身", head: "头部", leftArm: "左肩", leftElbow: "左肘", leftWrist: "左腕", rightArm: "右肩", rightElbow: "右肘", rightWrist: "右腕", leftLeg: "左髋", leftKnee: "左膝", leftAnkle: "左踝", rightLeg: "右髋", rightKnee: "右膝", rightAnkle: "右踝" };
+export const directorHairStyles = [{ value: "short", label: "短发" }, { value: "long", label: "长发" }, { value: "none", label: "无发" }];
+export const directorAppearance = { skin: "#d1a17e", hair: "#352a25", bottom: "#354254", shoes: "#252a30", hairStyle: "short" as const };
+export const directorObjectGroups = [{ label: "人物", kinds: ["person"] }, { label: "家具与建筑", kinds: ["chair", "table", "sofa", "bed", "door", "window"] }, { label: "户外与交通", kinds: ["tree", "car"] }, { label: "基础形体", kinds: ["box", "sphere", "cylinder", "cone", "torus", "plane"] }] as const;
 export const directorOutputs: Record<DirectorOutput, string> = { color: "取景图", depth: "深度图", outline: "轮廓图", mask: "物体蒙版", normal: "法线图", transparent: "透明背景图" };
 export const directorLighting = {
     studio: { label: "柔和影棚", light: { azimuth: -35, elevation: 45, intensity: 3, ambient: 2, fill: 1, rim: 0.8, color: "#ffffff", shadows: true } },
     sunset: { label: "日落侧光", light: { azimuth: -70, elevation: 15, intensity: 4, ambient: 0.6, fill: 0.3, rim: 1, color: "#ffb878", shadows: true } },
     dramatic: { label: "戏剧逆光", light: { azimuth: 140, elevation: 35, intensity: 5, ambient: 0.3, fill: 0.4, rim: 3, color: "#d0deff", shadows: true } },
 };
-export const directorPoses = [{ value: "stand", label: "站立" }, { value: "walk", label: "迈步" }, { value: "sit", label: "坐姿" }, { value: "reach", label: "伸手" }];
+export const directorPoses = [{ value: "stand", label: "站立" }, { value: "walk", label: "迈步" }, { value: "sit", label: "坐姿" }, { value: "reach", label: "伸手" }, { value: "wave", label: "招手" }, { value: "crouch", label: "蹲姿" }];
 export function directorObject(kind: DirectorKind): DirectorObject {
-    return { id: nanoid(), kind, name: directorNames[kind], pose: "stand", position: [0, kind === "person" ? 0 : kind === "plane" ? 1 : 0.5, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: kind === "person" ? "#d1b198" : "#7e9da4" };
+    return { id: nanoid(), kind, name: directorNames[kind], pose: "stand", position: [0, kind === "plane" ? 1 : ["box","sphere","cylinder","cone","torus"].includes(kind) ? 0.5 : 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: kind === "person" ? "#788b9c" : kind === "tree" ? "#597957" : "#7e9da4" };
 }
-export function directorPreset(kind: "portrait" | "dialogue" | "product" = "portrait"): DirectorScene {
+export type DirectorPresetKind = "portrait" | "dialogue" | "product" | "lounge" | "street";
+export const directorPresets = [{value:"portrait",label:"单人肖像"},{value:"dialogue",label:"双人对话"},{value:"product",label:"产品展示"},{value:"lounge",label:"会客室访谈"},{value:"street",label:"街边人物"}] as const;
+export function directorPreset(kind: DirectorPresetKind = "portrait"): DirectorScene {
     const first = directorObject(kind === "product" ? "cylinder" : "person");
     const objects = [first];
     if (kind === "dialogue") {
         first.position = [-0.8, 0, 0]; first.rotation[1] = 35;
         const second = directorObject("person"); second.position = [0.8, 0, 0]; second.rotation[1] = -35; second.color = "#8fa8b2"; second.name = "人物 2"; objects.push(second);
     }
+    const place = (kind: DirectorKind, position: DirectorVector, scale?: DirectorVector, rotation?: DirectorVector) => { const item=directorObject(kind);item.position=position;if(scale)item.scale=scale;if(rotation)item.rotation=rotation;objects.push(item);return item; };
+    if (kind === "lounge") {
+        first.pose="sit";first.position=[-0.35,0,-0.52];
+        place("sofa",[0,0,-0.6]);place("table",[0,0,0.9],[0.85,0.65,0.8]);place("chair",[1.6,0,0.3],undefined,[0,-35,0]);
+        place("window",[0,1.2,-1.6],[1.4,1.1,1]);place("tree",[-1.6,0,-0.9],[0.5,0.65,0.5]);
+    } else if (kind === "street") {
+        first.position=[-0.6,0,1];place("car",[1.7,0,-0.8]);place("tree",[-2.3,0,-1.7]);
+        place("box",[-2.6,2,-5],[3,4,1]);place("box",[1.3,1.5,-5],[3.5,3,1]);
+    }
+    if (kind === "lounge" || kind === "street") return {schema:1,objects,camera:{position:kind==="lounge"?[3.8,2.6,5.5]:[6,3.6,8],target:[0,1,0],lens:40},light:structuredClone(directorLighting[kind==="lounge"?"studio":"sunset"].light),background:"#e8e5de",floor:"#c4c0b7",width:1536,height:864,grid:false,note:kind==="lounge"?"室内访谈，保持人物、沙发与茶几的空间关系。":"街边人物，汽车位于侧后方，树木和建筑形成前中后景。"};
     return { schema: 1, objects, camera: { position: kind === "product" ? [3, 2.1, 4] : [3.8, 2.5, 5.5], target: [0, kind === "product" ? 0.5 : 0.95, 0], lens: 50 }, light: { azimuth: -35, elevation: 45, intensity: 3 }, background: "#e8e5de", floor: "#c4c0b7", width: 1536, height: 864, grid: true };
 }
 
@@ -38,6 +53,7 @@ export function readDirectorScene(value: unknown): DirectorScene {
     for (const object of scene.objects) {
         if (!object || typeof object.id !== "string" || !object.id || ids.has(object.id) || typeof object.name !== "string" || !Object.hasOwn(directorNames, object.kind) || !directorPoses.some(pose => pose.value === object.pose) || !vector(object.position) || !vector(object.rotation) || !vector(object.scale) || object.scale.some(v => v <= 0) || !color(object.color) || [object.visible, object.locked].some(v => v !== undefined && typeof v !== "boolean")) throw new Error("导演台物体数据无效，请从有效的画布备份恢复；原场景未被覆盖");
         ids.add(object.id);
+        if (object.appearance !== undefined && (!object.appearance || typeof object.appearance !== "object" || Array.isArray(object.appearance) || Object.entries(object.appearance).some(([key,value]) => key === "hairStyle" ? !directorHairStyles.some(style => style.value === value) : !["skin","hair","bottom","shoes"].includes(key) || !color(value)))) throw new Error("导演台人物外观数据无效，原场景未被覆盖");
         if ([object.roughness, object.metalness].some(v => v !== undefined && (!finite(v) || v < 0 || v > 1)) || (object.joints !== undefined && (!object.joints || typeof object.joints !== "object" || Array.isArray(object.joints) || Object.entries(object.joints).some(([key, value]) => !Object.hasOwn(directorJoints, key) || !vector(value))))) throw new Error("导演台姿态或材质数据无效，原场景未被覆盖");
     }
     if (scene.shots !== undefined) {
@@ -79,7 +95,7 @@ export function directorPrompt(scene: DirectorScene, note?: string) {
     const visible = scene.objects.filter(item => item.visible !== false);
     return ["请参考构图图像创作，保持人物位置、镜头方向与画面比例。", scene.note, note,
         `镜头：${scene.camera.lens}mm，画幅 ${scene.width} × ${scene.height}。`,
-        `可见物体：${visible.map(item => `${item.name}（${directorNames[item.kind]}${item.kind === "person" ? `，${directorPoses.find(pose => pose.value === item.pose)?.label}` : ""}）`).join("、") || "无"}。`,
+        `可见物体：${visible.map(item => `${item.name}（${directorNames[item.kind]}${item.kind === "person" ? `，${directorPoses.find(pose => pose.value === item.pose)?.label}，${directorHairStyles.find(style => style.value === (item.appearance?.hairStyle || directorAppearance.hairStyle))?.label}，肤色 ${item.appearance?.skin || directorAppearance.skin}，发色 ${item.appearance?.hair || directorAppearance.hair}，上衣 ${item.color}，下装 ${item.appearance?.bottom || directorAppearance.bottom}，鞋子 ${item.appearance?.shoes || directorAppearance.shoes}` : `，主色 ${item.color}`}）`).join("、") || "无"}。`,
         "保留参考图中的空间关系；人物细节、材质与风格按创作描述处理。"].filter(Boolean).join("\n");
 }
 
