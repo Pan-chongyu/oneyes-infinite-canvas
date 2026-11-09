@@ -23,21 +23,21 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     const creation = useDirectorDraft(ctx);
     const latest = useRef(ctx); latest.current = ctx;
     const generation = useRef(0), exporting = useRef(false), controller = useRef<AbortController | null>(null);
-    const start = (mode?: DirectorAiMode) => { try { generation.current++; const scene = readDirectorScene(latest.current.node.metadata?.directorScene); if (!latest.current.node.metadata?.directorScene || mode) latest.current.updateMetadata({ ...(!latest.current.node.metadata?.directorScene ? { directorScene: scene } : {}), ...(mode ? { directorAssistant: { ...latest.current.node.metadata?.directorAssistant, mode } } : {}) }); creation.clear(); setScene(scene); setError(""); setOpen(true); if (mode) void creation.generate(mode, scene, true); } catch (error) { setError(error instanceof Error ? error.message : "场景读取失败"); } };
+    const start = () => { try { generation.current++; const scene = readDirectorScene(latest.current.node.metadata?.directorScene); if (!latest.current.node.metadata?.directorScene) latest.current.updateMetadata({ directorScene: scene }); creation.clear(); setScene(scene); setError(""); setOpen(true); } catch (error) { setError(error instanceof Error ? error.message : "场景读取失败"); } };
     useEffect(() => ctx.on("director:open", payload => { if (payload === ctx.node.id) start(); }), [ctx.node.id]);
     useEffect(() => { generation.current++; setOpen(false); setScene(null); setApplied(null); setSetupOpen(!ctx.node.metadata?.directorScene); return () => { generation.current++; controller.current?.abort(); }; }, [ctx.node.id, ctx.projectId]);
     const change = (next: DirectorScene) => { setScene(next); latest.current.updateMetadata({ directorScene: next }); };
-    const build = async () => {
+    const build = async (mode: DirectorAiMode) => {
         if (creation.busy || open) return;
         const origin = latest.current, token = ++generation.current, before = JSON.stringify(origin.node.metadata?.directorScene);
         setError("");
         try {
-            const draft = await creation.generate("scene", readDirectorScene(origin.node.metadata?.directorScene));
+            const draft = await creation.generate(mode, readDirectorScene(origin.node.metadata?.directorScene));
             if (!draft || token !== generation.current || origin.projectId !== latest.current.projectId || !latest.current.getNode(origin.node.id)) return;
             if (JSON.stringify(latest.current.getNode(origin.node.id)?.metadata?.directorScene) !== before) { creation.clear(); throw Error("场景已变化，生成结果未覆盖新修改，请确认后重新生成"); }
-            latest.current.updateMetadata({ directorScene: draft.scene, directorAssistant: { ...latest.current.node.metadata?.directorAssistant, mode: "scene" } });
+            latest.current.updateMetadata({ directorScene: draft.scene, directorAssistant: { ...latest.current.node.metadata?.directorAssistant, mode } });
             setApplied(draft); setSetupOpen(false); creation.clear();
-        } catch (error) { setError(error instanceof Error ? error.message : "布景生成失败，请检查模型配置后重试"); }
+        } catch (error) { setError(error instanceof Error ? error.message : "生成失败，请检查模型配置后重试"); }
     };
     useEffect(() => {
         if (!open || !ctx.node.metadata?.directorScene) return;
@@ -78,8 +78,8 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     const canGenerate = studioModelChoice(ctx.ai, settings.model, "text").ready && Boolean(settings.prompt?.trim() || directorInputSnapshot(ctx).inputs.length);
     return <>
         <div className="flex h-full w-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain p-3 pt-6" style={{ color: ctx.theme.node.text }} data-director-node onWheel={event => event.stopPropagation()}>
-            <div className="flex items-center justify-between gap-2"><div className="inline-flex items-center gap-1.5 text-sm font-semibold"><Clapperboard size={16} />3D 导演台</div><span className="text-[11px]" style={{color:ctx.theme.node.muted}}>描述想法 → 生成布景 → 微调</span></div>
-            {summary && !setupOpen && !open && <Suspense fallback={<div className="flex h-36 shrink-0 items-center justify-center text-xs" role="status">正在准备布景预览…</div>}><Preview scene={summary} /></Suspense>}
+            <div className="flex items-center justify-between gap-2"><div className="inline-flex items-center gap-1.5 text-sm font-semibold"><Clapperboard size={16} />3D 导演台</div><span className="text-[11px]" style={{color:ctx.theme.node.muted}}>描述想法 → 直接生成 → 微调</span></div>
+            {summary && !setupOpen && !open && <Suspense fallback={<div className="flex h-36 shrink-0 items-center justify-center text-xs" role="status">正在准备节点预览…</div>}><Preview scene={summary} autoPlayFrom={canUndo ? applied.added[0]?.id : undefined} /></Suspense>}
             <details open={setupOpen || !summary} onToggle={event => setSetupOpen(event.currentTarget.open)} onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
                 <summary className={summary ? "cursor-pointer py-1 text-xs" : "hidden"}>生成配置 · 提示词与模型</summary>
                 <DirectorSetup ctx={ctx} disabled={open || creation.busy} compact />
@@ -87,10 +87,10 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
             <div className="mt-auto space-y-1.5" onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
                 {(error || creation.error) && <p role="alert" className="max-h-16 overflow-auto text-xs">{error || creation.error}</p>}
                 {creation.busy && !open && <div className="flex items-center justify-between gap-1 text-xs" role="status"><span>{creation.progress}</span><Button type="text" size="small" onClick={() => { generation.current++; creation.clear(); }}>取消生成</Button></div>}
-                {canUndo && !creation.busy && <div className="flex items-center justify-between gap-1 text-xs" role="status"><span className="min-w-0 truncate" title={applied.summary}>布景已生成 · {applied.summary}</span><Button type="text" size="small" onClick={() => { if (JSON.stringify(latest.current.getNode(ctx.node.id)?.metadata?.directorScene) !== JSON.stringify(applied.scene)) return; latest.current.updateMetadata({ directorScene: JSON.parse(applied.source) }); setApplied(null); setSetupOpen(true); }}>撤销布景</Button></div>}
-                <Button type="primary" className="!h-8 !w-full !rounded-lg" disabled={!canGenerate || open || creation.busy} icon={creation.busy ? <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" /> : mode === "animation" ? <Play size={14} /> : <Sparkles size={14} />} onClick={() => mode === "scene" ? void build() : start(mode)}>{creation.busy ? "正在搭建…" : mode === "animation" ? "生成预演" : "生成布景"}</Button>
+                {canUndo && !creation.busy && <div className="flex items-center justify-between gap-1 text-xs" role="status"><span className="min-w-0 truncate" title={applied.summary}>{applied.added.length ? "预演" : "布景"}已生成 · {applied.summary}</span><Button type="text" size="small" onClick={() => { if (JSON.stringify(latest.current.getNode(ctx.node.id)?.metadata?.directorScene) !== JSON.stringify(applied.scene)) return; latest.current.updateMetadata({ directorScene: JSON.parse(applied.source) }); setApplied(null); setSetupOpen(true); }}>{applied.added.length ? "撤销预演" : "撤销布景"}</Button></div>}
+                <Button type="primary" className="!h-8 !w-full !rounded-lg" disabled={!canGenerate || open || creation.busy} icon={creation.busy ? <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" /> : mode === "animation" ? <Play size={14} /> : <Sparkles size={14} />} onClick={() => void build(mode)}>{creation.busy ? mode === "animation" ? "正在编排…" : "正在搭建…" : mode === "animation" ? "生成预演" : "生成布景"}</Button>
                 <div className="flex items-center justify-between gap-1 text-[11px]" style={{color:ctx.theme.node.muted}}><span className="inline-flex min-w-0 items-center gap-1 truncate"><Box size={12} />{summary?.objects?.length ?? 1} 个物体 · {summary?.shots?.length ?? 0} 镜</span><Button type="text" className="!px-1 !text-xs" size="small" icon={<Camera size={13} />} disabled={creation.busy} onClick={() => start()}>打开导演台</Button></div>
-                <p className="text-[10px] leading-relaxed" style={{color:ctx.theme.node.muted}}>{mode === "animation" ? "生成调用所选模型；预演后应用，再手动调整。" : "生成调用所选模型，完成后直接搭好当前节点；需要微调时打开导演台。"}</p>
+                <p className="text-[10px] leading-relaxed" style={{color:ctx.theme.node.muted}}>{mode === "animation" ? "生成调用所选模型，保存后在节点内播放动画；需要微调时打开导演台。" : "生成调用所选模型，完成后直接搭好当前节点；需要微调时打开导演台。"}</p>
             </div>
         </div>
         <Modal title="3D 导演台" open={open} width="min(1180px, calc(100vw - 32px))" centered footer={null} destroyOnHidden data-canvas-shortcuts-ignore data-canvas-no-zoom onCancel={() => { controller.current?.abort(); creation.clear(); setOpen(false); }} styles={{ body: { paddingTop: 8, maxHeight: "calc(100dvh - 120px)", overflowY: "auto", overscrollBehavior: "contain" } }}>
@@ -99,7 +99,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     </>;
 }
 export const directorPlugin: CanvasPlugin = {
-    id: "director", name: "3D 导演台", version: "1.6.1", description: "提示词或连线直接搭建节点布景，按需打开导演台微调，支持预演、视频反推与原尺寸输出。",
+    id: "director", name: "3D 导演台", version: "1.6.2", description: "提示词或连线直接搭建节点布景与动画预演，节点内播放、按需打开导演台微调，支持视频反推与原尺寸输出。",
     nodes: [{ type: "director:stage", title: "3D 导演台", icon: <Clapperboard size={18} />, description: "提示词或连接文本／图片生成三维布景、动作预演，再手动微调", defaultSize: { width: 400, height: 370 }, hidePanel: true, renderOwnStatus: true, Content: DirectorContent,
         toolbar: ctx => [{ id: "director-open", title: "打开 3D 导演台", label: "导演台", icon: <Camera size={14} />, onClick: () => ctx.emit("director:open", ctx.node.id) }],
         onDoubleClick: ctx => { ctx.emit("director:open", ctx.node.id); return true; },
