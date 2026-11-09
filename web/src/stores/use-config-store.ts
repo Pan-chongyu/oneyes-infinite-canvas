@@ -13,6 +13,8 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     script?: string;
+    manual?: boolean;
+    unavailable?: boolean;
 };
 
 export type ModelChannel = {
@@ -22,6 +24,7 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    excludedModels?: string[];
     oneYes?: { platform: "openai" | "deepseek" | "grok" | "minimax" | "typesafe"; groupId: number; groupName: string; keyId: number; accountId: number };
 };
 
@@ -219,7 +222,7 @@ export function resolveModelForCapability(config: AiConfig, currentModel: string
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
     if (!capability) return config.models;
-    return config.channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+    return config.channels.flatMap((channel) => channel.models.filter((model) => !model.unavailable && model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
 }
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
@@ -229,11 +232,11 @@ export function resolveModelScript(config: AiConfig, value: string) {
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const match = findChannelModel(config, model);
-    return Boolean(match && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
+    return Boolean(match && !match.model.unavailable && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
 }
 
 export function hasConfiguredModels(config: AiConfig) {
-    return config.channels.some(channel => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length > 0);
+    return config.channels.some(channel => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.some(model => !model.unavailable));
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -330,7 +333,7 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = guessCapability(name) === "decision" ? "decision" : typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script });
+        result.push({ name, capability, script, ...(typeof item !== "string" && item.manual ? { manual: true } : {}), ...(typeof item !== "string" && item.unavailable ? { unavailable: true } : {}) });
     }
     return result;
 }
@@ -344,6 +347,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        ...(channel?.excludedModels ? { excludedModels: [...new Set(channel.excludedModels.filter(name => typeof name === "string").map(name => name.trim()).filter(Boolean))] } : {}),
         ...(channel?.oneYes ? { oneYes: channel.oneYes } : {}),
     };
 }
@@ -405,7 +409,35 @@ export function modelOptionLabel(config: AiConfig, value: string) {
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
-    return uniqueModelOptions(channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model.name))));
+    return uniqueModelOptions(channels.flatMap((channel) => channel.models.filter(model => !model.unavailable).map((model) => encodeChannelModel(channel.id, model.name))));
+}
+
+/** Update discovery without replacing user classifications, scripts or explicit exclusions. */
+export function syncChannelModels(channel: ModelChannel, names: string[]): ModelChannel {
+    if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== "string" || !name.trim())) throw new Error("上游未返回有效模型，已保留本地配置");
+    const platform = channel.id === GROK_VIDEO_CHANNEL_ID ? "grok" : channel.oneYes?.platform || (channel.id === "oneyes-deepseek" ? "deepseek" : channel.id === "oneyes-typesafe" ? "typesafe" : "openai");
+    const allowed = platform === "openai" ? ["image", "text", "video", "audio"] : [platform === "deepseek" ? "text" : platform === "typesafe" ? "decision" : "video"];
+    const remote = normalizeChannelModels(names).filter(model => allowed.includes(model.capability));
+    const returned = new Set(names.map(name => name.trim()));
+    const excluded = new Set(channel.excludedModels || []);
+    const models: ChannelModel[] = channel.models.map(model => {
+        const { unavailable: _unavailable, ...saved } = model;
+        return !returned.has(model.name) && !model.manual && !model.script ? { ...saved, unavailable: true } : saved;
+    });
+    for (const model of remote) if (!excluded.has(model.name) && !models.some(saved => saved.name === model.name)) models.push(model);
+    return { ...channel, models: normalizeChannelModels(models) };
+}
+
+/** Defaults are for new work only. Saved nodes keep their explicit model IDs. */
+export function configureModelDefaults(config: AiConfig): AiConfig {
+    const configured = { ...config, channels: config.channels.filter(channel => channel.apiKey.trim()) };
+    const next = { ...config, models: modelOptionsFromChannels(config.channels) };
+    for (const [capability, key] of [["image", "imageModel"], ["video", "videoModel"], ["text", "textModel"], ["audio", "audioModel"]] as const) {
+        const options = selectableModelsByCapability(configured, capability);
+        const current = normalizeModelOptionValue(config[key], config.channels);
+        next[key] = options.includes(current) ? current : options.includes(defaultConfig[key]) ? defaultConfig[key] : options[0] || "";
+    }
+    return { ...next, model: next.imageModel };
 }
 
 export function normalizeModelOptionValue(value: string | undefined, channels: ModelChannel[]) {

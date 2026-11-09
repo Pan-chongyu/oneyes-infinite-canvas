@@ -1,10 +1,11 @@
 import { Alert, Button, Dropdown, Modal, theme } from "antd";
-import { CheckCircle2, ChevronRight, CircleAlert, CircleDashed, GitBranch, Image, LockKeyhole, MessageSquare, MoreHorizontal, Pencil, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
+import { CheckCircle2, ChevronRight, CircleAlert, CircleDashed, GitBranch, Image, LockKeyhole, MessageSquare, MoreHorizontal, Pencil, RefreshCw, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { channelIdForPlatform } from "@/services/api/oneyes-account";
 import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { useConfigStore } from "@/stores/use-config-store";
+import { useModelCatalogStore } from "@/stores/use-model-catalog-store";
 import { OneYesManualForm } from "./oneyes-connection-forms";
 
 const services = [
@@ -18,6 +19,7 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
     const { t } = useTranslation();
     const { token } = theme.useToken();
     const state = useOneYesAccountStore();
+    const catalog = useModelCatalogStore();
     const channels = useConfigStore(state => state.config.channels);
     const setupOpen = useConfigStore(state => state.isSetupOpen);
     const [repairOpen, setRepairOpen] = useState(false);
@@ -54,11 +56,16 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
                 <Dropdown trigger={["click"]} disabled={state.busy || manualBusy} menu={{ items: [{ key: "manual", label: t("config.account.manual"), onClick: showManual }] }}><Button disabled={state.busy || manualBusy} icon={<MoreHorizontal className="size-4" />} aria-label={t("config.onboarding.more")} /></Dropdown>
             </div>
         </div>
-        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border" aria-busy={state.busy}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span role="status">{t(`config.account.${catalog.syncing ? "modelsSyncing" : Object.keys(catalog.errors).length ? "modelsSyncFailed" : catalog.updatedAt ? "modelsSynced" : "modelsAuto"}`)}</span>
+            <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={catalog.syncing} disabled={state.busy || manualBusy || !channels.some(channel => channel.apiKey.trim())} onClick={() => void catalog.sync(true)}>{t("config.account.syncModels")}</Button>
+        </div>
+        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border" aria-busy={state.busy || catalog.syncing}>
             {services.map(service => {
                 const id = channelIdForPlatform(service.platform, channels[0].id);
                 const channel = channels.find(item => item.id === id);
-                const result = state.report.find(item => item.id === id);
+                const report = state.report.find(item => item.id === id);
+                const result = catalog.errors[id] ? { code: "unavailable", status: "error", detail: catalog.errors[id] } : catalog.checked.includes(id) && (!report || ["modelsChanged", "unavailable"].includes(report.code)) ? { code: "ok", status: "ok" } : report;
                 const configured = Boolean(channel?.apiKey.trim());
                 const code = result?.code || (configured ? "unchecked" : "unconfigured");
                 const healthy = code === "ok";
@@ -75,7 +82,7 @@ export function OneYesAccountPanel({ onEdit }: { onEdit: (id: string) => void })
                         </div>
                         <div className="col-start-1 row-start-2 pl-8 text-xs sm:col-start-auto sm:row-start-auto sm:pl-0">
                             <div className="flex flex-wrap items-center gap-1.5"><span className="text-muted-foreground">{t(`config.account.${configured ? (channel?.oneYes ? "group" : "manualKey") : "recommendedGroup"}`)}</span>{(!configured || channel?.oneYes) && <span className="font-medium">{channel?.oneYes?.groupName || service.group}</span>}</div>
-                            <div className="mt-1.5 text-muted-foreground">{configured ? t("config.channels.modelCount", { count: channel?.models.length || 0 }) : t("config.account.notConfigured")}</div>
+                            <div className="mt-1.5 text-muted-foreground">{configured ? t("config.channels.modelCount", { count: channel?.models.filter(model => !model.unavailable).length || 0 }) : t("config.account.notConfigured")}</div>
                         </div>
                         <div className="col-start-2 row-start-1 row-span-2 flex flex-col items-end gap-2.5 sm:col-start-3 sm:row-span-1 sm:flex-row sm:items-center sm:gap-4">
                             <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs" style={{ color: statusColor }} aria-live="polite"><StatusIcon className="size-3.5" aria-hidden="true" />{t(`config.account.status.${code}`)}</span>

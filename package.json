@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.129",
+  "version": "0.20.130",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -13,6 +13,7 @@
     "typecheck:editor": "node vendor/velocut/web/node_modules/typescript/bin/tsc -p vendor/velocut/web/apps/editor/tsconfig.json --noUnusedLocals false --noUnusedParameters false",
     "test": "node --test test/*.test.mjs && npm --prefix web run test:oneyes",
     "test:chat": "node scripts/test-agent-chat.mjs",
+    "test:models": "node scripts/test-agent-chat.mjs --models",
     "test:ota-ui": "node scripts/test-agent-chat.mjs --updates",
     "test:images": "node scripts/test-agent-chat.mjs --images",
     "test:codec": "node scripts/test-image-codec.mjs",

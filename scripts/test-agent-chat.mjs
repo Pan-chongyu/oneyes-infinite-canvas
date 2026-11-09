@@ -21,7 +21,8 @@ const studio=process.argv.includes('--studio');
 const collaboration = process.argv.includes('--collaboration');
 const playback = process.argv.includes('--playback');
 const videoWorkflow = process.argv.includes('--video-workflow');
-const fixture = videoWorkflow?'video-workflow':playback?'playback':collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const modelCatalog = process.argv.includes('--models');
+const fixture = modelCatalog?'model-catalog':videoWorkflow?'video-workflow':playback?'playback':collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
 const server = videoWorkflow||playback||collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },

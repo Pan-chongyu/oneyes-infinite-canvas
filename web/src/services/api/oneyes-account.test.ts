@@ -49,7 +49,8 @@ test("setup reuses same-name keys per group across retries and routes models to 
     assert.equal(resolveModelRequestConfig(config, config.videoModel).apiKey, "test-4");
     assert.equal(resolveModelRequestConfig(config, "oneyes-typesafe::jev-latest").apiKey, "test-18");
     assert.deepEqual(config.channels[3].models, [{ name: "jev-latest", capability: "decision", script: undefined }]);
-    assert.ok(config.channels[0].models.every(model => model.capability === "image" || model.capability === "text"));
+    assert.ok(config.channels[0].models.every(model => ["image", "text", "audio"].includes(model.capability)));
+    assert.equal(config.audioModel, "default::gpt-4o-mini-tts");
     assert.ok(config.channels[1].models.every(model => model.capability === "text"));
     assert.ok(config.channels[2].models.every(model => model.capability === "video"));
     assert.throws(() => resolveModelRequestConfig(config, "missing-group::deepseek-chat"), /分组配置不存在/);

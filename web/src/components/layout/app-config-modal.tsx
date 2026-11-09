@@ -18,7 +18,7 @@ import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent }
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
-import { modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { configureModelDefaults, useConfigStore, type AiConfig, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -351,27 +351,13 @@ export function AppConfigModal() {
 }
 
 function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
-    const next: AiConfig = {
+    return configureModelDefaults({
         ...config,
         channels,
-        models: modelOptionsFromChannels(channels),
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
-    };
-    return {
-        ...next,
-        imageModel: pickDefaultModel(next, "image", config.imageModel),
-        videoModel: pickDefaultModel(next, "video", config.videoModel),
-        textModel: pickDefaultModel(next, "text", config.textModel),
-        audioModel: pickDefaultModel(next, "audio", config.audioModel),
-    };
-}
-
-function pickDefaultModel(config: AiConfig, capability: ModelCapability, current: string) {
-    const options = selectableModelsByCapability(config, capability);
-    const normalized = normalizeModelOptionValue(current, config.channels);
-    return options.includes(normalized) ? normalized : options[0] || "";
+    });
 }
 
 function normalizeImageCount(value: string) {

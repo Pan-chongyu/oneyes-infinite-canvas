@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { accountCall, configureOneYes, diagnoseOneYes, type Diagnosis, type OneYesSession } from "@/services/api/oneyes-account";
 import { useConfigStore } from "./use-config-store";
+import { fetchModelCatalog } from "@/services/api/model-catalog";
 
 type State = OneYesSession & {
     ready: boolean; busy: boolean; error: string; report: Diagnosis[];
@@ -55,7 +56,7 @@ export const useOneYesAccountStore = create<State>((set, get) => ({
         try {
             const result = await configureOneYes(useConfigStore.getState().config, user);
             if (result.configured) useConfigStore.getState().replaceConfig(result.config);
-            const report = await diagnoseOneYes(useConfigStore.getState().config, user);
+            const report = await diagnoseOneYes(useConfigStore.getState().config, user, undefined, fetchModelCatalog);
             set({ report: [...report.filter(item => !result.issues.some(issue => issue.id === item.id)), ...result.issues] });
         } catch (error) { set({ error: error instanceof Error ? error.message : "配置失败" }); }
         finally { set({ busy: false }); }

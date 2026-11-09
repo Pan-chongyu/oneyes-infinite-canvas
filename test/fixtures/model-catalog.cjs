@@ -1,0 +1,75 @@
+const { app, BrowserWindow, ipcMain } = require('electron');
+const assert = require('node:assert/strict');
+const { mkdtempSync } = require('node:fs');
+const { join, resolve } = require('node:path');
+const { tmpdir } = require('node:os');
+const { createModelCatalog } = require('../../desktop/models.cjs');
+app.setPath('userData', mkdtempSync(join(tmpdir(), 'canvas-models-')));
+let stored = null, calls = 0, status = 200;
+let names = ['gpt-image-2', 'gpt-5.5', 'gpt-4o-mini-tts', 'grok-imagine-video'];
+const catalog = createModelCatalog(async (url, init) => {
+    assert.equal(url, 'https://api.oneyes.ai/v1/models');
+    assert.equal(init.method, 'GET'); assert.equal(init.headers.Authorization, 'Bearer fixture-model-key');
+    calls++;
+    return Response.json({ data: names.map(id => ({ id })) }, { status });
+});
+ipcMain.handle('config:read', () => stored);
+ipcMain.handle('config:write', (_event, value) => { stored = value; });
+ipcMain.handle('diagnostics:report', () => null);
+ipcMain.handle('models:list', async (_event, key) => { try { return { data: await catalog(key) }; } catch (error) { return { error: error.message }; } });
+app.whenReady().then(async () => {
+    const win = new BrowserWindow({ show: false, width: 1000, height: 780, webPreferences: { preload: resolve('desktop/preload.cjs'), backgroundThrottling: false, contextIsolation: true, nodeIntegration: false } });
+    const js = code => win.webContents.executeJavaScript(code);
+    const wait = async condition => {
+        const end = Date.now() + 20000;
+        while (!await js(condition)) { if (Date.now() > end) throw Error(`Timed out: ${condition}`); await new Promise(resolve => setTimeout(resolve, 25)); }
+    };
+    try {
+        await win.loadURL(process.argv[2]);
+        await wait('window.modelTest && modelTest.state().updatedAt && !modelTest.state().syncing');
+        assert.equal(calls, 1, 'StrictMode startup must share one native discovery');
+        const initial = await js('modelTest.state().config');
+        assert.equal(initial.models.length, 4);
+        for (const key of ['imageModel', 'videoModel', 'textModel', 'audioModel']) assert.ok(initial[key]);
+        await js('window.dispatchEvent(new Event("focus"));window.dispatchEvent(new Event("online"));document.dispatchEvent(new Event("visibilitychange"));modelTest.sync()');
+        assert.equal(calls, 1, 'rapid lifecycle events must use the shared cache');
+        names = ['new-image', 'gpt-5.5', 'grok-imagine-video', 'gpt-4o-mini-tts', 'seedance-2.5'];
+        await js('modelTest.expire();window.dispatchEvent(new Event("online"))');
+        await wait('!modelTest.state().syncing && modelTest.state().config.models.includes("default::seedance-2.5")');
+        assert.equal(calls, 2);
+        assert.equal(await js('modelTest.state().config.imageModel'), 'default::new-image');
+        assert.equal(await js('modelTest.state().config.channels[0].models.find(model=>model.name==="gpt-image-2").unavailable'), true);
+        const before = await js('modelTest.state().config');
+        status = 503;
+        await js('modelTest.expire();window.dispatchEvent(new Event("focus"))');
+        await wait('!modelTest.state().syncing && Boolean(modelTest.state().errors.default)');
+        assert.deepEqual(await js('modelTest.state().config'), before);
+        assert.equal(calls, 3, 'failed discovery must not retry automatically');
+        status = 200; names.push('recovered-image');
+        await js('window.dispatchEvent(new Event("online"))');
+        await wait('!modelTest.state().syncing && modelTest.state().config.models.includes("default::recovered-image")');
+        assert.deepEqual(await js('modelTest.state().errors'), {});
+        await js('document.querySelector("[data-testid=open-models]").click()');
+        await wait('modelTest.checked("gpt-5.5") === true && !document.querySelector(".ant-drawer-footer .ant-btn-primary").disabled');
+        await js('modelTest.toggle("gpt-5.5")');
+        await wait('modelTest.checked("gpt-5.5") === false');
+        names.push('background-image');
+        await js('modelTest.expire();window.dispatchEvent(new Event("focus"))');
+        await wait('!modelTest.state().syncing && modelTest.state().config.models.includes("default::background-image")');
+        assert.equal(await js('modelTest.checked("gpt-5.5")'), false, 'background sync must preserve unsaved drawer edits');
+        await js('document.querySelector(".ant-drawer-footer .ant-btn-primary").click()');
+        await wait('modelTest.state().config.channels[0].excludedModels.includes("gpt-5.5")');
+        await js('modelTest.expire();window.dispatchEvent(new Event("focus"))');
+        await wait('!modelTest.state().syncing');
+        assert.ok(!(await js('modelTest.state().config.models')).includes('default::gpt-5.5'));
+        assert.ok(JSON.parse(stored).state.config.channels[0].excludedModels.includes('gpt-5.5'));
+        await js('document.querySelector("[data-testid=open-models]").click()');
+        await wait('modelTest.checked("gpt-5.5") === false && !document.querySelector(".ant-drawer-footer .ant-btn-primary").disabled');
+        await js('modelTest.toggle("gpt-5.5");');
+        await wait('modelTest.checked("gpt-5.5") === true');
+        await js('document.querySelector(".ant-drawer-footer .ant-btn-primary").click()');
+        await wait('modelTest.state().config.models.includes("default::gpt-5.5") && !modelTest.state().config.channels[0].excludedModels.includes("gpt-5.5")');
+        console.log('NATIVE_MODEL_CATALOG_AUTO_SYNC_CACHE_DEFAULTS_ERRORS_AND_DRAFTS_OK');
+        win.destroy(); app.exit(0);
+    } catch (error) { console.error(error); win.destroy(); app.exit(1); }
+});

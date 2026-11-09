@@ -3,8 +3,8 @@ import { ChevronRight, KeyRound, RefreshCw, Search, Settings2 } from "lucide-rea
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { fetchChannelModels } from "@/services/api/image";
-import { GROK_VIDEO_CHANNEL_ID, guessCapability, normalizeChannelModels, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { fetchModelCatalog } from "@/services/api/model-catalog";
+import { GROK_VIDEO_CHANNEL_ID, guessCapability, normalizeChannelModels, syncChannelModels, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
@@ -30,10 +30,11 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         const current = ++request.current;
         setLoading(true); setAvailable(null); setError("");
         try {
-            const names = await fetchChannelModels(target);
+            const names = await fetchModelCatalog(target, true);
             if (current !== request.current) return;
             setAvailable(names);
-            setCatalog(previous => normalizeChannelModels([...previous, ...names]));
+            setDraft(current => current ? syncChannelModels(current, names) : current);
+            setCatalog(previous => syncChannelModels({ ...target, models: previous, excludedModels: [] }, names).models);
         } catch (cause) {
             if (current === request.current) setError(cause instanceof Error ? cause.message : t("config.modelSelect.fetchFailed"));
         } finally { if (current === request.current) setLoading(false); }
@@ -44,30 +45,34 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         setDraft(channel); setCatalog(channel.models); setAvailable(null); setLoading(false); setError(""); setSearch(""); setFilter("all"); setManual(""); setManualConfigured(false); setScriptTarget(null); setKeyOpen(!channel.apiKey.trim());
         if (channel.apiKey.trim()) void loadModels(channel);
         return () => { request.current++; };
-    }, [open, channel]);
+    }, [open, channel?.id, channel?.apiKey, channel?.oneYes, channel?.baseUrl, channel?.apiFormat]);
 
     if (!draft) return null;
 
     const platform = draft.id === GROK_VIDEO_CHANNEL_ID ? "grok" : draft.oneYes?.platform || (draft.id === "oneyes-deepseek" ? "deepseek" : draft.id === "oneyes-typesafe" ? "typesafe" : "openai");
     const name = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", minimax: "MiniMax", typesafe: "TypeSafe / Jev" }[platform];
     const selected = new Set(draft.models.map(model => model.name));
-    const missing = available === null ? [] : draft.models.filter(model => !available.includes(model.name));
+    const missing = draft.models.filter(model => model.unavailable);
     const keyword = search.trim().toLowerCase();
     const visible = catalog.filter(model => (!keyword || model.name.toLowerCase().includes(keyword)) && (filter === "all" || model.capability === filter));
     const selectable = visible.filter(model => available === null || available.includes(model.name));
     const keyNeedsCheck = Boolean(draft.apiKey.trim() && draft.apiKey.trim() !== channel?.apiKey.trim() && available === null && !manualConfigured);
     const patch = (value: Partial<ModelChannel>) => setDraft(current => current ? { ...current, ...value } : current);
-    const toggle = (model: ChannelModel, checked: boolean) => patch({ models: checked ? [...draft.models, model] : draft.models.filter(item => item.name !== model.name) });
+    const toggleModels = (models: ChannelModel[], checked: boolean) => {
+        const names = new Set(models.map(model => model.name));
+        patch({ models: checked ? normalizeChannelModels([...draft.models.filter(model => !names.has(model.name)), ...models]) : draft.models.filter(model => !names.has(model.name)), excludedModels: checked ? (draft.excludedModels || []).filter(name => !names.has(name)) : [...new Set([...(draft.excludedModels || []), ...names])] });
+    };
+    const toggle = (model: ChannelModel, checked: boolean) => toggleModels([model], checked);
     const updateModel = (name: string, value: Partial<ChannelModel>) => {
-        patch({ models: draft.models.map(model => model.name === name ? { ...model, ...value } : model) });
-        setCatalog(current => current.map(model => model.name === name ? { ...model, ...value } : model));
+        patch({ models: draft.models.map(model => model.name === name ? { ...model, ...value, ...(value.script?.trim() ? { unavailable: undefined } : {}) } : model) });
+        setCatalog(current => current.map(model => model.name === name ? { ...model, ...value, ...(value.script?.trim() ? { unavailable: undefined } : {}) } : model));
     };
     const addManual = () => {
         const name = manual.trim();
         if (!name) return;
-        const model = catalog.find(item => item.name === name) || { name, capability: guessCapability(name) };
-        if (!catalog.some(item => item.name === name)) setCatalog(current => [...current, model]);
-        if (!selected.has(name)) toggle(model, true);
+        const model = { ...(catalog.find(item => item.name === name) || { name, capability: guessCapability(name) }), manual: true, unavailable: undefined };
+        setCatalog(current => normalizeChannelModels([...current.filter(item => item.name !== name), model]));
+        toggle(model, true);
         setManual(""); setManualConfigured(true); setSearch(""); setFilter("all");
     };
 
@@ -75,7 +80,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         title={t("config.channelEditor.manageTitle", { name })}
         styles={{ body: { padding: 20 }, footer: { padding: "12px 20px" } }}
         footer={<div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-xs text-muted-foreground" aria-live="polite">{t("config.channelEditor.selectedCount", { count: draft.models.length })}</span>
+            <span className="text-xs text-muted-foreground" aria-live="polite">{t("config.channelEditor.selectedCount", { count: draft.models.filter(model => !model.unavailable).length })}</span>
             <div className="flex gap-2"><Button onClick={onClose}>{t("common.cancel")}</Button><Button type="primary" disabled={loading || keyNeedsCheck} onClick={() => { onSave({ ...draft, apiKey: draft.apiKey.trim(), models: normalizeChannelModels(draft.models) }); onClose(); }}>{t("config.channelEditor.save")}</Button></div>
         </div>}>
         <p className="mb-4 mt-0 text-sm leading-relaxed text-muted-foreground">{t("config.channelEditor.simpleHint")}</p>
@@ -97,7 +102,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         <div className="my-3 overflow-x-auto"><Segmented aria-label={t("config.channelEditor.filter")} value={filter} onChange={value => setFilter(value as typeof filter)} options={[{ label: t("config.channelEditor.all"), value: "all" }, ...capabilityOptions]} /></div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <span role="status">{t(loading ? "config.channelEditor.loading" : available === null ? "config.channelEditor.savedList" : "config.channelEditor.availableCount", { count: available?.length || 0 })}</span>
-            <div className="flex gap-2"><Button size="small" type="text" disabled={loading || !selectable.length} onClick={() => patch({ models: normalizeChannelModels([...draft.models, ...selectable]) })}>{t("config.channelEditor.selectAll")}</Button><Button size="small" type="text" disabled={loading || !visible.some(model => selected.has(model.name))} onClick={() => patch({ models: draft.models.filter(model => !visible.some(item => item.name === model.name)) })}>{t("config.channelEditor.clear")}</Button></div>
+            <div className="flex gap-2"><Button size="small" type="text" disabled={loading || !selectable.length} onClick={() => toggleModels(selectable, true)}>{t("config.channelEditor.selectAll")}</Button><Button size="small" type="text" disabled={loading || !visible.some(model => selected.has(model.name))} onClick={() => toggleModels(visible, false)}>{t("config.channelEditor.clear")}</Button></div>
         </div>
         <div className="divide-y divide-border rounded-lg border border-border" aria-busy={loading}>
             {visible.map(model => {

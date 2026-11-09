@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
+import { useModelCatalogSync } from "@/hooks/use-model-catalog-sync";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -15,6 +16,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     usePromptSourceScheduler();
+    useModelCatalogSync();
     useEffect(() => { if (window.oneYesDesktop?.account) void useOneYesAccountStore.getState().restore(); }, []);
 
     useEffect(() => {

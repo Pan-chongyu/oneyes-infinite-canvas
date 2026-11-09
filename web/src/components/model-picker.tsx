@@ -6,6 +6,7 @@ import i18n from "@/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { useModelCatalogStore } from "@/stores/use-model-catalog-store";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -39,8 +40,8 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             open={open}
             value={current}
             onOpenChange={(nextOpen) => {
-                if (nextOpen && !options.length && config.channelMode === "local") onMissingConfig?.();
-                if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
+                if (nextOpen && !options.length && config.channelMode === "local" && !config.channels.some(channel => channel.apiKey.trim())) onMissingConfig?.();
+                if (nextOpen) { void useModelCatalogStore.getState().sync(); window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId })); }
                 setOpen(nextOpen);
             }}
             onValueChange={onChange}

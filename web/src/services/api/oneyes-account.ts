@@ -1,5 +1,6 @@
 import { fetchChannelModels } from "./image";
-import { encodeChannelModel, guessCapability, GROK_VIDEO_CHANNEL_ID, modelOptionsFromChannels, normalizeOneYesConfig, OPENAI_BASE_URL, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { fetchModelCatalog } from "./model-catalog";
+import { configureModelDefaults, GROK_VIDEO_CHANNEL_ID, normalizeOneYesConfig, OPENAI_BASE_URL, syncChannelModels, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 
 export type OneYesUser = { id: number; email: string; username?: string; balance?: number };
 export type OneYesSession = { user: OneYesUser | null; source?: "desktop" | "login"; requires_2fa?: boolean };
@@ -46,32 +47,24 @@ async function listKeys(user: OneYesUser, call: AccountCall) {
 function usable(key: Key) {
     return key.status === "active" && !(key.expires_at && Date.parse(key.expires_at) <= Date.now()) && !(Number(key.quota) > 0 && Number(key.quota_used) >= Number(key.quota));
 }
-function platformModels(names: string[], platform: Platform) {
-    return names.map(name => ({ name, capability: guessCapability(name) })).filter(model => platform === "openai" ? ["image", "text", "video"].includes(model.capability) : model.capability === (platform === "deepseek" ? "text" : platform === "typesafe" ? "decision" : "video"));
-}
-export async function configureManual(config: AiConfig, credentials: Partial<Record<Platform, string>>, fetchModels = fetchChannelModels) {
+const refreshModels: typeof fetchChannelModels = channel => fetchModelCatalog(channel, true);
+export async function configureManual(config: AiConfig, credentials: Partial<Record<Platform, string>>, fetchModels = refreshModels) {
     const channels: ModelChannel[] = [];
     for (const platform of platforms) {
         const id = channelIdForPlatform(platform, config.channels[0].id);
         const old = config.channels.find(channel => channel.id === id);
         const apiKey = credentials[platform]?.trim() || "";
         if (!apiKey && !old) continue;
-        const channel: ModelChannel = { id, name: platform === "openai" ? "OneYes" : `OneYes ${platformNames[platform]}`, apiKey, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", models: old?.models || [], ...(apiKey === old?.apiKey ? { oneYes: old.oneYes } : {}) };
+        let channel: ModelChannel = { ...old, id, name: platform === "openai" ? "OneYes" : `OneYes ${platformNames[platform]}`, apiKey, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", models: old?.models.filter(model => old.apiKey.trim() || model.manual || model.script) || [], oneYes: apiKey === old?.apiKey ? old?.oneYes : undefined };
         if (apiKey && apiKey !== old?.apiKey) {
-            channel.models = platformModels(await fetchModels(channel), platform);
-            if (!channel.models.length) throw new Error(`${channel.name} 未返回匹配的模型，请检查 Key 分组或在下方编辑模型`);
+            channel = syncChannelModels(channel, await fetchModels(channel));
+            if (!channel.models.some(model => !model.unavailable)) throw new Error(`${channel.name} 未返回匹配的模型，请检查 Key 分组或在下方编辑模型`);
         }
         channels.push(channel);
     }
-    const next = normalizeOneYesConfig({ ...config, channels });
-    for (const [capability, setting] of [["image", "imageModel"], ["text", "textModel"], ["video", "videoModel"]] as const) {
-        const candidates = channels.flatMap(channel => channel.models.filter(model => model.capability === capability).map(model => encodeChannelModel(channel.id, model.name)));
-        if (candidates.length && !candidates.includes(next[setting])) next[setting] = candidates[0];
-    }
-    next.model = next.imageModel;
-    return next;
+    return configureModelDefaults(normalizeOneYesConfig({ ...config, channels }));
 }
-export async function configureOneYes(config: AiConfig, user: OneYesUser, call: AccountCall = accountCall, fetchModels = fetchChannelModels) {
+export async function configureOneYes(config: AiConfig, user: OneYesUser, call: AccountCall = accountCall, fetchModels = refreshModels) {
     const groups = await call<Group[]>("groups", { account_id: user.id });
     if (!Array.isArray(groups)) throw new Error("分组列表格式无效");
     const keys = await listKeys(user, call), channels: ModelChannel[] = [], issues: Diagnosis[] = [];
@@ -92,34 +85,23 @@ export async function configureOneYes(config: AiConfig, user: OneYesUser, call: 
                 ? await call<Key>("key", { account_id: user.id, id: existing.id })
                 : await call<Key>("create_key", { account_id: user.id, group_id: group.id });
             if (!Number.isSafeInteger(key.id) || key.id <= 0 || key.name !== CANVAS_KEY_NAME || !usable(key) || key.group_id !== group.id || !key.key || (key.group?.platform && key.group.platform.toLowerCase() !== platform)) throw new Error("Key 的状态或所属分组已变化，请重新操作");
-            const channel: ModelChannel = { id, name: `OneYes ${platformNames[platform]}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", apiKey: key.key,
-                models: [], oneYes: { platform, groupId: group.id, groupName: group.name, keyId: key.id, accountId: user.id } };
+            const old = config.channels.find(channel => channel.id === id);
+            let channel: ModelChannel = { ...old, id, name: `OneYes ${platformNames[platform]}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", apiKey: key.key,
+                models: old?.models.filter(model => old.apiKey.trim() || model.manual || model.script) || [], oneYes: { platform, groupId: group.id, groupName: group.name, keyId: key.id, accountId: user.id } };
             const available = await fetchModels(channel);
-            channel.models = platformModels(available, platform);
-            if (!channel.models.length) throw new Error("该分组未返回匹配的可用模型，请检查分组或手动配置模型");
+            channel = syncChannelModels(channel, available);
+            if (!channel.models.some(model => !model.unavailable)) throw new Error("该分组未返回匹配的可用模型，请检查分组或手动配置模型");
             channels.push(channel);
         } catch (error) {
             issues.push({ id, name: platform, status: "error", code: "setupFailed", detail: error instanceof Error ? error.message : "配置失败" });
         }
     }
-    // Preserve project model IDs and custom scripts only for models still available.
-    for (const channel of channels) {
-        const old = config.channels.find(item => item.id === channel.id);
-        channel.models = channel.models.map(model => ({ ...model, script: old?.models.find(item => item.name === model.name)?.script }));
-    }
     const merged = config.channels.map(old => channels.find(channel => channel.id === old.id) || old);
     channels.forEach(channel => { if (!merged.some(old => old.id === channel.id)) merged.push(channel); });
-    const next = normalizeOneYesConfig({ ...config, channels: merged });
-    for (const [capability, setting] of [["image", "imageModel"], ["text", "textModel"], ["video", "videoModel"]] as const) {
-        const candidates = channels.flatMap(channel => channel.models.filter(model => model.capability === capability).map(model => encodeChannelModel(channel.id, model.name)));
-        // Defaults can change; saved canvas nodes retain their explicit selection.
-        if (candidates.length && !candidates.includes(next[setting])) next[setting] = candidates[0];
-    }
-    next.model = next.imageModel;
-    next.models = modelOptionsFromChannels(next.channels);
+    const next = configureModelDefaults(normalizeOneYesConfig({ ...config, channels: merged }));
     return { config: next, issues, configured: channels.length };
 }
-export async function diagnoseOneYes(config: AiConfig, user: OneYesUser | null, call: AccountCall = accountCall, fetchModels = fetchChannelModels): Promise<Diagnosis[]> {
+export async function diagnoseOneYes(config: AiConfig, user: OneYesUser | null, call: AccountCall = accountCall, fetchModels = refreshModels): Promise<Diagnosis[]> {
     let keys: Key[] | undefined, accountError = "";
     if (user && config.channels.some(channel => channel.oneYes)) {
         try { keys = await listKeys(user, call); } catch (error) { accountError = error instanceof Error ? error.message : "账户检查失败"; }
@@ -140,7 +122,7 @@ export async function diagnoseOneYes(config: AiConfig, user: OneYesUser | null, 
         }
         try {
             const names = await fetchModels(channel);
-            const missing = channel.models.filter(model => !names.includes(model.name));
+            const missing = channel.models.filter(model => !model.unavailable && !model.manual && !model.script && !names.includes(model.name));
             report.push({ ...base, status: missing.length ? "warning" : "ok", code: missing.length ? "modelsChanged" : "ok", detail: missing.map(model => model.name).join(", ") || undefined });
         } catch (error) {
             report.push({ ...base, status: "error", code: "unavailable", detail: error instanceof Error ? error.message : undefined });

@@ -395,6 +395,7 @@ Write a detailed, ready-to-use overall prompt in connected paragraphs, then self
             later: "Set up later", laterHint: "Reopen this guide in Settings", needKey: "Enter a key for at least one platform.",
         },
         account: {
+            modelsAuto: "Automatic model sync and defaults", modelsSyncing: "Syncing upstream models…", modelsSynced: "Models synced automatically", modelsSyncFailed: "Some models could not sync; local settings kept", syncModels: "Sync now",
             services: "Model services", imageText: "Images & text", group: "Website group", recommendedGroup: "Required group", manualKey: "Manual key", notConfigured: "Add a key to load models", configure: "Configure", manage: "Manage models", editService: "Manage {{name}} models",
             status: { ok: "Connected", unchecked: "Not checked", unconfigured: "Not configured", account: "Sign-in needed", accountUnavailable: "Account unchecked", deleted: "Key deleted", inactive: "Key inactive", groupChanged: "Group changed", legacyPlatform: "Reconnect to Grok", modelsChanged: "Models changed", unavailable: "Connection failed", setupFailed: "Setup incomplete" },
             diagnosticHint: "Open Settings → Diagnostics to check whether the key was deleted and repair the connection.",
@@ -571,12 +572,12 @@ Write a detailed, ready-to-use overall prompt in connected paragraphs, then self
             systemPromptPlaceholder: "For example: You are a visual director specializing in cinematic, photorealistic imagery.",
         },
         channelEditor: {
-            manageTitle: "{{name}} models", simpleHint: "Select the models you want to use, then save. Model types are detected automatically.",
+            manageTitle: "{{name}} models", simpleHint: "Upstream models, types and defaults are configured automatically. Deselections, custom types and scripts are preserved.",
             keyConfigured: "Key configured", keyMissing: "Enter a key first", group: "Website group: {{name}}", keyHint: "Use your own OneYes key", changeKey: "Change key", hideKey: "Hide",
             replaceHint: "After pasting a new key, select Get models to check available models.", keyChanged: "Key changed. Get models before saving, or add a model manually in Advanced settings.",
             load: "Get models", refresh: "Refresh models", loading: "Loading available models…", availableCount: "{{count}} models returned by the website", savedList: "Saved models; website list not checked",
             selectedCount: "{{count}} models enabled", save: "Save settings", selectAll: "Select all", clear: "Clear selection", filter: "Filter by model type", all: "All",
-            missing: "{{count}} selected models were not returned by the website", missingHint: "Clear them in one click, or keep custom models that still work.", removeMissing: "Clear missing", notReturned: "Not returned",
+            missing: "{{count}} models are currently missing upstream", missingHint: "Hidden from available options; existing nodes keep their selection. Add a confirmed custom model in Advanced settings to keep using it.", removeMissing: "Clear missing", notReturned: "Unavailable upstream",
             noMatches: "No matching models. Try another type or search term.", noRemoteModels: "No models returned. Check the key group, or add a model in Advanced settings.",
             advanced: "Advanced settings", advancedHint: "Usually no changes are needed. Add models, change types, or customize request scripts only when required.", modelCapability: "Model type for {{name}}",
             builtIn: "OneYes is built in. The provider cannot be removed and its API endpoint is fixed.",
@@ -589,7 +590,7 @@ Write a detailed, ready-to-use overall prompt in connected paragraphs, then self
             selectModels: "Select models",
             scriptReady: "Script set",
             script: "Request script",
-            empty: "Enter a key, select Get models, then choose the models you need.",
+            empty: "Enter a key and get models to configure their types and defaults automatically.",
             capabilities: {
                 decision: "Decisions",
                 image: "Image",
