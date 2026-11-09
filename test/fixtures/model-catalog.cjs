@@ -69,6 +69,14 @@ app.whenReady().then(async () => {
         await wait('modelTest.checked("gpt-5.5") === true');
         await js('document.querySelector(".ant-drawer-footer .ant-btn-primary").click()');
         await wait('modelTest.state().config.models.includes("default::gpt-5.5") && !modelTest.state().config.channels[0].excludedModels.includes("gpt-5.5")');
+        const availableBeforeCleanup = await js('modelTest.state().config.models');
+        status = 503;
+        await js('document.querySelector("[data-testid=open-models]").click()');
+        await wait('Boolean(document.querySelector(".ant-drawer .ant-alert-error")) && !document.querySelector(".ant-drawer-footer .ant-btn-primary").disabled');
+        await js('Array.from(document.querySelectorAll(".ant-drawer button")).find(button=>button.textContent.includes("一键清理")).click()');
+        await js('document.querySelector(".ant-drawer-footer .ant-btn-primary").click()');
+        await wait('!document.querySelector(".ant-drawer-content-wrapper:not(.ant-drawer-content-wrapper-hidden)")');
+        assert.deepEqual(await js('modelTest.state().config.models'), availableBeforeCleanup, 'cleanup after failed refresh must keep all available local models');
         console.log('NATIVE_MODEL_CATALOG_AUTO_SYNC_CACHE_DEFAULTS_ERRORS_AND_DRAFTS_OK');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
