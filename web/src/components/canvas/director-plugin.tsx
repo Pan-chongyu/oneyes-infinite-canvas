@@ -79,7 +79,7 @@ function DirectorContent({ ctx }: { ctx: CanvasNodeContext }) {
     return <>
         <div className="flex h-full w-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain p-3 pt-6" style={{ color: ctx.theme.node.text }} data-director-node onWheel={event => event.stopPropagation()}>
             <div className="flex items-center justify-between gap-2"><div className="inline-flex items-center gap-1.5 text-sm font-semibold"><Clapperboard size={16} />3D 导演台</div><span className="text-[11px]" style={{color:ctx.theme.node.muted}}>描述想法 → 直接生成 → 微调</span></div>
-            {summary && !setupOpen && !open && <Suspense fallback={<div className="flex h-36 shrink-0 items-center justify-center text-xs" role="status">正在准备节点预览…</div>}><Preview scene={summary} autoPlayFrom={canUndo ? applied.added[0]?.id : undefined} /></Suspense>}
+            {summary && !setupOpen && !open && <Suspense fallback={<div className="flex min-h-0 flex-1 items-center justify-center text-xs" role="status">正在准备节点预览…</div>}><Preview scene={summary} autoPlayFrom={canUndo ? applied.added[0]?.id : undefined} /></Suspense>}
             <details open={setupOpen || !summary} onToggle={event => setSetupOpen(event.currentTarget.open)} onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
                 <summary className={summary ? "cursor-pointer py-1 text-xs" : "hidden"}>生成配置 · 提示词与模型</summary>
                 <DirectorSetup ctx={ctx} disabled={open || creation.busy} compact />
