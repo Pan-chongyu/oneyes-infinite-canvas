@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Checkbox, Input, InputNumber, Segmented, Select, Slider, Tooltip } from "antd";
-import { Box, Camera, Circle, Copy, Cylinder, Download, Eye, EyeOff, Focus, Grid2X2, LockKeyhole, LockOpen, Move3D, Redo2, Rotate3D, Scaling, Sun, Trash2, Undo2, Upload, UserRound } from "lucide-react";
+import { Button, Checkbox, Input, InputNumber, Popover, Segmented, Select, Slider, Tooltip } from "antd";
+import { Box, Camera, Circle, Copy, Cylinder, Download, Eye, EyeOff, Focus, Grid2X2, HelpCircle, LockKeyhole, LockOpen, Magnet, MousePointer2, Move3D, Redo2, Rotate3D, Scaling, Scan, Sun, Trash2, Undo2, Upload, UserRound, X } from "lucide-react";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
 import { DirectorTimeline } from "./director-timeline";
@@ -8,7 +8,7 @@ import { DirectorAssistant } from "./director-assistant";
 import { useDirectorPlayback } from "./use-director-playback";
 import { exportDirectorBundle } from "@/lib/canvas/director-export";
 import { directorFrameChanged, directorMotionPrompt, recordDirectorFrame, sequenceDuration, shotDuration, shotListCsv, shotScene } from "@/lib/canvas/director-sequence";
-import { createDirectorRuntime, type DirectorRuntime } from "./director-runtime";
+import { createDirectorRuntime, type DirectorRuntime, type DirectorTool } from "./director-runtime";
 import { directorHistory, directorJoints, directorLighting, directorNames, directorObject, directorOutputs, directorPoses, directorPreset, directorSceneFile, parseDirectorSceneFile } from "@/lib/canvas/director-scene";
 import type { DirectorJoint, DirectorKind, DirectorObject, DirectorOutput, DirectorScene, DirectorVector } from "@/types/director";
 import type { CanvasNodeContext } from "@/types/canvas-plugin";
@@ -20,7 +20,8 @@ export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Prop
     const container = useRef<HTMLDivElement>(null), fileInput = useRef<HTMLInputElement>(null), runtime = useRef<DirectorRuntime | null>(null);
     const current = useRef({ scene, onChange }); current.current = { scene, onChange };
     const [selected, setSelected] = useState<string | null>(scene.objects[0]?.id || null);
-    const [mode, setMode] = useState<"camera" | "scene">("camera"), [transform, setTransform] = useState<"translate" | "rotate" | "scale">("translate");
+    const [mode, setMode] = useState<"camera" | "scene">("camera"), [transform, setTransform] = useState<DirectorTool>("select");
+    const [space, setSpace] = useState<"world" | "local">("world"), [snap, setSnap] = useState(false);
     const [ready, setReady] = useState(false), [renderError, setRenderError] = useState(""), [error, setError] = useState(""), [working, setBusy] = useState(false), [saved, setSaved] = useState(false);
     const saving = useRef(false), mounted = useRef(true);
     const [history] = useState(() => directorHistory(scene));
@@ -44,7 +45,7 @@ export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Prop
     const previewing = !!playback.preview || !!aiPreview;
     useEffect(() => { if (aiPreview?.shots?.length) playback.play(); }, [aiPreview]);
     useEffect(() => { if (!scene.shots?.some(shot => shot.id === shotId)) setShotId(scene.shots?.[0]?.id || null); }, [scene.shots, shotId]);
-    useEffect(() => { if (!scene.objects.some(item=>item.id===selected)) setSelected(scene.objects[0]?.id||null); if (history.sync(scene)) { setEditTime(0); setSaved(false); refreshHistory(value => value + 1); } }, [scene,selected,history]);
+    useEffect(() => { if (selected && !scene.objects.some(item=>item.id===selected)) setSelected(null); if (history.sync(scene)) { setEditTime(0); setSaved(false); refreshHistory(value => value + 1); } }, [scene,selected,history]);
     useEffect(() => { if (savedShot && editTime>shotDuration(savedShot)) setEditTime(0); }, [savedShot,editTime]);
     useEffect(() => { if (previewing) { setMode("camera"); runtime.current?.mode("camera"); } }, [previewing]);
     const commit = (next: DirectorScene, group?: string) => { if (!history.commit(next, group)) return; current.current.scene = next; current.current.onChange(next); setSaved(false); };
@@ -56,7 +57,7 @@ export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Prop
         try {
             runtime.current = createDirectorRuntime(container.current!, scene, {
                 camera: camera => update({ camera }),
-                object: patchObject, select: setSelected, error: message => { setRenderError(message); setReady(false); },
+                object: patchObject, select: id => { setSelected(id); if (id) setSettings("object"); }, error: message => { setRenderError(message); setReady(false); },
             });
             setReady(true);
         } catch { setRenderError("无法启动三维视窗。请开启系统或浏览器的硬件加速，并更新显卡驱动后重试；场景设置保持不变"); }
@@ -67,7 +68,7 @@ export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Prop
     const editDisabled = busy || !!object?.locked;
     const duplicate = () => { if (!object || object.locked) return; const next = structuredClone(object); next.id = nanoid(); next.name += " 副本"; next.position[0] += 0.5; update({ objects: [...scene.objects, next] }); setSelected(next.id); };
     const remove = () => { if (!object || object.locked) return; update({ objects: scene.objects.filter(item => item.id !== object.id) }); setSelected(null); };
-    const changeTransform = (value: typeof transform) => { setTransform(value); runtime.current?.transform(value); };
+    const changeTransform = (value: DirectorTool) => { setTransform(value); runtime.current?.transform(value); };
     const capture = async (scope:'current'|'shot'|'all'='current', workflow:boolean|"video"=false) => {
         if (!runtime.current || saving.current) return;
         saving.current = true; setBusy(true); setError(""); setSaved(false);
@@ -133,8 +134,8 @@ export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Prop
         if (command && key === "z") travel(event.shiftKey);
         else if (command && key === "y") travel(true);
         else if (command && key === "d") duplicate();
-        else if (!command && !event.altKey && key === "f") runtime.current?.focus(selected);
-        else if (!command && !event.altKey && ["w","e","r"].includes(key)) changeTransform(key === "w" ? "translate" : key === "e" ? "rotate" : "scale");
+        else if (!command && !event.altKey && key === "f") runtime.current?.focus(event.shiftKey ? null : selected);
+        else if (!command && !event.altKey && ["q","w","e","r"].includes(key)) changeTransform(key === "q" ? "select" : key === "w" ? "translate" : key === "e" ? "rotate" : "scale");
         else if (!command && !event.altKey && (key === "delete" || key === "backspace")) remove();
         else return;
         event.preventDefault(); event.stopPropagation();
@@ -146,17 +147,31 @@ export default function DirectorEditor({ scene, ctx, onChange, onCapture }: Prop
         <div className={`${editing?'flex':'hidden'} flex-wrap items-center justify-between gap-2`}>
             <div className="flex flex-wrap items-center gap-2"><Segmented aria-label="视窗模式" value={mode} options={[{ value: "camera", label: "镜头取景", icon: <Camera size={14} /> }, { value: "scene", label: "自由布景", icon: <Box size={14} /> }]} disabled={busy} onChange={value => { setMode(value as typeof mode); runtime.current?.mode(value as typeof mode); }} />
                 {mode === "scene" && <Button type="text" size="small" disabled={!ready || busy} icon={<Focus size={14} />} onClick={() => { runtime.current?.adoptView(); setMode("camera"); runtime.current?.mode("camera"); }}>将此视角设为镜头</Button>}</div>
-            <div className="flex flex-wrap items-center gap-1"><Tooltip title="撤销（⌘ / Ctrl Z）"><Button aria-label="撤销" type="text" size="small" disabled={busy || !history.canUndo} icon={<Undo2 size={15} />} onClick={() => travel()} /></Tooltip><Tooltip title="重做（⌘ / Ctrl Shift Z）"><Button aria-label="重做" type="text" size="small" disabled={busy || !history.canRedo} icon={<Redo2 size={15} />} onClick={() => travel(true)} /></Tooltip><span className="mx-1 h-3 border-l" style={{ borderColor: theme.toolbar.border }} />{([{ value: "translate", label: "移动", Icon: Move3D }, { value: "rotate", label: "旋转", Icon: Rotate3D }, { value: "scale", label: "缩放", Icon: Scaling }] as const).map(({ value, label, Icon }) => <Tooltip key={value} title={`${label}（${value === "translate" ? "W" : value === "rotate" ? "E" : "R"}）`}><Button type="text" size="small" disabled={editDisabled} aria-label={label} aria-pressed={transform === value} style={{ background: transform === value ? theme.toolbar.activeBg : undefined }} icon={<Icon size={16} />} onClick={() => changeTransform(value)} /></Tooltip>)}<Tooltip title="聚焦选中物体，未选中时显示全部（F）"><Button type="text" size="small" aria-label="聚焦物体" disabled={!ready || busy} icon={<Focus size={15} />} onClick={() => runtime.current?.focus(selected)} /></Tooltip></div>
+            <div className="flex flex-wrap items-center gap-1" role="group" aria-label="布景操作工具">
+                <Tooltip title="撤销（⌘ / Ctrl Z）"><Button aria-label="撤销" type="text" size="small" disabled={busy || !history.canUndo} icon={<Undo2 size={15} />} onClick={() => travel()} /></Tooltip>
+                <Tooltip title="重做（⌘ / Ctrl Shift Z）"><Button aria-label="重做" type="text" size="small" disabled={busy || !history.canRedo} icon={<Redo2 size={15} />} onClick={() => travel(true)} /></Tooltip>
+                <span className="mx-1 h-3 border-l" style={{ borderColor: theme.toolbar.border }} />
+                {([{ value: "select", label: "选择", key: "Q", Icon: MousePointer2 }, { value: "translate", label: "移动", key: "W", Icon: Move3D }, { value: "rotate", label: "旋转", key: "E", Icon: Rotate3D }, { value: "scale", label: "缩放", key: "R", Icon: Scaling }] as const).map(({ value, label, key, Icon }) => <Tooltip key={value} title={`${label}（${key}）${value === "select" ? "：隐藏变换轴，避免误拖" : "：拖动彩色轴精调物体"}`}><Button type="text" size="small" disabled={!ready || busy} aria-label={label} aria-keyshortcuts={key} aria-pressed={transform === value} style={{ background: transform === value ? theme.toolbar.activeBg : undefined }} icon={<Icon size={14} />} onClick={() => changeTransform(value)}>{label}</Button></Tooltip>)}
+                <Tooltip title={transform === "scale" ? "缩放始终沿物体自身坐标轴；位置和旋转可切换坐标系" : "世界坐标：沿场景方向调整；物体坐标：沿物体自身方向调整"}><Select size="small" aria-label="变换坐标系" value={transform === "scale" ? "local" : space} disabled={!ready || busy || transform === "select" || transform === "scale"} options={[{ value: "world", label: "世界坐标" }, { value: "local", label: "物体坐标" }]} onChange={value => { setSpace(value); runtime.current?.space(value); }} /></Tooltip>
+                <Tooltip title="开启后，拖动坐标轴按移动 0.1、旋转 15°、缩放 0.1 对齐；数值输入保持精确值"><Button type="text" size="small" aria-label="变换吸附" aria-pressed={snap} disabled={!ready || busy || transform === "select"} style={{ background: snap ? theme.toolbar.activeBg : undefined }} icon={<Magnet size={14} />} onClick={() => { setSnap(!snap); runtime.current?.snap(!snap); }}>吸附</Button></Tooltip>
+                <Tooltip title="聚焦选中物体，未选中时显示全部（F）"><Button type="text" size="small" aria-label="聚焦物体" disabled={!ready || busy} icon={<Focus size={14} />} onClick={() => runtime.current?.focus(selected)}>聚焦</Button></Tooltip>
+                <Tooltip title="让所有可见物体回到视野内（Shift F）"><Button type="text" size="small" aria-label="显示全部物体" disabled={!ready || busy} icon={<Scan size={14} />} onClick={() => runtime.current?.focus(null)}>全景</Button></Tooltip>
+                <Popover trigger="click" title="导演台操作" content={<div className="space-y-2 text-xs"><p>单击选中 · 空白取消 · 双击聚焦</p><p>拖动空白环绕 · 右键平移 · 滚轮推进</p><p>Q 选择 · W 移动 · E 旋转 · R 缩放</p><p>F 聚焦 · Shift F 显示全部</p><p>⌘ / Ctrl D 复制 · Delete 删除</p><p>⌘ / Ctrl Z 撤销 · ⌘ / Ctrl Shift Z 重做</p><p>自由布景只调整观察视角；「设为镜头」后用于输出。</p></div>}><Button type="text" size="small" aria-label="导演台操作指南" icon={<HelpCircle size={14} />} /></Popover>
+            </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: theme.node.muted }}><span>{step==='stage'?'添加人物或道具，调整姿态和镜头；也可展开 AI 描述你的想法。':step==='shots'?'保存起始机位，调整画面后记录末帧，完成一段动作与运镜。':step==='preview'?'播放或拖动时间轴检查效果；点「编辑此帧」继续调整。':'选择当前画面或已保存分镜，输出到画布或导出文件。'}</span><div className="flex items-center gap-1"><input ref={fileInput} type="file" accept=".json,application/json" aria-label="导入导演台场景文件" className="hidden" onChange={event => { void importScene(event.target.files?.[0]); event.target.value = ""; }} /><Button type="text" size="small" disabled={busy} icon={<Upload size={13} />} onClick={() => fileInput.current?.click()}>导入场景</Button><Button type="text" size="small" disabled={busy} icon={<Download size={13} />} onClick={() => { try { saveAs(new Blob([directorSceneFile(scene)], { type: "application/json" }), "OneYes-导演台.json"); } catch (error) { setError(error instanceof Error ? error.message : "场景导出失败"); } }}>导出场景</Button></div></div>
         <DirectorAssistant ctx={ctx} scene={scene} disabled={working || !!playback.preview && !aiPreview} onPreview={previewDraft} onApply={draft => { if (draft.source !== JSON.stringify(current.current.scene) || draft.source !== JSON.stringify(ctx.node.metadata?.directorScene)) { setError("场景已变化，AI 草稿未应用，请重新生成"); return false; } playback.stop(true); setAiPreview(null); commit(draft.scene); setEditTime(0); if(draft.added.length) {setShotId(draft.added[0].id);setStep('shots');} else setStep('stage');setSelected(draft.scene.objects[0]?.id || null);return true; }} />
         {step==='stage'&&sizeControls}
         <div className={`grid min-h-0 grid-cols-1 gap-3 ${step==='stage'||step==='shots'?'md:grid-cols-[minmax(0,1fr)_264px]':''}`}>
             <div className={`relative overflow-hidden rounded-xl border ${step==='stage'?'min-h-[280px] md:h-[clamp(300px,40vh,520px)]':step==='shots'?'min-h-[180px] md:h-[clamp(180px,22vh,300px)]':'min-h-[200px] md:h-[clamp(220px,28vh,360px)]'}`} style={{ borderColor: theme.toolbar.border, background: scene.background }}>
-                <div ref={container} className="absolute inset-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]" data-director-viewport tabIndex={0} aria-label="三维视窗，W 移动，E 旋转，R 缩放，F 聚焦" onPointerDown={() => container.current?.focus({ preventScroll: true })} />
+                <div ref={container} className="absolute inset-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]" data-director-viewport tabIndex={0} aria-label="三维视窗，Q 选择，W 移动，E 旋转，R 缩放，F 聚焦，Shift F 全景" onPointerDown={() => container.current?.focus({ preventScroll: true })} />
                 <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-md px-2 py-1 text-xs" style={{ background: theme.toolbar.panel, color: theme.node.text }}><Camera size={13} />{display.camera.lens.toFixed(1).replace(/\.0$/, "")} mm<span style={{ color: theme.node.muted }}>{display.width} × {display.height}</span></div>
+                {editing && <div className="absolute right-3 top-12 flex max-w-[75%] items-center gap-1 rounded-md px-2 py-1 text-xs md:top-3 md:max-w-[40%]" style={{ background: theme.toolbar.panel, color: theme.node.text }}>
+                    <span className="truncate" role="status" data-director-selection>{object ? `${object.name}${object.locked ? " · 已锁定" : object.visible === false ? " · 已隐藏" : ""}` : "未选中物体 · 单击选择"}</span>
+                    {object && <Button type="text" size="small" className="!h-5 !min-w-5 !px-0" aria-label="取消选择物体" disabled={busy} icon={<X size={13} />} onClick={() => setSelected(null)} />}
+                </div>}
                 {!ready && !renderError && <div className="absolute inset-0 grid place-items-center" role="status">正在准备三维视窗…</div>}
-                <div className="absolute bottom-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 text-xs"><span className="pointer-events-none rounded-md px-2 py-1" style={{ background: theme.toolbar.panel, color: theme.node.muted }}>{editing?'左键环绕 · 右键平移 · 滚轮推进':step==='preview'?'预演不改变已保存场景':'保留设定的原始输出尺寸'}</span><Select<"front" | "back" | "left" | "right" | "top" | "perspective"> size="small" aria-label="常用视角" placeholder="切换视角" value={null} disabled={!ready || busy || !editing} onChange={value => runtime.current?.view(value)} options={[{ value: "perspective", label: "透视" }, { value: "front", label: "正面" }, { value: "back", label: "背面" }, { value: "left", label: "左侧" }, { value: "right", label: "右侧" }, { value: "top", label: "俯视" }]} /></div>
+                <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 text-xs"><span className="rounded-md px-2 py-1" style={{ background: theme.toolbar.panel, color: theme.node.muted }}>{editing ? transform === "select" ? '单击选择 · 双击聚焦 · 拖动环绕' : `${object?.locked ? '物体已锁定' : !object ? '先单击选择物体' : object.visible === false ? '先显示物体' : '拖动彩色轴调整'} · 右键平移${snap ? ' · 吸附已开' : ''}` : step==='preview'?'预演不改变已保存场景':'保留设定的原始输出尺寸'}</span><Select<"front" | "back" | "left" | "right" | "top" | "perspective"> className="pointer-events-auto" size="small" aria-label="常用视角" placeholder="切换视角" value={null} disabled={!ready || busy || !editing} onChange={value => runtime.current?.view(value)} options={[{ value: "perspective", label: "透视" }, { value: "front", label: "正面" }, { value: "back", label: "背面" }, { value: "left", label: "左侧" }, { value: "right", label: "右侧" }, { value: "top", label: "俯视" }]} /></div>
             </div>
             <aside className={`${step==='stage'||step==='shots'?'':'hidden'} min-h-0 space-y-4 overflow-y-auto pr-1 ${step==='stage'?'md:max-h-[clamp(300px,40vh,520px)]':'md:max-h-[clamp(180px,22vh,300px)]'}`} aria-label="导演台设置">
                 <Segmented block size="small" aria-label="设置分类" value={settings} onChange={value => setSettings(value as typeof settings)} options={[{ value: "object", label: "物体" }, { value: "camera", label: "镜头" }, { value: "light", label: "环境" }]} />

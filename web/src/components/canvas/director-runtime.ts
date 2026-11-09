@@ -67,6 +67,7 @@ function buildObject(object: DirectorObject) {
 }
 
 export type DirectorRuntime = ReturnType<typeof createDirectorRuntime>;
+export type DirectorTool = "select" | "translate" | "rotate" | "scale";
 export function createDirectorRuntime(container: HTMLElement, initial: DirectorScene, callbacks: { camera: (camera: DirectorScene["camera"]) => void; object: (id: string, patch: Partial<DirectorObject>) => void; select: (id: string | null) => void; error: (message: string) => void }) {
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true });
     renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -81,6 +82,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     const editor = new THREE.PerspectiveCamera(45, 1, 0.01, 10000); editor.position.set(6, 5, 8);
     const controls = new OrbitControls(shot, surface); controls.target.fromArray(initial.camera.target);
     const transform = new TransformControls(shot, surface); helpers.add(transform.getHelper());
+    let tool: DirectorTool = "select";
     const cameraHelper = new THREE.CameraHelper(shot); helpers.add(cameraHelper);
     const selection = new THREE.Box3Helper(new THREE.Box3(), 0xd5a454); helpers.add(selection); selection.visible = false;
     const paths = new THREE.Group(); helpers.add(paths);
@@ -117,8 +119,11 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
     }
     const render = () => { if (!pending && !disposed) pending = requestAnimationFrame(() => { pending = 0; draw(); }); };
     const commitCamera = () => { if (syncing || !interactive) return; if (mode === "camera") callbacks.camera({ ...state.camera, position: shot.position.toArray(), target: controls.target.toArray() }); else editorTarget.copy(controls.target); };
-    controls.addEventListener("change", render); controls.addEventListener("end", commitCamera);
-    transform.addEventListener("dragging-changed", event => { controls.enabled = !event.value; });
+    let orbitChanged = false;
+    controls.addEventListener("start", () => { orbitChanged = false; });
+    controls.addEventListener("change", () => { if (!syncing) orbitChanged = true; render(); });
+    controls.addEventListener("end", () => { if (orbitChanged) commitCamera(); orbitChanged = false; });
+    transform.addEventListener("dragging-changed", event => { controls.enabled = !event.value && interactive && !capturing; });
     transform.addEventListener("change", render);
     transform.addEventListener("mouseUp", () => {
         const object = transform.object;
@@ -131,8 +136,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         }
     });
     const down = (event: PointerEvent) => { pointerStart = event.button === 0 ? [event.clientX, event.clientY] : null; };
-    const up = (event: PointerEvent) => {
-        if (!interactive || event.button !== 0 || !pointerStart || Math.hypot(event.clientX - pointerStart[0], event.clientY - pointerStart[1]) > 4 || transform.axis) return;
+    const pick = (event: MouseEvent) => {
         const bounds = renderer.domElement.getBoundingClientRect(), x = event.clientX - bounds.left, y = bounds.height - (event.clientY - bounds.top);
         if (mode === "scene") { const w = Math.min(width * 0.32, 260, height * 0.32 * shot.aspect); if (x >= width - w - 12 && x <= width - 12 && y >= 12 && y <= 12 + w / shot.aspect) return; }
         const rect = mode === "camera" ? viewRect() : { x: 0, y: 0, width, height };
@@ -140,10 +144,16 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         pointer.set((x - rect.x) / rect.width * 2 - 1, (y - rect.y) / rect.height * 2 - 1); raycaster.setFromCamera(pointer, liveCamera());
         let hit: THREE.Object3D | null | undefined = raycaster.intersectObjects([...objects.values()].filter(object => object.visible), true)[0]?.object;
         while (hit && !hit.userData.directorId) hit = hit.parent;
-        callbacks.select(hit?.userData.directorId || null);
+        return (hit?.userData.directorId as string | undefined) || null;
     };
+    const up = (event: PointerEvent) => {
+        const start = pointerStart; pointerStart = null;
+        if (!interactive || event.button !== 0 || !start || Math.hypot(event.clientX - start[0], event.clientY - start[1]) > 4 || transform.axis) return;
+        const id = pick(event); if (id !== undefined) callbacks.select(id);
+    };
+    const doubleClick = (event: MouseEvent) => { if (!interactive || transform.axis) return; const id = pick(event); if (id) { callbacks.select(id); frame(undefined, id); } };
     const contextLost = (event: Event) => { event.preventDefault(); callbacks.error("三维渲染已中断，请关闭导演台后重新打开；场景设置已保留"); };
-    surface.addEventListener("pointerdown", down); surface.addEventListener("pointerup", up); renderer.domElement.addEventListener("webglcontextlost", contextLost);
+    surface.addEventListener("pointerdown", down); surface.addEventListener("pointerup", up); surface.addEventListener("dblclick", doubleClick); renderer.domElement.addEventListener("webglcontextlost", contextLost);
     const resize = new ResizeObserver(() => { width = Math.max(1, container.clientWidth); height = Math.max(1, container.clientHeight); renderer.setSize(width, height, false); renderer.domElement.style.width = "100%"; renderer.domElement.style.height = "100%"; editor.aspect = width / height; editor.updateProjectionMatrix(); render(); }); resize.observe(container);
     function update(next: DirectorScene, selection: string | null) {
         state = next; selected = selection; syncing = true;
@@ -161,7 +171,7 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
                 });
             }
             const target = selected && objects.get(selected), editable = next.objects.find(item => item.id === selected);
-            if (interactive && target && editable?.visible !== false && !editable?.locked) { if (transform.object !== target) transform.attach(target); } else transform.detach();
+            if (interactive && tool !== "select" && target && editable?.visible !== false && !editable?.locked) { if (transform.object !== target) transform.attach(target); } else { transform.detach(); transform.axis = null; }
             shot.aspect = next.width / next.height; shot.setFocalLength(next.camera.lens); shot.position.fromArray(next.camera.position); shot.lookAt(new THREE.Vector3(...next.camera.target)); shot.updateProjectionMatrix();
             editor.fov = shot.fov; editor.updateProjectionMatrix();
             if (mode === "camera") { controls.target.fromArray(next.camera.target); controls.update(); }
@@ -200,7 +210,9 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
         update,
         interactive(value: boolean) { if (interactive === value) return; interactive = value; controls.enabled = value && !capturing; transform.enabled = value && !capturing; update(state, selected); },
         mode(value: "camera" | "scene") { if (mode === "scene") editorTarget.copy(controls.target); mode = value; controls.object = liveCamera(); transform.camera = liveCamera(); syncing = true; controls.target.copy(mode === "camera" ? new THREE.Vector3(...state.camera.target) : editorTarget); controls.update(); syncing = false; update(state,selected); },
-        transform(value: "translate" | "rotate" | "scale") { transform.setMode(value); render(); },
+        transform(value: DirectorTool) { tool = value; if (value !== "select") transform.setMode(value); update(state, selected); },
+        space(value: "world" | "local") { transform.setSpace(value); render(); },
+        snap(value: boolean) { transform.setTranslationSnap(value ? 0.1 : null); transform.setRotationSnap(value ? THREE.MathUtils.degToRad(15) : null); transform.setScaleSnap(value ? 0.1 : null); render(); },
         focus(id?: string | null) { frame(undefined, id); },
         view(value: "front" | "back" | "left" | "right" | "top" | "perspective") { const axes = { front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0], top: [0, 1, 0.001], perspective: [1, 0.6, 1] }; frame(new THREE.Vector3(...axes[value]).normalize(), selected); },
         ground(id: string) { const object = objects.get(id); if (!object || state.objects.find(item => item.id === id)?.locked) return; const bounds = new THREE.Box3().setFromObject(object); callbacks.object(id, { position: [object.position.x, object.position.y - bounds.min.y, object.position.z] }); },
@@ -243,6 +255,6 @@ export function createDirectorRuntime(container: HTMLElement, initial: DirectorS
                 return blob;
             } finally {scene.background=background;floor.visible=floorVisible;scene.overrideMaterial=override;renderer.toneMapping=tone;materials.forEach((material,mesh)=>{mesh.material=material;});if(composer){composer.passes.forEach(pass=>pass.dispose());composer.dispose();}temporary.forEach(material=>material.dispose()); capturing = false; helpers.visible = true; controls.enabled = interactive; transform.enabled = interactive; if (!disposed) { renderer.setSize(width, height, false); render(); } }
         },
-        dispose() { disposed = true; cancelAnimationFrame(pending); resize.disconnect(); controls.dispose(); transform.dispose(); surface.removeEventListener("pointerdown", down); surface.removeEventListener("pointerup", up); surface.remove(); renderer.domElement.removeEventListener("webglcontextlost", contextLost); disposeObject(scene); key.shadow.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); objects.clear(); },
+        dispose() { disposed = true; cancelAnimationFrame(pending); resize.disconnect(); controls.dispose(); transform.dispose(); surface.removeEventListener("pointerdown", down); surface.removeEventListener("pointerup", up); surface.removeEventListener("dblclick", doubleClick); surface.remove(); renderer.domElement.removeEventListener("webglcontextlost", contextLost); disposeObject(scene); key.shadow.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); objects.clear(); },
     };
 }

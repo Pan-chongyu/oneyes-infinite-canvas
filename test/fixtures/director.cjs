@@ -66,6 +66,58 @@ app.whenReady().then(async()=>{
   assert.deepEqual(await js('directorTest.events()'),clean,'dialog context menu must not reach the node or canvas');
  };
  const shortcut=async(keyCode,modifiers=[])=>{await js('window.directorKeyUp=false;window.addEventListener("keyup",()=>requestAnimationFrame(()=>{window.directorKeyUp=true}),{once:true,capture:true});document.querySelector("[data-director-viewport]").focus()');win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});await wait('window.directorKeyUp');};
+ const verifyOperations=async()=>{
+  await step('布景');
+  const original=await js('directorTest.state().nodes[0].metadata.directorScene');
+  const scene={...structuredClone(original),camera:{position:[0,0,5],target:[0,0,0],lens:50,roll:0},objects:[{...structuredClone(original.objects[0]),kind:'box',name:'操作测试方块',position:[0,0,0],rotation:[0,0,90],scale:[1,1,1],locked:false,visible:true}],shots:[]};
+  await js(`directorTest.remote(${JSON.stringify(scene)})`);await shortcut('Q');
+  await wait('document.querySelector("button[aria-label=选择]").getAttribute("aria-pressed")==="true"');
+  const controls='[data-director-controls]';
+  await js('document.querySelector("[data-director-viewport]").scrollIntoView({block:"center"})');
+  const rect=()=>js(`(()=>{const rect=document.querySelector(${JSON.stringify(controls)}).getBoundingClientRect();return{x:rect.x,y:rect.y,width:rect.width,height:rect.height}})()`);
+  const press=async(point,count=1)=>{win.webContents.sendInputEvent({type:'mouseMove',...point});win.webContents.sendInputEvent({type:'mouseDown',...point,button:'left',clickCount:count});win.webContents.sendInputEvent({type:'mouseUp',...point,button:'left',clickCount:count});await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');};
+  let bounds=await rect();await press({x:Math.round(bounds.x+8),y:Math.round(bounds.y+8)});
+  await wait('document.querySelector("[data-director-selection]").textContent.includes("未选中物体")');
+  await shortcut('Delete');assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),scene,'blank click clears selection and deletion must not remove a different object');
+  bounds=await rect();await press({x:Math.round(bounds.x+bounds.width/2),y:Math.round(bounds.y+bounds.height/2)});
+  await wait('document.querySelector("input[aria-label=物体名称]")?.value==="操作测试方块"');
+  await shortcut('W');await click('变换吸附');await wait('document.querySelector("button[aria-label=变换吸附]").getAttribute("aria-pressed")==="true"');
+  const drag=async(vertical=false)=>{
+   await js('document.querySelector("[data-director-viewport]").scrollIntoView({block:"center"})');const box=await rect();
+   const camera=await js('directorTest.state().nodes[0].metadata.directorScene.camera'),object=await js('directorTest.state().nodes[0].metadata.directorScene.objects[0]');
+   // Front camera: project the selected object's origin, then grab its X handle.
+   const unit=box.height/(2*(35/(scene.width/scene.height))/(2*camera.lens)*camera.position[2]);
+   const origin={x:box.x+box.width/2+object.position[0]*unit,y:box.y+box.height/2-object.position[1]*unit};
+   const start={x:Math.round(origin.x+(vertical?0:box.height*0.09)),y:Math.round(origin.y-(vertical?box.height*0.09:0))},end={x:start.x+(vertical?0:23),y:start.y-(vertical?23:0)};
+   win.webContents.sendInputEvent({type:'mouseMove',...start});await js('new Promise(resolve=>requestAnimationFrame(resolve))');
+   win.webContents.sendInputEvent({type:'mouseDown',...start,button:'left',clickCount:1});win.webContents.sendInputEvent({type:'mouseMove',...end,button:'left'});win.webContents.sendInputEvent({type:'mouseUp',...end,button:'left',clickCount:1});
+   await wait(`JSON.stringify(directorTest.state().nodes[0].metadata.directorScene.objects[0].position)!==${JSON.stringify(JSON.stringify(object.position))}`);
+   return js('directorTest.state().nodes[0].metadata.directorScene.objects[0].position');
+  };
+  await screenshot('oneyes-director-before-drag.png');const world=await drag();assert.ok(world[0]>0);assert.equal(world[1],0);assert.ok(Math.abs(world[0]*10-Math.round(world[0]*10))<1e-8,'real gizmo movement snaps to tenths');
+  await click('撤销');assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene'),scene,'one gizmo gesture is one undo step');await click('重做');
+  await pointerClick('[aria-label="变换坐标系"]');await wait('Array.from(document.querySelectorAll(".ant-select-item-option")).some(item=>item.textContent==="物体坐标")');await js('Array.from(document.querySelectorAll(".ant-select-item-option")).find(item=>item.textContent==="物体坐标").click()');
+  const local=await drag(true);assert.ok(Math.abs(local[0]-world[0])<1e-8);assert.ok(local[1]>0,'local X follows a rotated object instead of the world X axis');
+  await shortcut('E');assert.equal(await js('document.querySelector("button[aria-label=旋转]").getAttribute("aria-pressed")'),'true');
+  await shortcut('R');assert.equal(await js('document.querySelector("button[aria-label=缩放]").getAttribute("aria-pressed")'),'true');
+  assert.ok(await js('document.querySelector("[aria-label=变换坐标系]").closest(".ant-select").classList.contains("ant-select-disabled")'),'scale uses object axes explicitly');
+  await shortcut('Q');assert.ok(await js('document.querySelector("button[aria-label=变换吸附]").disabled'),'selection mode cannot start a transform');
+  await click('取消选择物体');await wait('document.querySelector("[data-director-selection]").textContent.includes("未选中物体")');
+  await shortcut('F',['shift']);const fitted=await js('directorTest.state().nodes[0].metadata.directorScene.camera');assert.ok(fitted.position.every(Number.isFinite));
+  await click('撤销');await shortcut('Q');
+  // Focus is camera-only; it never moves the subject or changes output dimensions.
+  const before=await js('directorTest.state().nodes[0].metadata.directorScene');assert.deepEqual(before.objects[0].position,local);assert.equal(before.width,scene.width);assert.equal(before.height,scene.height);
+  await click('显示全部物体');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.position[2]!==5');await click('撤销');
+  await js(`directorTest.remote(${JSON.stringify(scene)})`);bounds=await rect();
+  await press({x:Math.round(bounds.x+bounds.width/2),y:Math.round(bounds.y+bounds.height/2)},2);
+  await wait('directorTest.state().nodes[0].metadata.directorScene.camera.position[2]!==5');
+  assert.equal(await js('document.querySelector("input[aria-label=物体名称]").value'),'操作测试方块','double-click selects and focuses the actual subject');
+  assert.deepEqual(await js('directorTest.state().nodes[0].metadata.directorScene.objects'),scene.objects,'focus cannot alter geometry');
+  await click('导演台操作指南');await wait('document.querySelector(".ant-popover:not(.ant-popover-hidden)")?.textContent.includes("Shift F")');await click('导演台操作指南');
+  await shortcut('W');await click('变换吸附');await shortcut('Q');
+  await js(`directorTest.remote(${JSON.stringify(original)})`);await settings('object');await js('document.querySelector("aside[aria-label=导演台设置] button[aria-pressed]").click()');
+  await screenshot('oneyes-director-operations-light.png');
+ };
  const verifyEditing=async()=>{
   await settings('object');
   const count=await js('directorTest.state().nodes[0].metadata.directorScene.objects.length');
@@ -211,7 +263,7 @@ app.whenReady().then(async()=>{
    await js('directorTest.configure()');await click('打开导演台');await wait('document.querySelector("[data-director-viewport] canvas") && !Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()==="下一步：排镜头").disabled');
    await js('(()=>{const status=document.createElement("span");status.id="independent-animation";status.className="animate-pulse";status.textContent="其他任务处理中";document.body.append(status)})()');
    await step('排镜头');await step('布景');await js('document.querySelector("#independent-animation").remove()');
-   await phase('editing',verifyEditing);await phase('scene-exchange',verifySceneExchange);await phase('timeline',verifyTimeline);await phase('assistant',verifyAssistant);await phase('remote-scene',verifyRemote);
+   await phase('operations',verifyOperations);await phase('editing',verifyEditing);await phase('scene-exchange',verifySceneExchange);await phase('timeline',verifyTimeline);await phase('assistant',verifyAssistant);await phase('remote-scene',verifyRemote);
    const sequence=await js('directorTest.sequence()');assert.equal(sequence.progress,4);assert.deepEqual(sequence.sizes,[[317,191],[317,191],[193,311],[193,311]]);
    await click('输出取景图');await wait('directorTest.state().nodes.filter(n=>n.type==="image").length===1 && document.body.textContent.includes("已保存到画布")');
    await step('布景');await screenshot('oneyes-director-light.png');await step('排镜头');await screenshot('oneyes-director-shots.png');await step('预演');await screenshot('oneyes-director-preview.png');await step('导出');await screenshot('oneyes-director-deliver.png');
