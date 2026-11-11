@@ -5,7 +5,7 @@ globalThis.localStorage = { getItem: key => values.get(key) ?? null, setItem: (k
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { queryClient } = await import("@/lib/query-client");
 const { fetchModelCatalog } = await import("./model-catalog");
-const { configureModelDefaults, defaultConfig, normalizeOneYesConfig, selectableModelsByCapability, syncChannelModels, useConfigStore } = await import("@/stores/use-config-store");
+const { configureModelDefaults, defaultConfig, GROK_VIDEO_CHANNEL_ID, normalizeOneYesConfig, resolveModelRequestConfig, selectableModelsByCapability, syncChannelModels, useConfigStore } = await import("@/stores/use-config-store");
 const { useModelCatalogStore } = await import("@/stores/use-model-catalog-store");
 const { useOneYesAccountStore } = await import("@/stores/use-oneyes-account-store");
 type ModelChannel = typeof defaultConfig.channels[number];
@@ -44,6 +44,33 @@ test("discovery adds and classifies upstream models while keeping exclusions, cu
     assert.equal(returned.models.find(model => model.name === "old-image")?.unavailable, undefined);
     assert.equal(config.videoSeconds, defaultConfig.videoSeconds);
     assert.equal(config.vquality, defaultConfig.vquality);
+});
+
+test("SD video variants enter their own group with exact upstream IDs and preserve saved preferences", () => {
+    const names = ["sd-2.5-fullblood", "sd-2.5-fullblood-line2", "sd-2.5-fullblood [720p 5-30s ¥6.028/条]", "sd-2.5-fullblood-line2 [720p 5-30s ¥4.378/条]"];
+    const saved: ModelChannel = { ...channel("fixture-video-key"), id: GROK_VIDEO_CHANNEL_ID, oneYes: { platform: "grok", accountId: 7, keyId: 3, groupId: 4, groupName: "Video" }, models: [] };
+    const synced = syncChannelModels(saved, [...names, "grok-imagine-video", "sdxl-1.0", "gpt-5.5"]);
+    const selected = `${saved.id}::${names[3]}`;
+    const config = configureModelDefaults(normalizeOneYesConfig({ ...defaultConfig, channels: [channel(), synced], videoModel: selected }));
+    assert.deepEqual(selectableModelsByCapability(config, "video"), [...names, "grok-imagine-video"].map(name => `${saved.id}::${name}`));
+    assert.equal(config.videoModel, selected);
+    assert.equal(config.videoSeconds, defaultConfig.videoSeconds);
+    assert.equal(config.vquality, defaultConfig.vquality);
+    for (const name of names) {
+        const request = resolveModelRequestConfig(config, `${saved.id}::${name}`);
+        assert.equal(request.model, name);
+        assert.equal(request.apiKey, saved.apiKey);
+        assert.equal(request.baseUrl, saved.baseUrl);
+    }
+    assert.deepEqual(normalizeOneYesConfig(JSON.parse(JSON.stringify(config))), config);
+    const edited = syncChannelModels({ ...saved, excludedModels: [names[1]], models: [
+        { name: names[0], capability: "text", manual: true },
+        { name: names[2], capability: "video", script: "return result" },
+    ] }, names);
+    assert.equal(edited.models.find(model => model.name === names[0])?.capability, "text");
+    assert.equal(edited.models.find(model => model.name === names[0])?.manual, true);
+    assert.equal(edited.models.find(model => model.name === names[2])?.script, "return result");
+    assert.ok(!edited.models.some(model => model.name === names[1]));
 });
 
 test("cached and simultaneous reads share one native request, explicit refresh is fresh and credentials stay out of cache keys", async () => {

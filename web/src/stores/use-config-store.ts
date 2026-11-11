@@ -183,7 +183,7 @@ const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "im
 export function guessCapability(name: string): ModelCapability {
     const value = name.toLowerCase();
     if (/^jev(?:-|$)/.test(value)) return "decision";
-    if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword)) || /^sd[\s_-]*\d+(?:\.\d+)?$/.test(value)) return "video";
+    if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword)) || /^sd[\s_-]*\d+(?:\.\d+)?$/.test(value) || /^sd[\s_-]*2(?:\.\d+)?[-_\s[(（]/.test(value)) return "video";
     if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
     if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
     return "text";

@@ -77,6 +77,34 @@ app.whenReady().then(async () => {
         await js('document.querySelector(".ant-drawer-footer .ant-btn-primary").click()');
         await wait('!document.querySelector(".ant-drawer-content-wrapper:not(.ant-drawer-content-wrapper-hidden)")');
         assert.deepEqual(await js('modelTest.state().config.models'), availableBeforeCleanup, 'cleanup after failed refresh must keep all available local models');
+        const variants = ['sd-2.5-fullblood', 'sd-2.5-fullblood-line2', 'sd-2.5-fullblood [720p 5-30s ¥6.028/条]', 'sd-2.5-fullblood-line2 [720p 5-30s ¥4.378/条]'];
+        status = 200; names = [...variants, 'grok-imagine-video', 'sdxl-1.0', 'gpt-5.5'];
+        await js('modelTest.expire();modelTest.video();modelTest.sync()');
+        await wait('!modelTest.state().syncing && modelTest.state().config.channels.find(channel=>channel.id==="oneyes-minimax").models.length === 5');
+        assert.equal(await js('modelTest.state().config.videoModel'), 'oneyes-minimax::grok-imagine-video');
+        win.show(); win.focus();
+        await wait('document.hasFocus()');
+        for (const name of variants) {
+            await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('document.querySelectorAll("[role=option]").length === 10');
+            const labels = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent.trim())');
+            for (const variant of variants) assert.ok(labels.includes(`${variant}（OneYes Grok）`), variant);
+            assert.ok(labels.every(label => !/sdxl|gpt-5/.test(label)));
+            await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.textContent.trim()===${JSON.stringify(`${name}（OneYes Grok）`)}).focus()`);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+            await wait(`modelTest.state().config.videoModel === ${JSON.stringify(`oneyes-minimax::${name}`)} && !document.querySelector("[role=listbox]")`);
+            const request = await js('modelTest.request()');
+            assert.equal(request.model, name);
+            assert.equal(request.apiKey, 'fixture-model-key');
+        }
+        await wait(`modelTest.state().config.videoModel === ${JSON.stringify(`oneyes-minimax::${variants[3]}`)}`);
+        await js('modelTest.restore()');
+        assert.equal(await js('modelTest.state().config.videoModel'), `oneyes-minimax::${variants[3]}`);
+        assert.equal(JSON.parse(stored).state.config.videoModel, `oneyes-minimax::${variants[3]}`);
+        console.log('NATIVE_VIDEO_MODEL_VARIANTS_PICKER_EXACT_IDS_AND_GROUP_RESTORE_OK');
         console.log('NATIVE_MODEL_CATALOG_AUTO_SYNC_CACHE_DEFAULTS_ERRORS_AND_DRAFTS_OK');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }

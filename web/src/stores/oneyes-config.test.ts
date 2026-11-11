@@ -66,11 +66,14 @@ test("first launch offers setup only without configured models, respecting later
 });
 
 test("known OneYes video catalog names are categorized as video models", () => {
-    for (const name of ["SD2.0", "SD2.5", "gemini-omni-flash", "gemini-omni-flash-1.1", "grok-imagine-video", "grok-imagine-video-1.5", "kling-3.0-turbo", "minimax-h3", "seedance-2.0-fast官方版", "seedance-2.0-mini官方版", "seedance-2.0官方版", "seedance-2.5官方版", "veo-3.1", "veo-3.1-fast", "wan3.0-video", "wan3.0-video-prime"]) {
+    for (const name of ["SD2.0", "SD2.5", "sd-2.5-fullblood", "sd-2.5-fullblood-line2", "sd-2.5-fullblood [720p 5-30s ¥6.028/条]", "sd-2.5-fullblood-line2 [720p 5-30s ¥4.378/条]", "gemini-omni-flash", "gemini-omni-flash-1.1", "grok-imagine-video", "grok-imagine-video-1.5", "kling-3.0-turbo", "minimax-h3", "seedance-2.0-fast官方版", "seedance-2.0-mini官方版", "seedance-2.0官方版", "seedance-2.5官方版", "veo-3.1", "veo-3.1-fast", "wan3.0-video", "wan3.0-video-prime"]) {
         assert.equal(guessCapability(name), "video", name);
     }
     assert.equal(guessCapability("gpt-image-2"), "image");
     assert.equal(guessCapability("gpt-5.5"), "text");
+    assert.equal(guessCapability("sdxl-1.0"), "image");
+    assert.equal(guessCapability("stable-diffusion-3.5"), "image");
+    for (const name of ["sd-3.5-large", "sd2xl", "sd-2.5xl"]) assert.notEqual(guessCapability(name), "video", name);
 });
 
 test("the legacy video channel keeps saved model references while adopting the Grok label", () => {
