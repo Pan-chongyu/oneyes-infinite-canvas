@@ -24,11 +24,22 @@ app.whenReady().then(async () => {
     const referenceDir = process.env.CANVAS_IMAGE_REFERENCE_DIR;
     const references = referenceDir ? readdirSync(referenceDir).filter(name => /\.(png|jpe?g)$/i.test(name)).sort().map(name => readFileSync(resolve(referenceDir, name))) : [];
     let attemptedPosts = 0;
-    const signedImage = 'https://images.example.test/restarted.png?signature=a%2Fb%3D&x=1&x=2';
+    const signedImages = [0, 1, 2].map(index => `https://images.example.test/restarted-${index}.png?signature=a%2Fb%3D&x=1&x=2`);
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+    const pendingImages = new Map();
     const imageServer = createServer((req, res) => {
         assert.equal(req.headers.authorization, undefined); assert.equal(req.headers.cookie, undefined);
-        res.setHeader('Content-Type', 'image/png'); res.end(png); // Deliberately no Access-Control-Allow-Origin.
+        res.setHeader('Content-Type', 'image/png'); // Deliberately no Access-Control-Allow-Origin.
+        if (phase === 'partial' && req.url.includes('index=')) {
+            const index = Number(new URL(req.url, 'http://fixture').searchParams.get('index'));
+            pendingImages.set(index, res);
+            // A serial downloader cannot pass: every sibling must start before any finishes.
+            if (pendingImages.size === 3) for (const index of [2, 1, 0]) {
+                const response = pendingImages.get(index);
+                response.statusCode = index === 0 ? 503 : 200;
+                response.end(index === 0 ? undefined : png);
+            }
+        } else res.end(png);
     });
     // Some hosts assign ephemeral ports forbidden by Fetch/Chromium (e.g. 6666).
     // Probe with the standard Fetch port rules instead of weakening browser security.
@@ -70,13 +81,14 @@ app.whenReady().then(async () => {
                 return Response.json({ task_id: 'imgtask_restart', status: 'processing', expires_at: 1 }, { status: 202 });
             }
             if (phase === 'submit') return new Response(null, { status: 502 });
-            return Response.json({ task_id: 'imgtask_restart', status: 'completed', result: { data: [{ url: signedImage }] } });
+            return Response.json({ task_id: 'imgtask_restart', status: 'completed', result: { data: signedImages.map(url => ({ url })) } });
         }
         if (url.pathname === '/image-download') {
             const target = route(request.url, resolve('web/dist'));
             return downloadImage(request, target.image, async (url, options) => {
-                assert.equal(url, signedImage, 'signed object URL must survive the native route'); downloads++;
-                return net.fetch(imageOrigin, options);
+                const index = signedImages.indexOf(url);
+                assert.notEqual(index, -1, 'signed object URL must survive the native route'); downloads++;
+                return net.fetch(`${imageOrigin}?index=${index}`, options);
             });
         }
         return net.fetch(`${base}${url.pathname === '/' ? '/__image-restart' : url.pathname}${url.search}`);
@@ -102,15 +114,25 @@ app.whenReady().then(async () => {
             assert.ok(await js('restartTest.node().metadata.images[0].imageTaskId'));
             await js('restartTest.refresh()');
             await wait('restartTest.state().tasks[0].status === "waiting"');
+        } else if (phase === 'partial') {
+            await wait('restartTest.state().tasks[0]?.status === "waiting" && restartTest.state().tasks[0].images.length === 2');
+            assert.deepEqual(await js('restartTest.state().tasks[0].images.map(image => image.resultIndex)'), [1, 2]);
+            assert.equal(pendingImages.size, 3, 'native downloads overlap, including the failed first image');
+            assert.equal(downloads, 3);
+            assert.equal(posts(), 1, 'partial failure must not regenerate');
+            assert.ok(await js('restartTest.allBlobs()'));
         } else {
             assert.equal(await js('restartTest.keyRestored()'), true, 'encrypted Key must restore before recovery');
             await wait('restartTest.state().tasks[0]?.status === "completed"');
+            assert.deepEqual(await js('restartTest.state().tasks[0].images.map(image => image.resultIndex)'), [0, 1, 2]);
             await wait('restartTest.node().metadata.status === "success" && !!document.querySelector("[data-node-id=restart-node] img")');
             assert.ok(await js('restartTest.blob()'), 'downloaded Blob survives process restart');
+            assert.ok(await js('restartTest.allBlobs()'), 'every original image is intact after out-of-order recovery');
             assert.equal(posts(), 1, 'restart must never repeat a paid POST');
             assert.equal(downloads, phase === 'restore' ? 1 : 0, 'restored Blob must be reused on the next restart');
             assert.equal(await js(`fetch(${JSON.stringify(imageOrigin)}).then(() => false, () => true)`), true, 'fixture must reproduce the object-store CORS rejection');
             await js('restartTest.flush()');
+            if (phase === 'restore') await js('restartTest.loseCheckpoint()');
         }
         await win.webContents.session.flushStorageData();
         console.log(`ASYNC_IMAGE_RESTART_OK: ${phase}`);

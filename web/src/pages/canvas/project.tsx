@@ -541,14 +541,24 @@ function InfiniteCanvasPage() {
         void (async () => {
             await durableImageTasks.initialize();
             if (cancelled) return;
-            const tasks = await Promise.all([...durableImageTasks.tasks.values()].filter(task => task.target?.projectId === projectId && nodesRef.current.some(node => node.id === task.target?.nodeId && (node.metadata?.imageTaskId === task.id || node.metadata?.images?.some(image => image.imageTaskId === task.id)))).map(async task => ({ task, image: task.status === "completed" && task.images[0] ? await storedTaskImage(task.images[0]) : undefined })));
+            const nodesById = new Map(nodesRef.current.map(node => [node.id, node]));
+            const tasks = await Promise.all([...durableImageTasks.tasks.values()].filter(task => {
+                const node = nodesById.get(task.target?.nodeId || "");
+                return task.target?.projectId === projectId && node && (node.metadata?.imageTaskId === task.id || node.metadata?.images?.some(image => image.imageTaskId === task.id));
+            }).map(async task => ({ task, image: task.status === "completed" && task.images[0] ? await storedTaskImage(task.images[0]) : undefined })));
             if (cancelled) return;
+            const tasksByNode = new Map<string, typeof tasks>();
+            for (const item of tasks) {
+                const id = item.task.target!.nodeId;
+                const group = tasksByNode.get(id) || [];
+                group.push(item); tasksByNode.set(id, group);
+            }
             setNodes(previous => {
                 let changed = false;
                 const next = previous.map(node => {
                     const request = generationRequestsRef.current.get(node.id);
                     let updated = failMissingCanvasImageTasks(node, durableImageTasks.tasks, projectId, Boolean(request && !request.controller.signal.aborted));
-                    for (const { task, image } of tasks) updated = applyCanvasImageTask(updated, task, image);
+                    for (const { task, image } of tasksByNode.get(node.id) || []) updated = applyCanvasImageTask(updated, task, image);
                     if (updated !== node) changed = true;
                     return updated;
                 });

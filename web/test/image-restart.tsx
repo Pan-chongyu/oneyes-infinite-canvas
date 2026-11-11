@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App, ConfigProvider } from "antd";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import localforage from "localforage";
 import "@/i18n";
 import "@/styles/globals.css";
 import CanvasProject from "@/pages/canvas/project";
@@ -110,6 +111,15 @@ Object.assign(window, { restartTest: {
     keyRestored: () => useConfigStore.getState().config.channels[0].apiKey === "fixture-private-key",
     flush: flushCanvasStorage,
     blob: async () => { const image = useImageTaskStore.getState().tasks[0]?.images[0]; return image && (await getImageBlob(image.storageKey))?.size; },
+    allBlobs: async () => (await Promise.all(useImageTaskStore.getState().tasks[0].images.map(async image => {
+        const blob = await getImageBlob(image.storageKey);
+        return blob && btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()))) === "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    }))).every(Boolean),
+    loseCheckpoint: async () => {
+        // Simulate exiting after original persistence but before its final task checkpoint.
+        const task = useImageTaskStore.getState().tasks[0];
+        await localforage.createInstance({ name: "infinite-canvas", storeName: "image_tasks" }).setItem(task.id, { ...task, status: "waiting", images: task.images.filter(image => image.resultIndex !== 0) });
+    },
     refresh: () => imageTasks.refresh(useImageTaskStore.getState().tasks[0].id),
     validateUploads: async () => {
         const actual = [];

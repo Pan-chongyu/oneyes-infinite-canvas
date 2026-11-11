@@ -41,6 +41,13 @@ app.whenReady().then(async () => {
             assert.ok((await js('asyncImageTest.blob()')).bytes > 0);
             assert.equal(await js('asyncImageTest.posts()'), 1);
         }
+        await js('asyncImageTest.startPreviewProbe()');
+        await wait('asyncImageTest.previewProbe().stored && asyncImageTest.previewProbe().blocked && asyncImageTest.previewProbe().cached');
+        assert.equal(await js('asyncImageTest.previewProbe().ready'), false, 'slow thumbnails must not block original persistence or cache recovery');
+        await js('asyncImageTest.finishPreviewProbe()');
+        await wait('asyncImageTest.previewProbe().ready');
+        await js('asyncImageTest.cleanupPreviewProbe()');
+        console.log('IMAGE_ORIGINAL_FAST_PATH_OK: original dimensions and bytes intact, durable cache reused, preview runs independently');
         await win.webContents.session.clearStorageData();
         await win.loadURL(new URL('/__image-generation', process.argv[2]).href);
         await wait('window.generationTest && Array.from(document.querySelectorAll("[data-node-id=generate] button")).some(b => b.textContent.trim() === "开始生成")');

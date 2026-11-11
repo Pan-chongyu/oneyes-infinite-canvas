@@ -24,21 +24,33 @@ const previewUrls = new Map<string, string>();
 const previewListeners = new Set<() => void>();
 let previewRevision = 0;
 let previewQueue: Promise<unknown> = Promise.resolve();
+const previewJobs = new Map<string, object>();
 const IMAGE_PREVIEW_VERSION = 1;
 const IMAGE_RESPONSE_ERROR = "ImageResponseError";
 
 type StoredImagePreview = { version: number; blob?: Blob };
 
-type ImageReadOptions = { signal?: AbortSignal };
+type ImageReadOptions = { signal?: AbortSignal; storageKey?: string };
 
 export async function uploadImage(input: string | Blob, options?: ImageReadOptions): Promise<UploadedImage> {
+    throwIfAborted(options?.signal);
+    if (options?.storageKey) {
+        const cached = await getImageBlob(options.storageKey);
+        if (cached) {
+            const url = await resolveImageUrl(options.storageKey);
+            const meta = await loadImageMeta(url, options);
+            if (!meta) throw new Error(i18n.t("common.imageReadFailed"));
+            queueImagePreview(options.storageKey);
+            return { url, storageKey: options.storageKey, ...meta, bytes: cached.size, mimeType: cached.type.startsWith("image/") ? cached.type : "" };
+        }
+    }
     if (typeof input !== "string") return storeImage(input, options);
 
     let blob: Blob;
     try {
         blob = await fetchImageBlob(input, options);
     } catch (error) {
-        if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || !/^https?:\/\//i.test(input)) throw error;
+        if (options?.storageKey || options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || !/^https?:\/\//i.test(input)) throw error;
         const meta = await loadImageMeta(input, options);
         if (!meta) throw error;
         return { url: input, width: meta.width, height: meta.height, bytes: 0, mimeType: "" };
@@ -47,7 +59,7 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
 }
 
 async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<UploadedImage> {
-    const storageKey = `image:${nanoid()}`;
+    const storageKey = options?.storageKey || `image:${nanoid()}`;
     const url = URL.createObjectURL(blob);
     try {
         const meta = await loadImageMeta(url, options);
@@ -56,7 +68,7 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         await store.setItem(storageKey, blob);
         throwIfAborted(options?.signal);
         objectUrls.set(storageKey, url);
-        await storeImagePreview(storageKey, blob);
+        queueImagePreview(storageKey);
         return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
     } catch (error) {
         URL.revokeObjectURL(url);
@@ -169,17 +181,28 @@ export async function ensureImagePreview(storageKey?: string) {
 
 // 缩略图生成排成一队，避免一次打开大量图片时同时解码。
 function queueImagePreview(storageKey: string) {
+    if (previewJobs.has(storageKey) || previewUrls.has(storageKey)) return;
+    const job = {};
+    previewJobs.set(storageKey, job);
     previewQueue = previewQueue
         .then(async () => {
+            if (previewJobs.get(storageKey) !== job) return;
             const original = await getImageBlob(storageKey);
-            if (original) await storeImagePreview(storageKey, original);
+            if (original) await storeImagePreview(storageKey, original, () => previewJobs.get(storageKey) === job);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => { if (previewJobs.get(storageKey) === job) previewJobs.delete(storageKey); });
 }
 
-async function storeImagePreview(storageKey: string, original: Blob) {
+async function storeImagePreview(storageKey: string, original: Blob, current = () => true) {
+    if (!current()) return;
+    const stored = await previewStore.getItem<StoredImagePreview>(storageKey).catch(() => null);
+    if (!current()) return;
+    if (stored?.version === IMAGE_PREVIEW_VERSION) return stored.blob ? cacheImagePreview(storageKey, stored.blob) : undefined;
     const preview = await createImageThumbnail(original).catch(() => undefined);
+    if (!current()) return;
     await previewStore.setItem<StoredImagePreview>(storageKey, { version: IMAGE_PREVIEW_VERSION, blob: preview }).catch(() => undefined);
+    if (!current()) return;
     return preview ? cacheImagePreview(storageKey, preview) : undefined;
 }
 
@@ -192,6 +215,7 @@ function cacheImagePreview(storageKey: string, preview: Blob) {
 }
 
 async function deleteImagePreview(storageKey: string) {
+    previewJobs.delete(storageKey);
     const url = previewUrls.get(storageKey);
     if (url) URL.revokeObjectURL(url);
     previewUrls.delete(storageKey);

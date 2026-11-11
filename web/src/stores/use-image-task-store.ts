@@ -9,7 +9,9 @@ import type { ReferenceImage } from "@/types/image";
 const storage = localforage.createInstance({ name: "infinite-canvas", storeName: "image_tasks" });
 const logs = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 export const useImageTaskStore = create<{ tasks: ImageTask[]; error?: string }>(() => ({ tasks: [] }));
-let logWrites: Promise<unknown> = Promise.resolve();
+const logWrites = new Map<string, Promise<unknown>>();
+let credentialKeys: string[] = [];
+let credentialEntries: Promise<Array<{ key: string; fingerprint: string }>> = Promise.resolve([]);
 
 export const imageTasks: ImageTaskManager = new ImageTaskManager({
     storage: {
@@ -19,20 +21,23 @@ export const imageTasks: ImageTaskManager = new ImageTaskManager({
     },
     credentials: async task => {
         // Bind recovery to the original Key, even if the selected channel/account changes.
-        for (const channel of useConfigStore.getState().config.channels) {
-            if (channel.apiKey && await imageCredentialFingerprint(channel.apiKey) === task.credential) return channel.apiKey;
+        const keys = [...new Set(useConfigStore.getState().config.channels.map(channel => channel.apiKey).filter(Boolean))];
+        if (keys.length !== credentialKeys.length || keys.some((key, index) => key !== credentialKeys[index])) {
+            credentialKeys = keys;
+            credentialEntries = Promise.all(keys.map(async key => ({ key, fingerprint: await imageCredentialFingerprint(key) })));
         }
+        return (await credentialEntries).find(entry => entry.fingerprint === task.credential)?.key;
     },
     submit: (path, body, key) => imageTaskRequest(buildApiUrl("https://oneyes.ai", path), key, body),
     poll: (id, key) => imageTaskRequest(buildApiUrl("https://oneyes.ai", `/images/tasks/${encodeURIComponent(id)}`), key),
     saveImage: async (source, id) => {
-        const image = await uploadImage(source);
+        const image = await uploadImage(source, { storageKey: `image:task-${id}` });
         // Remote-only fallbacks are not durable. Retry until the Blob is saved locally.
         if (!image.storageKey) throw new Error("图片尚未保存到本机");
         return { id, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType };
     },
     completed: task => {
-        const write = logWrites.then(async () => {
+        const write = (logWrites.get(task.logId) || Promise.resolve()).then(async () => {
             const group = [...imageTasks.tasks.values()].filter(item => item.logId === task.logId);
             const images = group.flatMap(item => item.images.map(image => ({ ...image, dataUrl: "", durationMs: Date.now() - item.createdAt })));
             await logs.setItem(task.logId, {
@@ -42,7 +47,9 @@ export const imageTasks: ImageTaskManager = new ImageTaskManager({
                 imageCount: images.length, size: task.config.size, quality: task.config.quality, status: "success", images,
             });
         });
-        logWrites = write.catch(() => undefined);
+        const settled = write.catch(() => undefined);
+        logWrites.set(task.logId, settled);
+        void settled.then(() => { if (logWrites.get(task.logId) === settled) logWrites.delete(task.logId); });
         return write;
     },
     changed: tasks => useImageTaskStore.setState({ tasks }),

@@ -3,7 +3,7 @@ import { MEDIA_POLL_INTERVAL_MS } from "./media-request-policy";
 import type { ReferenceImage } from "../../types/image";
 
 export type ImageTaskTarget = { projectId: string; nodeId: string; imageId?: string };
-export type TaskImage = { id: string; storageKey: string; width: number; height: number; bytes: number; mimeType: string };
+export type TaskImage = { id: string; storageKey: string; width: number; height: number; bytes: number; mimeType: string; resultIndex?: number };
 export type ImageTask = {
     id: string;
     remoteId?: string;
@@ -57,7 +57,7 @@ export class ImageTaskManager {
     tasks = new Map<string, ImageTask>();
     private busy = new Set<string>();
     private timers = new Map<string, ReturnType<typeof setTimeout>>();
-    private listeners = new Set<() => void>();
+    private listeners = new Map<string, Set<() => void>>();
     private loading?: Promise<void>;
     private paused = new Set<string>();
     private removed = new Set<string>();
@@ -83,17 +83,19 @@ export class ImageTaskManager {
         return this.loading;
     }
 
-    private emit() {
+    private emit(id?: string) {
         this.deps.changed([...this.tasks.values()].sort((a, b) => b.createdAt - a.createdAt));
-        this.listeners.forEach(listener => listener());
+        if (id) this.listeners.get(id)?.forEach(listener => listener());
     }
     private async put(task: ImageTask) {
         if (this.removed.has(task.id)) return;
         if (this.paused.has(task.id)) task = { ...task, status: "paused", error: "已暂停取图，可继续获取原任务结果" };
+        const previous = this.tasks.get(task.id);
+        if (previous && Object.keys({ ...previous, ...task }).every(key => previous[key as keyof ImageTask] === task[key as keyof ImageTask])) return;
         await this.deps.storage.put(task);
         if (this.removed.has(task.id)) return;
         this.tasks.set(task.id, task);
-        this.emit();
+        this.emit(task.id);
     }
     private recoverable(task: ImageTask) { return !!task.remoteId && !["completed", "failed", "uncertain", "paused"].includes(task.status); }
     private schedule(id: string, ms: number) {
@@ -133,7 +135,9 @@ export class ImageTaskManager {
 
     waitFor(id: string, signal?: AbortSignal): Promise<TaskImage[]> {
         return new Promise((resolve, reject) => {
-            const done = () => { this.listeners.delete(check); signal?.removeEventListener("abort", abort); };
+            const listeners = this.listeners.get(id) || new Set<() => void>();
+            this.listeners.set(id, listeners);
+            const done = () => { listeners.delete(check); if (!listeners.size) this.listeners.delete(id); signal?.removeEventListener("abort", abort); };
             const check = () => {
                 const task = this.tasks.get(id);
                 if (task?.status === "completed") { done(); resolve(task.images); }
@@ -144,7 +148,7 @@ export class ImageTaskManager {
                 void this.pause(id);
                 reject(new DOMException("已停止等待，服务端任务可稍后继续取图", "AbortError"));
             };
-            this.listeners.add(check);
+            listeners.add(check);
             signal?.addEventListener("abort", abort, { once: true });
             if (signal?.aborted) abort(); else check();
         });
@@ -153,6 +157,8 @@ export class ImageTaskManager {
     async refresh(id: string) {
         const original = this.tasks.get(id);
         if (!original?.remoteId || this.busy.has(id) || ["completed", "failed", "uncertain", "paused"].includes(original.status)) return;
+        clearTimeout(this.timers.get(id));
+        this.timers.delete(id);
         this.busy.add(id);
         let task = original;
         try {
@@ -176,14 +182,26 @@ export class ImageTaskManager {
                 const sources = taskImageSources(value);
                 task = { ...task, status: "saving", expectedImages: sources.length, error: undefined };
                 await this.put(task);
-                for (let index = task.images.length; index < sources.length; index++) {
-                    const image = await this.deps.saveImage(sources[index], `${task.id}-${index}`);
-                    if (this.removed.has(id)) return;
-                    task = { ...task, images: [...task.images, image] };
-                    await this.put(task); // Multi-image recovery never repeats cached downloads.
-                }
+                const saved = new Map(task.images.map((image, index) => [image.resultIndex ?? index, image]));
+                let checkpoints: Promise<void> = Promise.resolve();
+                // Downloads are independent; a slow or broken first image cannot block its siblings.
+                // Serialize only local checkpoints so out-of-order completions never overwrite each other.
+                const results = await Promise.allSettled(sources.map(async (source, index) => {
+                    if (saved.has(index) || this.removed.has(id) || this.paused.has(id)) return;
+                    const image = await this.deps.saveImage(source, `${task.id}-${index}`);
+                    const checkpoint = checkpoints.then(async () => {
+                        if (this.removed.has(id)) return;
+                        saved.set(index, { ...image, resultIndex: index });
+                        task = { ...task, images: [...saved.entries()].sort(([a], [b]) => a - b).map(([, value]) => value) };
+                        await this.put(task);
+                    });
+                    checkpoints = checkpoint.catch(() => undefined);
+                    await checkpoint;
+                }));
+                const failure = results.find(result => result.status === "rejected");
+                if (failure?.status === "rejected") throw failure.reason;
             }
-            if (this.removed.has(id)) return;
+            if (this.removed.has(id) || this.paused.has(id)) return;
             await this.deps.completed(task);
             await this.put({ ...task, status: "completed", error: undefined });
         } catch (error) {
@@ -202,7 +220,7 @@ export class ImageTaskManager {
         const task = this.tasks.get(id);
         if (!task?.remoteId || this.busy.has(id) || ["completed", "failed", "uncertain"].includes(task.status)) return;
         this.paused.delete(id);
-        await this.put({ ...task, status: task.expectedImages ? "saving" : "processing", error: undefined });
+        if (task.status === "paused") await this.put({ ...task, status: task.expectedImages ? "saving" : "processing", error: undefined });
         await this.refresh(id);
     }
     async resumeAll() {
@@ -219,7 +237,7 @@ export class ImageTaskManager {
         clearTimeout(this.timers.get(id));
         await this.deps.storage.remove(id);
         this.tasks.delete(id);
-        this.emit();
+        this.emit(id);
     }
     close() { this.timers.forEach(clearTimeout); this.timers.clear(); }
 }

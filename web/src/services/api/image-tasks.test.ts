@@ -4,7 +4,7 @@ import { ImageTaskManager, ImageTaskHttpError, imageCredentialFingerprint, image
 import { applyCanvasImageTask, failMissingCanvasImageTasks, markCanvasImageTask } from "../../lib/canvas/canvas-image-task";
 import { CanvasNodeType, type CanvasNodeData } from "../../types/canvas";
 
-const image = { id: "local-0", storageKey: "image:blob", width: 1024, height: 768, bytes: 1234, mimeType: "image/png" };
+const image = { id: "local-0", storageKey: "image:blob", width: 1024, height: 768, bytes: 1234, mimeType: "image/png", resultIndex: 0 };
 const seed = { id: "local", credential: "key-fingerprint", model: "default::gpt-image-2", prompt: "离线恢复测试", config: { model: "default::gpt-image-2", imageModel: "default::gpt-image-2", quality: "high", size: "4:3", count: "1" }, logId: "log-local", createdAt: Date.now() };
 const processing = (): ImageTask => ({ ...structuredClone(seed), remoteId: "imgtask_remote", status: "processing", pollMs: 3000, images: [], expiresAt: Date.now() + 100000 });
 const complete = { value: { id: "imgtask_remote", status: "completed", result: { data: [{ url: "https://images.example/1.png" }] } } };
@@ -115,6 +115,60 @@ test("partially saved multi-image results resume at the next image and survive a
     f.deps.credentials = async () => undefined;
     await f.manager.resume("local");
     assert.equal(f.saved.get("local")?.status, "completed"); assert.equal(f.calls.saves.length, 1);
+});
+
+test("concurrent results checkpoint out of order, preserve every sibling and only recover missing images after restart", async () => {
+    const saved = new Map(Array.from({ length: 12 }, (_, index) => {
+        const id = `parallel-${index}`;
+        return [id, { ...processing(), id, remoteId: id }] as const;
+    }));
+    const gates = new Map<string, { resolve(): void; reject(error: Error): void }>();
+    const poll: ImageTaskDependencies["poll"] = async id => ({ value: { id, status: "completed", result: { data: [0, 1, 2].map(index => ({ url: `https://images.example/${id}-${index}.png` })) } } });
+    const first = fixture(saved, { poll, saveImage: async (_source, id) => {
+        await new Promise<void>((resolve, reject) => { gates.set(id, { resolve, reject }); });
+        return { ...image, id, storageKey: `image:${id}` };
+    } });
+    const running = first.manager.resumeAll();
+    await until(() => gates.size === 36); // No image waits for another image or another task's download.
+    for (const task of saved.values()) {
+        gates.get(`${task.id}-2`)!.resolve();
+        gates.get(`${task.id}-1`)!.resolve();
+    }
+    await until(() => [...saved.values()].every(task => task.images.length === 2));
+    for (const task of saved.values()) assert.deepEqual(task.images.map(image => image.resultIndex), [1, 2]);
+    for (const task of saved.values()) {
+        const gate = gates.get(`${task.id}-0`)!;
+        if (task.id === "parallel-0") gate.reject(new TypeError("first image interrupted")); else gate.resolve();
+    }
+    await running;
+    assert.equal(saved.get("parallel-0")?.status, "waiting");
+    for (const task of saved.values()) if (task.id !== "parallel-0") {
+        assert.equal(task.status, "completed");
+        assert.deepEqual(task.images.map(image => image.id), [0, 1, 2].map(index => `${task.id}-${index}`));
+    }
+    first.manager.close();
+    const restored = fixture(saved, { poll });
+    await restored.manager.resumeAll();
+    assert.deepEqual(restored.calls.saves, ["https://images.example/parallel-0-0.png"]);
+    assert.deepEqual(saved.get("parallel-0")?.images.map(image => image.resultIndex), [0, 1, 2]);
+    assert.equal(saved.get("parallel-0")?.status, "completed");
+    assert.equal(first.calls.submits + restored.calls.submits, 0);
+});
+
+test("unchanged processing polls do not rewrite storage, notify every task or replace canvas nodes", async () => {
+    let writes = 0, changes = 0;
+    const f = fixture(new Map([["local", processing()]]), { poll: async () => ({ value: { id: "imgtask_remote", status: "processing" } }), changed: () => { changes++; } });
+    const put = f.deps.storage.put;
+    f.deps.storage.put = task => { writes++; return put(task); };
+    await f.manager.initialize(); changes = 0;
+    for (let index = 0; index < 20; index++) await f.manager.resumeAll();
+    assert.equal(writes + changes, 0);
+    const target = { projectId: "project", nodeId: "node", imageId: "slot" };
+    const task = { ...processing(), target };
+    const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading", images: [{ id: "slot", status: "loading", imageTaskId: task.id, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }] } };
+    const applied = applyCanvasImageTask(node, task);
+    assert.equal(applyCanvasImageTask(applied, task), applied);
+    assert.equal(applyCanvasImageTask(applied, task).metadata?.images, applied.metadata?.images);
 });
 
 test("overlapping refreshes are coalesced and pause/removal win over an in-flight response", async () => {

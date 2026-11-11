@@ -10,7 +10,7 @@ import ImagePage from "@/pages/image";
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { defaultConfig, useConfigStore } from "@/stores/use-config-store";
 import { imageTasks, initializeImageTasks, useImageTaskStore, storedTaskImage } from "@/stores/use-image-task-store";
-import { getImageBlob } from "@/services/image-storage";
+import { getImageBlob, uploadImage, previewUrlFor, deleteStoredImages } from "@/services/image-storage";
 import { useCanvasStore, flushCanvasStorage } from "@/stores/canvas/use-canvas-store";
 import { applyCanvasImageTask, markCanvasImageTask } from "@/lib/canvas/canvas-image-task";
 import { CanvasNodeType } from "@/types/canvas";
@@ -47,6 +47,9 @@ if (!useCanvasStore.getState().projects.length) {
     await flushCanvasStorage();
 }
 initializeImageTasks();
+const previewProbe = { stored: false, blocked: false, cached: false, error: "", originalBytes: 0 };
+const previewKey = "image:preview-concurrency-probe";
+let releasePreview = () => {};
 Object.assign(window, { asyncImageTest: {
     state: () => useImageTaskStore.getState(),
     posts: () => Number(sessionStorage.getItem("posts") || 0),
@@ -78,5 +81,24 @@ Object.assign(window, { asyncImageTest: {
     node: () => useCanvasStore.getState().projects[0].nodes[0],
     logs: async () => { const values: unknown[] = []; await localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" }).iterate(value => { values.push(value); }); return values; },
     cached: async () => localforage.createInstance({ name: "infinite-canvas", storeName: "image_tasks" }).getItem(useImageTaskStore.getState().tasks[0].id),
+    previewProbe: () => ({ ...previewProbe, ready: !!previewUrlFor(previewKey) }),
+    startPreviewProbe: () => {
+        const native = window.createImageBitmap;
+        const gate = new Promise<void>(resolve => { releasePreview = () => { window.createImageBitmap = native; resolve(); }; });
+        window.createImageBitmap = ((...args: unknown[]) => { previewProbe.blocked = true; return gate.then(() => Reflect.apply(native, window, args)); }) as typeof createImageBitmap;
+        void (async () => {
+            const canvas = document.createElement("canvas"); canvas.width = 1024; canvas.height = 512;
+            canvas.getContext("2d")!.fillRect(0, 0, 512, 512);
+            const blob = await new Promise<Blob>(resolve => canvas.toBlob(value => resolve(value!), "image/png"));
+            const image = await uploadImage(blob, { storageKey: previewKey });
+            previewProbe.stored = image.width === 1024 && image.height === 512;
+            const cached = await uploadImage("https://images.example.test/generated.png", { storageKey: previewKey });
+            const saved = await getImageBlob(previewKey);
+            previewProbe.originalBytes = saved!.size;
+            previewProbe.cached = cached.width === 1024 && cached.height === 512 && saved!.size === blob.size && btoa(String.fromCharCode(...new Uint8Array(await saved!.arrayBuffer()))) === btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
+        })().catch(error => { previewProbe.error = String(error); releasePreview(); });
+    },
+    finishPreviewProbe: () => releasePreview(),
+    cleanupPreviewProbe: () => deleteStoredImages([previewKey]),
 } });
 createRoot(document.getElementById("root")!).render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><ConfigProvider><App><ImagePage /></App></ConfigProvider></MemoryRouter></QueryClientProvider>);

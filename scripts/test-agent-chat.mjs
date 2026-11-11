@@ -66,7 +66,7 @@ try {
     if (images && !process.exitCode) {
         const profile = await mkdtemp(join(tmpdir(), 'canvas-image-restart-'));
         try {
-            for (const phase of ['submit', 'restore', 'completed']) {
+            for (const phase of ['submit', 'partial', 'restore', 'completed']) {
                 const args = [resolve('test/fixtures/image-restart.cjs'), `http://127.0.0.1:${server.httpServer.address().port}`];
                 const restartEnv = { ...env, CANVAS_IMAGE_TEST_PROFILE: profile, CANVAS_IMAGE_TEST_PHASE: phase };
                 const child = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...args, '--no-sandbox'], { env: restartEnv, stdio: 'inherit' }) : spawn(electron, args, { env: restartEnv, stdio: 'inherit', windowsHide: true });
