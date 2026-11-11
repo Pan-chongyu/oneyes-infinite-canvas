@@ -11,7 +11,7 @@ concurrency:
 jobs:
   ota-base:
     if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -160,7 +160,7 @@ jobs:
   delta:
     if: github.ref_type == 'tag'
     needs: [build, ota-base]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -221,7 +221,7 @@ jobs:
   publish:
     if: github.ref_type == 'tag'
     needs: [build, ota-base, delta]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
