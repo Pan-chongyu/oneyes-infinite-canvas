@@ -1,0 +1,16 @@
+name: Verify official macOS ARM64 runner availability
+on:
+  push:
+    branches: [codex/smart-video-edit]
+    paths: [.github/workflows/macos-runner-probe.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-26
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node -e "if(process.arch!=='arm64')process.exit(1);console.log(process.platform,process.arch)"
+      - run: sw_vers && codesign --version
