@@ -26,9 +26,10 @@ test('Windows helper waits for its parent, installs real NSIS in Unicode paths, 
     const childScript = join(root, 'apply.cjs');
     await writeFile(childScript, `const fs=require('node:fs/promises');const {prepareInstall}=require(${JSON.stringify(resolve('desktop/update-install.cjs'))});(async()=>{const plan=JSON.parse(await fs.readFile(process.argv[2],'utf8'));const apply=await prepareInstall(plan);await apply();console.log('HANDOFF');await fs.writeFile(plan.root+'/handoff','ready');setInterval(async()=>{if(await fs.access(plan.root+'/exit').then(()=>true,()=>false))process.exit(0)},10)})().catch(e=>{console.error(e.message);process.exit(1)});`);
     const inspect = join(root, 'inspect.ps1');
-    await writeFile(inspect, `param([long]$Handle,[string]$Action)
+    await writeFile(inspect, `param([long]$Handle,[string]$Action,[string]$Capture)
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-Add-Type @'
+Add-Type -AssemblyName System.Drawing
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
 using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
 public class WindowProbe {
   public delegate bool Visitor(IntPtr hwnd, IntPtr param);
@@ -40,16 +41,31 @@ public class WindowProbe {
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr a, IntPtr b);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
+  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, int flags);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr a, IntPtr b);
   public static string Text(IntPtr hwnd) { var text=new StringBuilder(2048);SendMessage(hwnd,13,(IntPtr)text.Capacity,text);return text.ToString(); }
   public static string[] Children(IntPtr hwnd) { var result=new List<string>();EnumChildWindows(hwnd,(h,p)=>{result.Add(Text(h));return true;},IntPtr.Zero);return result.ToArray(); }
   public static bool Marquee(IntPtr hwnd) { bool result=false;EnumChildWindows(hwnd,(h,p)=>{var name=new StringBuilder(256);GetClassName(h,name,256);if(name.ToString().Contains("msctls_progress32"))result=(GetWindowLong(h,-16)&8)!=0;return true;},IntPtr.Zero);return result; }
+  public static int HitHeader(IntPtr hwnd) { Rect r; GetWindowRect(hwnd,out r);return (int)SendMessage(hwnd,0x84,IntPtr.Zero,(IntPtr)(((r.Top+12)<<16)|((r.Left+180)&0xffff))); }
+  public static void Button(IntPtr hwnd, string text) { EnumChildWindows(hwnd,(h,p)=>{if(Text(h)==text)PostMessage(h,0xF5,IntPtr.Zero,IntPtr.Zero);return true;},IntPtr.Zero); }
+  public static void Capture(IntPtr hwnd, string path) {
+    Rect r;GetWindowRect(hwnd,out r);
+    using(var image=new System.Drawing.Bitmap(r.Right-r.Left,r.Bottom-r.Top))using(var graphics=System.Drawing.Graphics.FromImage(image)) {
+      var dc=graphics.GetHdc();try { PrintWindow(hwnd,dc,2); } finally { graphics.ReleaseHdc(dc); }image.Save(path,System.Drawing.Imaging.ImageFormat.Png);
+    }
+  }
 }
 '@
 if($Action -eq 'close'){[void][WindowProbe]::PostMessage([IntPtr]$Handle,16,[IntPtr]::Zero,[IntPtr]::Zero)}
 if($Action -eq 'restore'){[void][WindowProbe]::ShowWindow([IntPtr]$Handle,9)}
-@{visible=[WindowProbe]::IsWindowVisible([IntPtr]$Handle);minimized=[WindowProbe]::IsIconic([IntPtr]$Handle);title=[WindowProbe]::Text([IntPtr]$Handle);text=[WindowProbe]::Children([IntPtr]$Handle);marquee=[WindowProbe]::Marquee([IntPtr]$Handle)}|ConvertTo-Json -Compress
+if($Action -eq 'minimize-button'){[WindowProbe]::Button([IntPtr]$Handle,[string][char]0xE921)}
+if($Action -eq 'close-button'){[WindowProbe]::Button([IntPtr]$Handle,[string][char]0xE8BB)}
+if($Capture){[WindowProbe]::Capture([IntPtr]$Handle,$Capture)}
+@{visible=[WindowProbe]::IsWindowVisible([IntPtr]$Handle);minimized=[WindowProbe]::IsIconic([IntPtr]$Handle);title=[WindowProbe]::Text([IntPtr]$Handle);text=[WindowProbe]::Children([IntPtr]$Handle);marquee=[WindowProbe]::Marquee([IntPtr]$Handle);caption=([WindowProbe]::GetWindowLong([IntPtr]$Handle,-16)-band 0xC00000)-ne 0;headerHit=[WindowProbe]::HitHeader([IntPtr]$Handle)}|ConvertTo-Json -Compress
 `);
-    const probe = async (ready, action = '') => JSON.parse((await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', inspect, '-Handle', String(ready.window), '-Action', action], { windowsHide: true, encoding: 'utf8' })).stdout);
+    const probe = async (ready, action = '', capture = '') => JSON.parse((await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', inspect, '-Handle', String(ready.window), '-Action', action, '-Capture', capture], { windowsHide: true, encoding: 'utf8' })).stdout);
     const quote = value => '"' + value.replaceAll('$', '$$').replaceAll('"', '$\\"') + '"';
     for (const scenario of ['success', 'installer', 'version', 'integrity', 'launch', 'prepare']) {
         const folder = join(root, '更新 缓存 ' + scenario), destination = join(root, '安装 目录 ' + scenario), executable = join(destination, 'OneYes Canvas.exe');
@@ -99,8 +115,16 @@ if($Action -eq 'restore'){[void][WindowProbe]::ShowWindow([IntPtr]$Handle,9)}
             let ui = await probe(ready);
             assert.equal(ui.visible, true, 'a visible native update window must exist before the parent exits');
             assert.match(ui.title, /正在关闭旧版/);
+            assert.equal(ui.caption, false, 'update content and title bar must share one surface');
+            assert.equal(ui.headerHit, 2, 'integrated header must retain native window dragging');
             assert.ok(ui.text.some(text => text.includes('v0.21.0')), 'target version must be visible');
             if (scenario === 'success') {
+                await probe(ready, 'minimize-button'); ui = await probe(ready);
+                assert.equal(ui.minimized, true, 'custom minimize button must minimize the helper');
+                await probe(ready, 'restore');
+                await probe(ready, 'close-button'); ui = await probe(ready);
+                assert.equal(ui.minimized, true, 'custom close button must preserve the running update');
+                await probe(ready, 'restore');
                 await probe(ready, 'close'); ui = await probe(ready);
                 assert.equal(ui.minimized, true, 'closing the progress window minimizes it without cancelling the update');
                 await probe(ready, 'restore');
@@ -110,6 +134,10 @@ if($Action -eq 'restore'){[void][WindowProbe]::ShowWindow([IntPtr]$Handle,9)}
             if (scenario === 'success') {
                 await wait(() => exists(join(folder, 'installer-running')));
                 ui = await probe(ready); assert.match(ui.title, /正在安装新版/); assert.equal(ui.marquee, true, 'installer progress must be honestly indeterminate');
+                if (process.env.ONEYES_TEST_UPDATE_ARTIFACTS) {
+                    await mkdir(process.env.ONEYES_TEST_UPDATE_ARTIFACTS, { recursive: true });
+                    await probe(ready, '', join(process.env.ONEYES_TEST_UPDATE_ARTIFACTS, 'windows-installing.png'));
+                }
                 await writeFile(join(folder, 'allow-install'), 'continue');
             }
             // WriteAllText creates the file before filling it. Existence alone
