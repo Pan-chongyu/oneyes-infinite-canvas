@@ -62,17 +62,18 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
-                className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
+                className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl [&_[data-radix-select-viewport]]:min-w-0"
                 position="popper"
                 align="start"
                 side="bottom"
                 sideOffset={6}
+                collisionPadding={12}
                 onPointerDown={(event) => event.stopPropagation()}
                 onMouseDown={(event) => event.stopPropagation()}
             >
                 {options.length ? (
                     options.map((model) => (
-                        <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model)}>
+                        <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model)} className="[&>span:last-child]:min-w-0" title={modelOptionLabel(config, model)}>
                             <ModelLabel config={config} model={model} />
                         </SelectItem>
                     ))
@@ -96,7 +97,7 @@ function ModelLabel({ config, model }: { config: AiConfig; model: string }) {
     return (
         <span className="flex min-w-0 items-center gap-2">
             <ModelIcon model={model} />
-            <span className="truncate">{modelOptionLabel(config, model)}</span>
+            <span className="min-w-0 whitespace-normal break-words text-left">{modelOptionLabel(config, model)}</span>
         </span>
     );
 }

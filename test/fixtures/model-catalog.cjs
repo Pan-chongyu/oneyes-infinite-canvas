@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');
+const { mkdir, writeFile } = require('node:fs/promises');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { createModelCatalog } = require('../../desktop/models.cjs');
@@ -105,6 +106,42 @@ app.whenReady().then(async () => {
         assert.equal(await js('modelTest.state().config.videoModel'), `oneyes-minimax::${variants[3]}`);
         assert.equal(JSON.parse(stored).state.config.videoModel, `oneyes-minimax::${variants[3]}`);
         console.log('NATIVE_VIDEO_MODEL_VARIANTS_PICKER_EXACT_IDS_AND_GROUP_RESTORE_OK');
+        await js('showModelCanvas()');
+        await wait('window.modelNodeTest && document.querySelector("[data-node-id=config] [role=combobox]")');
+        for (const [scale, x, y, dark] of [[1, 40, 40, false], [0.5, 650, 580, true], [1.8, 10, 20, false], [1, 650, 40, true]]) {
+            await js(`modelNodeTest.configure(${scale},${x},${y},${dark});document.querySelector("[data-node-id=config] [role=combobox]").focus()`);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('Boolean(document.querySelector("[role=listbox]"))');
+            await wait('document.querySelector("[role=listbox]").getAnimations().every(animation=>animation.playState==="finished")');
+            const bounds = await js(`(()=>{const popup=document.querySelector('[role=listbox]'),viewport=popup.querySelector('[data-radix-select-viewport]'),rect=popup.getBoundingClientRect(),inside=viewport.getBoundingClientRect();return {popup:rect.toJSON(),viewport:inside.toJSON(),width:innerWidth,height:innerHeight,z:getComputedStyle(popup).zIndex};})()`);
+            assert.ok(bounds.popup.left >= 0 && bounds.popup.right <= bounds.width && bounds.popup.top >= 0 && bounds.popup.bottom <= bounds.height, 'model list must stay inside the window');
+            assert.ok(bounds.viewport.right <= bounds.popup.right && bounds.viewport.left >= bounds.popup.left, 'scaled model trigger must not force the list viewport outside its popup');
+            const textBounds = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>{const text=option.lastElementChild.lastElementChild.lastElementChild;return {text:text.textContent,right:text.getBoundingClientRect().left+text.scrollWidth,height:text.clientHeight,scrollHeight:text.scrollHeight};})');
+            assert.ok(textBounds.every(text=>text.right<=bounds.viewport.right && text.scrollHeight<=text.height), 'full model versions must wrap without hidden text: '+JSON.stringify(textBounds));
+            const wheel = { x: Math.round(bounds.viewport.x + bounds.viewport.width / 2), y: Math.round(bounds.viewport.y + bounds.viewport.height / 2) };
+            const beforeScroll = await js('document.querySelector("[data-radix-select-viewport]").scrollTop');
+            win.webContents.sendInputEvent({ type: 'mouseMove', ...wheel });
+            win.webContents.sendInputEvent({ type: 'mouseWheel', deltaX: 0, deltaY: -120, ...wheel });
+            await wait(`document.querySelector("[data-radix-select-viewport]").scrollTop > ${beforeScroll}`);
+            if (process.env.ONEYES_MODEL_SCREENSHOTS) {
+                await mkdir(process.env.ONEYES_MODEL_SCREENSHOTS, { recursive: true });
+                await writeFile(join(process.env.ONEYES_MODEL_SCREENSHOTS, `config-model-${scale}-${dark ? 'dark' : 'light'}.png`), (await win.capturePage()).toPNG());
+            }
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'End' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'End' });
+            await wait('document.activeElement === Array.from(document.querySelectorAll("[role=option]")).at(-1)');
+            const target = await js(`(()=>{const item=document.activeElement,r=item.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),visible:item.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),text:item.textContent.trim()};})()`);
+            assert.equal(target.visible, true, 'last model must be clickable above neighboring nodes');
+            assert.notEqual((await js('modelNodeTest.state()')).metadata.model, `oneyes-minimax::${target.text.replace(/（OneYes Grok）$/, '')}`);
+            win.webContents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y });
+            win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: target.x, y: target.y });
+            win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: target.x, y: target.y });
+            await wait('!document.querySelector("[role=listbox]")');
+            assert.equal((await js('modelNodeTest.state()')).metadata.model, `oneyes-minimax::${target.text.replace(/（OneYes Grok）$/, '')}`);
+            assert.deepEqual(await js('modelNodeTest.events()'), { drag: 0, background: 0, viewport: 0 }, 'model list interaction must not drag or zoom the canvas');
+        }
+        console.log('NATIVE_CONFIG_MODEL_LIST_ZOOM_EDGES_OVERLAP_AND_POINTER_SELECTION_OK');
         console.log('NATIVE_MODEL_CATALOG_AUTO_SYNC_CACHE_DEFAULTS_ERRORS_AND_DRAFTS_OK');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
