@@ -1,0 +1,19 @@
+name: Prepare Ubuntu tooling DNS
+description: Recover the ephemeral hosted runner resolver before reading official Ubuntu repositories
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for domain in security.ubuntu.com azure.archive.ubuntu.com ports.ubuntu.com; do
+          if ! getent ahostsv4 "$domain" >/dev/null; then
+            echo "Restoring DNS for official Ubuntu repositories on this ephemeral runner"
+            interface=$(ip -j route get 1.1.1.1 | jq -r '.[0].dev')
+            sudo resolvectl dns "$interface" 1.1.1.1 1.0.0.1
+            sudo resolvectl flush-caches
+            break
+          fi
+        done
+        for domain in security.ubuntu.com azure.archive.ubuntu.com ports.ubuntu.com; do
+          getent ahostsv4 "$domain" >/dev/null
+        done

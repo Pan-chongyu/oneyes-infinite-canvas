@@ -87,6 +87,7 @@ test('parallel release covers every OTA target and publishes only after all buil
   const {parse}=require('../canvas-agent/node_modules/yaml');
   const workflow=parse(await readFile('.github/workflows/desktop-release.yml','utf8'));
   for(const job of ['ota-base','delta','publish']) assert.equal(workflow.jobs[job]['runs-on'],'ubuntu-24.04');
+  for(const job of ['build','delta']) assert.ok(workflow.jobs[job].steps.findIndex(step=>step.uses==='./.github/actions/linux-network')<workflow.jobs[job].steps.findIndex(step=>step.run?.includes('apt-get update')));
   const expected=['win32','darwin','linux'].flatMap(platform=>['x64','arm64'].flatMap(arch=>({win32:['nsis'],darwin:['zip'],linux:['AppImage','deb','rpm']}[platform]).map(format=>platformKey({platform,arch,format}))));
   assert.deepEqual(workflow.jobs.delta.strategy.matrix.include.map(item=>item.target).sort(),expected.sort());
   assert.deepEqual(workflow.jobs.publish.needs,['build','ota-base','delta']);
