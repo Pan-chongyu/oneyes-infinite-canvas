@@ -8,6 +8,7 @@ import i18n from "@/i18n";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useConfigStore } from "@/stores/use-config-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 type Props = {
@@ -33,6 +34,7 @@ type Token =
 // Serialization converts chips back to reference labels so the generated value matches the former textarea semantics.
 export function CanvasPromptChipInput({ value, references, onChange, onSubmit, className, style, placeholder }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const autoRefreshMentionImages = useConfigStore((state) => state.config.autoRefreshMentionImages);
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
     // Track the last value emitted to the parent. An identical focused value is this component's own echo,
@@ -55,7 +57,21 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
         return activeReferences.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
     }, [mention, activeReferences]);
 
-    // Rebuild the DOM from value when unfocused, or when a focused value is an external change rather than an emitted echo.
+    // Refresh only image elements so the current text, caret and IME composition stay untouched.
+    useEffect(() => {
+        if (!autoRefreshMentionImages) return;
+        editorRef.current?.querySelectorAll<HTMLElement>("[data-ref-label]").forEach((chip) => {
+            const reference = referenceByLabel.get(chip.dataset.refLabel || "");
+            const image = chip.querySelector("img");
+            if (!image || reference?.kind !== "image" || !reference.previewUrl || image.getAttribute("src") === reference.previewUrl) return;
+            const previous = image.src;
+            image.src = reference.previewUrl;
+            image.alt = reference.title;
+            setImagePreview((current) => current === previous ? image.src : current);
+        });
+    }, [autoRefreshMentionImages, referenceByLabel]);
+
+    // Rebuild from value when unfocused, or for an external value change rather than an emitted echo.
     useEffect(() => {
         const editor = editorRef.current;
         if (!editor) return;
@@ -286,7 +302,7 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
         wrapper.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            onImagePreview(reference.previewUrl || "");
+            onImagePreview(image.src);
         });
     } else {
         wrapper.className = "mx-px inline-flex h-6 max-w-40 items-center justify-center overflow-hidden rounded-md border px-1 text-xs leading-none align-middle";

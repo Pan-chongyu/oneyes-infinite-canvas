@@ -248,6 +248,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         <Switch checked={config.autoFocusOnSelect} onChange={(checked) => updateConfig("autoFocusOnSelect", checked)} />
                                     </div>
                                 </Form.Item>
+                                <Form.Item className="mb-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <label htmlFor="auto-refresh-mention-images" className="text-sm">{t("config.preferences.autoRefreshMentionImages")}</label>
+                                            <div id="auto-refresh-mention-images-help" className="mt-1 text-xs opacity-60">{t("config.preferences.autoRefreshMentionImagesDescription")}</div>
+                                        </div>
+                                        <Switch id="auto-refresh-mention-images" aria-describedby="auto-refresh-mention-images-help" checked={config.autoRefreshMentionImages} onChange={(checked) => updateConfig("autoRefreshMentionImages", checked)} />
+                                    </div>
+                                </Form.Item>
                                 <Form.Item label={t("config.preferences.audioInstructions")} className="mb-4">
                                     <Input.TextArea rows={2} value={config.audioInstructions} placeholder={t("config.preferences.audioInstructionsPlaceholder")} onChange={(event) => updateConfig("audioInstructions", event.target.value)} />
                                 </Form.Item>

@@ -562,6 +562,8 @@ export default {
             regenerateBehaviorNewNode: "新建节点（原行为）",
             regenerateBehaviorNewNodeDescription: "保留当前节点，新建一个节点承接生成结果，适合做变体或分支。",
             autoFocusOnSelect: "选中自动居中",
+            autoRefreshMentionImages: "替换图片后自动刷新 @ 图片",
+            autoRefreshMentionImagesDescription: "开启后，输入中的 @ 图片预览也会同步更新；关闭后保持现有逻辑。",
             audioVoice: "默认音频声音",
             audioFormat: "默认音频格式",
             audioSpeed: "默认音频语速",

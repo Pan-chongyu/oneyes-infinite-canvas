@@ -143,6 +143,53 @@ app.whenReady().then(async () => {
         }
         console.log('NATIVE_CONFIG_MODEL_LIST_ZOOM_EDGES_OVERLAP_AND_POINTER_SELECTION_OK');
         console.log('NATIVE_MODEL_CATALOG_AUTO_SYNC_CACHE_DEFAULTS_ERRORS_AND_DRAFTS_OK');
+        await js('showMentionPreferences()');
+        await wait('window.mentionTest && document.getElementById("auto-refresh-mention-images")');
+        assert.equal(await js('modelTest.state().config.autoRefreshMentionImages'), false, 'existing behavior remains the default');
+        const toggle = async checked => {
+            await js('document.getElementById("auto-refresh-mention-images").focus()');
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait(`document.getElementById("auto-refresh-mention-images").getAttribute("aria-checked") === "${checked}"`);
+            assert.equal(JSON.parse(stored).state.config.autoRefreshMentionImages, checked);
+            await js('modelTest.restore()');
+            assert.equal(await js('modelTest.state().config.autoRefreshMentionImages'), checked, 'preference must survive hydration');
+        };
+        const focusEditor = async selector => js(`(()=>{const editor=document.querySelector(${JSON.stringify(selector)}+' [contenteditable=true]');editor.focus();const text=editor.lastChild,range=document.createRange();range.setStart(text,text.textContent.length);range.collapse(true);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);window.mentionCaret={node:selection.anchorNode,offset:selection.anchorOffset,editor};})()`);
+        const assertCaret = async () => assert.equal(await js('document.activeElement===mentionCaret.editor && getSelection().anchorNode===mentionCaret.node && getSelection().anchorOffset===mentionCaret.offset'), true, 'image refresh must preserve the live caret and draft');
+        for (const selector of ['[data-testid=mention-composer]', '[data-testid=mention-prompt]']) {
+            await focusEditor(selector);
+            const old = await js(`document.querySelector(${JSON.stringify(selector)}+' [contenteditable=true] img').src`);
+            await js(`mentionTest.replace(${JSON.stringify(selector.includes('composer') ? 'blue' : 'green')})`);
+            await assertCaret();
+            assert.equal(await js(`document.querySelector(${JSON.stringify(selector)}+' [contenteditable=true] img').src`), old, 'disabled must retain the existing focused editor behavior');
+            assert.equal((await js('mentionTest.state()')).context.referenceImages[0].dataUrl, (await js('mentionTest.state()')).image, 'generation continues to use the current source');
+        }
+        await toggle(true);
+        for (const [index, selector] of ['[data-testid=mention-composer]', '[data-testid=mention-prompt]'].entries()) {
+            await focusEditor(selector);
+            const before = await js('mentionTest.state()');
+            await js(`document.activeElement.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));mentionTest.replace(${JSON.stringify(index ? 'orange' : 'purple')})`);
+            await wait(`Array.from(document.querySelectorAll(${JSON.stringify(selector)}+' [contenteditable=true] img')).every(image=>image.src===mentionTest.state().image)`);
+            await assertCaret();
+            const after = await js('mentionTest.state()');
+            assert.equal(after.edits, before.edits, 'refresh cannot emit edits or submit generation');
+            assert.equal(after.composer, before.composer); assert.equal(after.prompt, before.prompt);
+            await js("document.activeElement.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}))");
+            await js(`document.querySelector(${JSON.stringify(selector)}+' [contenteditable=true] img').parentElement.click()`);
+            await wait('Array.from(document.querySelectorAll("[role=dialog] img")).some(image=>image.src===mentionTest.state().image)');
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await wait('!document.querySelector("[role=dialog]")');
+        }
+        await toggle(false);
+        await focusEditor('[data-testid=mention-composer]');
+        const old = await js('document.querySelector("[data-testid=mention-composer] [contenteditable=true] img").src');
+        await js('mentionTest.replace("pink")');
+        assert.equal(await js('document.querySelector("[data-testid=mention-composer] [contenteditable=true] img").src'), old);
+        await toggle(true);
+        await wait('Array.from(document.querySelectorAll("[contenteditable=true] img")).every(image=>image.src===mentionTest.state().image)');
+        console.log('NATIVE_MENTION_IMAGE_PREFERENCE_RESTORE_REFRESH_PREVIEW_CARET_AND_EXISTING_BEHAVIOR_OK');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
 });

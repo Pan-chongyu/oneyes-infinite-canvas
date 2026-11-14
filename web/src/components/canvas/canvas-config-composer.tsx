@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useConfigStore } from "@/stores/use-config-store";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -36,6 +37,7 @@ export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNodes = [], onChange, onClose, onDisconnectReference, onStartReferenceSelection }: CanvasConfigComposerProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const autoRefreshMentionImages = useConfigStore((state) => state.config.autoRefreshMentionImages);
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
     const [mention, setMention] = useState<MentionState | null>(null);
@@ -49,6 +51,19 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
         if (!query) return inputs;
         return inputs.filter((input) => `${resourceLabel(input, inputs)} ${input.title} ${input.type === "group" ? "" : input.text || ""}`.toLowerCase().includes(query));
     }, [inputs, mention]);
+
+    useEffect(() => {
+        if (!autoRefreshMentionImages) return;
+        editorRef.current?.querySelectorAll<HTMLElement>("[data-reference-node-id]").forEach((chip) => {
+            const input = referenceById.get(chip.dataset.referenceNodeId || "");
+            const image = chip.querySelector("img");
+            if (!image || input?.type !== "image" || !input.image || image.getAttribute("src") === input.image.dataUrl) return;
+            const previous = image.src;
+            image.src = input.image.dataUrl;
+            image.alt = input.title;
+            setImagePreview((current) => current === previous ? image.src : current);
+        });
+    }, [autoRefreshMentionImages, referenceById]);
 
     useEffect(() => {
         if (document.activeElement === editorRef.current) return;
@@ -258,7 +273,7 @@ function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationI
         wrapper.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            onImagePreview(input.image?.dataUrl || "");
+            onImagePreview(image.src);
         });
     } else {
         wrapper.title = input.type === "group" ? input.title : input.text || input.title;

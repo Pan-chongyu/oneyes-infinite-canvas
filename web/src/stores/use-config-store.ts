@@ -64,6 +64,7 @@ export type AiConfig = {
     upstreamProxyPassword: string;
     nodeRegenerateBehavior: "new-node" | "overwrite";
     autoFocusOnSelect: boolean;
+    autoRefreshMentionImages: boolean;
 };
 
 export type WebdavSyncConfig = {
@@ -141,6 +142,7 @@ export const defaultConfig: AiConfig = {
     upstreamProxyPassword: "",
     nodeRegenerateBehavior: "new-node",
     autoFocusOnSelect: false,
+    autoRefreshMentionImages: false,
 };
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
@@ -311,6 +313,7 @@ export const useConfigStore = create<ConfigStore>()(
                         proxyMode: persistedConfig.proxyMode || (persistedConfig.proxyEnabled ? "forwarder" : "upstream"),
                         nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
                         autoFocusOnSelect: Boolean(config.autoFocusOnSelect),
+                        autoRefreshMentionImages: config.autoRefreshMentionImages === true,
                     },
                 };
             },

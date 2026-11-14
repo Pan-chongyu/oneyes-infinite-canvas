@@ -563,6 +563,8 @@ Write a detailed, ready-to-use overall prompt in connected paragraphs, then self
             regenerateBehaviorNewNode: "Create a new node (original behavior)",
             regenerateBehaviorNewNodeDescription: "Keep the current node and create a new one for the result. Good for variants or branches.",
             autoFocusOnSelect: "Auto-center on select",
+            autoRefreshMentionImages: "Refresh @ images after replacement",
+            autoRefreshMentionImagesDescription: "Also refresh @ image previews while editing. Turn off to keep the existing behavior.",
             audioVoice: "Default audio voice",
             audioFormat: "Default audio format",
             audioSpeed: "Default audio speed",
