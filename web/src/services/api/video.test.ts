@@ -91,14 +91,72 @@ test('MiniMax H accepts only 768P, 1080P and 2K without submitting unsupported r
         await assert.rejects(createVideoGenerationTask(miniMax, 'invalid resolution'), /MiniMax H.*768P.*1080P.*2K/);
         assert.equal(posts, 0);
 
-        for (const [resolution, expected] of [['768', '768P'], ['1080', '1080P'], ['2k', '2K']] as const) {
+        for (const [resolution, expected] of [['768', '768p'], ['1080', '1080p'], ['2k', '2k']] as const) {
             adapter(request => { posts++; calls.push(request); return { data: { id: `mini-${expected}` } }; });
-            const task = await createVideoGenerationTask({ ...miniMax, vquality: resolution }, 'valid resolution');
+            const task = await createVideoGenerationTask({ ...miniMax, vquality: resolution, size: '16:9' }, 'valid resolution');
             assert.equal(task.id, `mini-${expected}`);
-            assert.equal((calls.at(-1)?.data as FormData).get('resolution_name'), expected);
+            assert.deepEqual(JSON.parse(calls.at(-1)!.data), { model: 'minimax-h3', prompt: 'valid resolution', duration: 5, resolution: expected, ratio: '16:9' });
         }
         assert.equal(posts, 3);
+        await assert.rejects(createVideoGenerationTask({ ...miniMax, vquality: '1080', size: '1:1' }, 'invalid ratio'), /仅支持 16:9 或 9:16/);
+        assert.equal(posts, 3, 'unsupported ratios must not submit or silently change the selected output');
     } finally { axios.defaults.adapter = original; }
+});
+
+test('known bridge models use exact scalar fields and accept one/two/three seconds without the legacy four-second clamp', async () => {
+    const calls: AxiosRequestConfig[] = [];
+    try {
+        adapter(request => { calls.push(request); return { data: { id: `fixture-${calls.length}` } }; });
+        for (const [model, seconds, quality, mode] of [
+            ['grok-imagine-video', '1', '480', 'frames'],
+            ['grok-imagine-video [480/720p 1-15s ¥0.11/秒]', '2', '480', 'frames'],
+            ['wan3.0-video', '2', '720', 'reference'],
+            ['gemini-omni-flash-1.2', '3', '720', 'frames'],
+            ['doubao-seedance-2.0', '4', '4k', 'reference'],
+            ['sd-2.5-fullblood-line3', '1', '720', 'reference'],
+        ]) {
+            const selected = { ...config, model: `default::${model}`, videoSeconds: seconds, vquality: quality, videoMode: mode, size: '16:9' };
+            const before = structuredClone(selected);
+            const task = await createVideoGenerationTask(selected, 'bridge fixture');
+            assert.equal(task.model, selected.model);
+            const request = calls.at(-1)!;
+            if (model === 'sd-2.5-fullblood-line3') {
+                const form = request.data as FormData;
+                assert.equal(form.get('duration'), seconds);
+                assert.equal(form.get('resolution'), '720p');
+                assert.equal(form.get('aspect_ratio'), '16:9');
+                for (const key of ['size', 'ratio', 'mode', 'resolution_name', 'generate_audio', 'watermark']) assert.equal(form.has(key), false);
+            } else {
+                const body = JSON.parse(request.data);
+                assert.equal(body.model, model, 'display aliases remain the requested ID for gateway account routing');
+                assert.equal(body.duration, Number(seconds));
+                if (model === 'doubao-seedance-2.0') assert.equal(body.resolution, '4k');
+                if (model.startsWith('wan')) assert.equal(body.generate_audio, undefined);
+            }
+            assert.deepEqual(selected, before);
+        }
+        assert.equal(calls.length, 6, 'no paid request is retried with another protocol');
+    } finally { axios.defaults.adapter = original; }
+});
+
+test('canonical native Grok keeps its existing video edit route beyond the 88API metadata restrictions', async () => {
+    const calls: AxiosRequestConfig[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalReader = globalThis.FileReader;
+    globalThis.fetch = async () => new Response(new Blob(['fixture-video'], { type: 'video/mp4' }));
+    globalThis.FileReader = class {
+        result = 'data:video/mp4;base64,Zml4dHVyZQ==';
+        onload?: () => void;
+        readAsDataURL() { this.onload?.(); }
+    } as unknown as typeof FileReader;
+    try {
+        adapter(request => { calls.push(request); return { data: { request_id: 'native-edit' } }; });
+        const task = await createVideoGenerationTask(config, 'edit fixture', [], { videos: [{ id: 'video', name: 'clip.mp4', type: 'video/mp4', url: 'https://fixture.invalid/clip.mp4', durationMs: 3000 }] });
+        assert.equal(task.id, 'native-edit');
+        assert.equal(calls.length, 1);
+        assert.match(calls[0].url!, /\/v1\/videos\/edits$/);
+        assert.deepEqual(JSON.parse(calls[0].data), { model: 'grok-imagine-video', prompt: 'edit fixture', video: { url: 'data:video/mp4;base64,Zml4dHVyZQ==' } });
+    } finally { axios.defaults.adapter = original; globalThis.fetch = originalFetch; globalThis.FileReader = originalReader; }
 });
 
 test('OneYes Grok Seedance uses JSON booleans and the exact selected channel; manual keys work too', async () => {

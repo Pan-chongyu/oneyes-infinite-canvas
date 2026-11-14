@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { cn } from "@/lib/utils";
 import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useModelCatalogStore } from "@/stores/use-model-catalog-store";
+import { videoModelOptions } from "@/lib/video-model-info";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -23,7 +24,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const { t } = useTranslation();
     const pickerId = useId();
     const [open, setOpen] = useState(false);
-    const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
+    const options = useMemo(() => videoModelOptions(config, Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), value), [capability, config, value]);
     const current = value || "";
     const pickerPlaceholder = placeholder || t("settingsPanels.model.select");
 

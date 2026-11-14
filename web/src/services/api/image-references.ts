@@ -5,7 +5,7 @@ import type { ReferenceImage } from "@/types/image";
 
 // Re-encode decoded pixels, not camera extensions or weakly compressed canvas
 // PNGs. A disposable worker keeps encoding cancellable and off the UI thread.
-function normalizeReference(source: Blob, signal?: AbortSignal): Promise<Blob> {
+function normalizeReference(source: Blob, signal?: AbortSignal, format?: "png"): Promise<Blob> {
     signal?.throwIfAborted();
     const worker = new Worker(new URL("./image-reference.worker.ts", import.meta.url), { type: "module" });
     return new Promise((resolve, reject) => {
@@ -18,11 +18,11 @@ function normalizeReference(source: Blob, signal?: AbortSignal): Promise<Blob> {
             if (data.blob?.size) resolve(data.blob);
             else reject(new Error("Reference image could not be decoded or encoded"));
         };
-        worker.postMessage(source);
+        worker.postMessage(format ? { source, format } : source);
     });
 }
 
-export async function prepareReferenceFiles(references: ReferenceImage[], signal?: AbortSignal) {
+export async function prepareReferenceFiles(references: ReferenceImage[], signal?: AbortSignal, format?: "png") {
     const files: File[] = [];
     for (const [index, reference] of references.entries()) {
         signal?.throwIfAborted();
@@ -31,7 +31,7 @@ export async function prepareReferenceFiles(references: ReferenceImage[], signal
                 ? await getImageBlob(reference.storageKey)
                 : dataUrlToFile({ ...reference, dataUrl: await imageToDataUrl(reference, { signal }) });
             if (!source?.size) throw new Error("Empty reference");
-            const output = await normalizeReference(source, signal);
+            const output = await normalizeReference(source, signal, format);
             signal?.throwIfAborted();
             files.push(new File([output], `reference-${index + 1}.${output.type === "image/webp" ? "webp" : "png"}`, { type: output.type }));
         } catch (error) {

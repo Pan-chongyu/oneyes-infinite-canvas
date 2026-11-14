@@ -3,7 +3,9 @@ import encode, { init } from "@jsquash/webp/encode";
 import wasm from "@jsquash/webp/codec/enc/webp_enc.wasm?url";
 import simdWasm from "@jsquash/webp/codec/enc/webp_enc_simd.wasm?url";
 
-self.onmessage = async ({ data: source }: MessageEvent<Blob>) => {
+self.onmessage = async ({ data }: MessageEvent<Blob | { source: Blob; format: "png" }>) => {
+    const source = data instanceof Blob ? data : data.source;
+    const format = data instanceof Blob ? undefined : data.format;
     let bitmap: ImageBitmap | undefined;
     try {
         const type = await fileTypeFromBuffer(await source.arrayBuffer());
@@ -12,6 +14,10 @@ self.onmessage = async ({ data: source }: MessageEvent<Blob>) => {
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Image decoder unavailable");
         context.drawImage(bitmap, 0, 0);
+        if (format === "png") {
+            self.postMessage({ blob: await canvas.convertToBlob({ type: "image/png" }) });
+            return;
+        }
         const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height);
         let blob: Blob;
         try {

@@ -8,6 +8,7 @@ import { videoSecondsRange, videoSizeOptions } from "@/components/video-settings
 import { videoResolutionOptionsForModel } from "@/lib/video-capabilities";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { clampVideoSeconds } from "@/lib/media-size";
+import { getVideoModelInfo, tierLabel, videoModelOptions } from "@/lib/video-model-info";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
@@ -191,6 +192,7 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
 function getVideoConfig() {
     const { config } = useConfigStore.getState();
     const model = config.videoModel || config.model;
+    const info = getVideoModelInfo(config, model);
     return {
         current: {
             model,
@@ -202,14 +204,15 @@ function getVideoConfig() {
             watermark: config.videoWatermark === "true",
             mode: config.videoMode === "reference" ? "reference" : "frames",
         },
-        models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        sizeOptions: videoSizeOptions,
-        secondsRange: videoSecondsRange,
-        resolutionOptions: videoResolutionOptionsForModel(model),
+        models: videoModelOptions(config, selectableModelsByCapability(config, "video"), model).map((value) => ({ value, label: modelOptionLabel(config, value) })),
+        sizeOptions: info ? info.ratios.map(value => ({ value, label: value === "auto" ? "自动" : value })) : videoSizeOptions,
+        secondsRange: info?.duration || videoSecondsRange,
+        resolutionOptions: info ? info.resolutions.map(value => ({ value, label: tierLabel(value) })) : videoResolutionOptionsForModel(model),
+        ...(info ? { prices: info.priceLines, referenceLimits: info.referenceLimits, notes: info.notes } : {}),
         modeOptions: [
             { value: "frames", label: i18n.t("settingsPanels.video.modes.frames") },
             { value: "reference", label: i18n.t("settingsPanels.video.modes.reference") },
-        ],
+        ].filter(option => !info || info.modes.includes(option.value as "frames" | "reference")),
     };
 }
 
@@ -226,7 +229,8 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         applied.size = input.size;
     }
     if (input.seconds != null && String(input.seconds).trim()) {
-        const seconds = clampVideoSeconds(String(input.seconds));
+        const config = useConfigStore.getState().config;
+        const seconds = getVideoModelInfo(config, config.videoModel || config.model) ? String(input.seconds) : clampVideoSeconds(String(input.seconds));
         configStore.updateConfig("videoSeconds", seconds);
         applied.seconds = seconds;
     }

@@ -7,11 +7,14 @@ import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { isGrokVideoModel, isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, normalizeVideoResolutionForModel } from "@/lib/video-capabilities";
+import { getVideoModelInfo, videoModelConfigError } from "@/lib/video-model-info";
+import type { VideoModelInfo } from "@/lib/video-model-catalog";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { prepareReferenceFiles } from "./image-references";
+import { buildVideoBridgeRequest, usesVideoBridgeRequest, videoBridgeMediaUrl } from "./video-bridge-request";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -87,10 +90,17 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
+    const info = getVideoModelInfo(config, selectedModel);
+    // A canonical Grok ID may route to an existing native pool with edit/audio
+    // capabilities beyond the 88API catalog. Keep that established path intact.
+    const nativeGrok = info?.id.startsWith("grok-imagine-video") && modelOptionName(selectedModel) === info.id;
+    const parameterError = nativeGrok ? undefined : videoModelConfigError(config, selectedModel, { imageCount: references.length, videoCount: options?.videos?.length || 0, audioCount: options?.audios?.length || 0 });
+    if (parameterError) throw new Error(parameterError);
+    if (info && usesVideoBridgeRequest(info)) return createBridgeVideoTask(requestConfig, selectedModel, prompt, references, info, options);
     const channel = resolveModelChannel(config, selectedModel);
     // Seedance served by OneYes' Grok group speaks Grok JSON too. Do not infer
     // the protocol from a display name or apply xAI-only model limits to it.
-    if (isGrokVideoModel(selectedModel) || (/^(?:doubao-)?seedance(?:-|$)/i.test(modelOptionName(selectedModel)) && (channel.oneYes?.platform === "grok" || channel.id === GROK_VIDEO_CHANNEL_ID))) {
+    if (isGrokVideoModel(selectedModel) || info?.id.startsWith("grok-imagine-video") || (/^(?:doubao-)?seedance(?:-|$)/i.test(modelOptionName(selectedModel)) && (channel.oneYes?.platform === "grok" || channel.id === GROK_VIDEO_CHANNEL_ID))) {
         return createGrokVideoTask(requestConfig, selectedModel, prompt, references, options);
     }
     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
@@ -168,7 +178,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     const body = new FormData();
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
-    body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
+    body.append("seconds", getVideoModelInfo(config, model) ? config.videoSeconds : normalizeVideoSeconds(config.videoSeconds));
     body.append("size", normalizeVideoSize(config.size, config.vquality) || "1280x720");
     if (ratio && ratio !== "auto") {
         body.append("ratio", ratio);
@@ -205,19 +215,56 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     }
 }
 
+async function createBridgeVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], info: VideoModelInfo, options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const videos = options?.videos || [], audios = options?.audios || [];
+    // Keep public-only inputs as URLs. In particular, do not download a video
+    // and disguise it as inline media when the upstream requires a prior upload.
+    const videoInputs = info.provider === "zhiying"
+        ? await Promise.all(videos.map(video => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)))
+        : videos.map(video => videoBridgeMediaUrl(video.url, "视频"));
+    const audioInputs = info.provider === "zhiying"
+        ? await Promise.all(audios.map(audio => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)))
+        : info.id.startsWith("wan3.0-video")
+            ? audios.map(audio => videoBridgeMediaUrl(audio.url, "音频"))
+            : await Promise.all(audios.map(async audio => readFileAsDataUrl(await referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options))));
+    const images = await prepareReferenceFiles(references, options?.signal, info.id === "veo-3.1" ? "png" : undefined);
+    const referenceVideoDurationTotal = videos.every(video => Number.isFinite(video.durationMs) && video.durationMs! > 0)
+        ? videos.reduce((total, video) => total + video.durationMs! / 1000, 0)
+        : undefined;
+    const request = buildVideoBridgeRequest(info, config, modelOptionName(model), prompt, {
+        images,
+        imageDataUrls: info.provider === "zhiying" ? [] : await Promise.all(images.map(readFileAsDataUrl)),
+        videos: videoInputs,
+        audios: audioInputs,
+        referenceVideoDurationTotal,
+    });
+    options?.signal?.throwIfAborted();
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), request.body, { headers: aiHeaders(config, request.contentType), signal: options?.signal, timeout: 0 })).data);
+        const id = created.request_id || created.id;
+        if (!id) throw new Error(apiText("noVideoTaskId"));
+        return { id, provider: "openai", model };
+    } catch (error) {
+        reportError("video", "submit", error, "video-bridge");
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
+    }
+}
+
 // Grok's native API accepts JSON, not the generic OpenAI multipart fields.
 async function createGrokVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const videos = options?.videos || [], audios = options?.audios || [];
+    const info = getVideoModelInfo(config, model);
+    const grokModel = isGrokVideoModel(model) || Boolean(info?.id.startsWith("grok-imagine-video"));
     if (videos.length && (videos.length !== 1 || references.length || audios.length)) throw new Error(apiText("grokVideoEditReferences"));
-    if (modelOptionName(model) === "grok-imagine-video-1.5" && !references.length && !videos.length) throw new Error(apiText("grokVideoImageRequired"));
+    if ((info?.id || modelOptionName(model)) === "grok-imagine-video-1.5" && !references.length && !videos.length) throw new Error(apiText("grokVideoImageRequired"));
     const body: Record<string, unknown> = { model: modelOptionName(model), prompt };
     if (videos.length) {
         body.video = { url: await readFileAsDataUrl(await referenceMediaToFile(videos[0], "ref.mp4", "invalidReferenceVideo", options)) };
     } else {
-        body.duration = Number(normalizeVideoSeconds(config.videoSeconds));
+        body.duration = Number(info ? config.videoSeconds : normalizeVideoSeconds(config.videoSeconds));
         body.aspect_ratio = videoAspectRatio(config.size);
         body.resolution = normalizeVideoResolution(config.vquality, model);
-        if (!isGrokVideoModel(model)) {
+        if (!grokModel) {
             body.watermark = boolConfig(config.videoWatermark, false);
             body.generate_audio = boolConfig(config.videoGenerateAudio, true);
         }

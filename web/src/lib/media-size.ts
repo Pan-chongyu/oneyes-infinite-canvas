@@ -108,7 +108,7 @@ export function parseVideoResolution(value: string | undefined) {
     const raw = String(value || "").trim().toLowerCase();
     if (raw === "low") return "480";
     if (raw === "auto" || raw === "high" || raw === "medium") return "720";
-    if (/^2k(?:p)?$/.test(raw)) return "2K";
+    if (/^[24]k(?:p)?$/.test(raw)) return raw.slice(0, 2).toUpperCase();
     const number = raw.replace(/p$/i, "");
     return /^\d+$/.test(number) && Number(number) > 0 ? number : "720";
 }
@@ -116,11 +116,12 @@ export function parseVideoResolution(value: string | undefined) {
 /** Pixel baseline used when calculating a preview size from a named tier. */
 export function videoResolutionPixels(value: string | undefined) {
     const parsed = parseVideoResolution(value);
-    return parsed === "2K" ? 2048 : Number(parsed) || 720;
+    return parsed === "2K" ? 2048 : parsed === "4K" ? 2160 : Number(parsed) || 720;
 }
 
 export function inferVideoRatio(size: string) {
     if (!size || size === "auto") return "auto";
+    if (parseAspectRatio(size)) return size;
     if (videoRatioOptions.some((item) => item.value === size)) return size;
     const pixels = parsePixelSize(size) || parseAspectRatio(size);
     if (!pixels) return "16:9";
