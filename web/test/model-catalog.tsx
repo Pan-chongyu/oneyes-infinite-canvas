@@ -47,6 +47,9 @@ function Probe() {
     const [open, setOpen] = useState(false);
     const [canvas, setCanvas] = useState(false);
     const [mentions, setMentions] = useState(false);
+    const [clipboard, setClipboard] = useState<React.ReactNode>(null);
+    Object.assign(window, { showClipboardCanvas: async () => { const fixture = await import("./canvas-clipboard"); await fixture.prepareClipboardCanvas(); flushSync(() => setClipboard(<fixture.ClipboardCanvas />)); } });
+    if (clipboard) return clipboard;
     Object.assign(window, { showModelCanvas: () => flushSync(() => setCanvas(true)), showMentionPreferences: () => flushSync(() => setMentions(true)) });
     if (mentions) return <MentionPreferences />;
     if (canvas) return <ConfigCanvas />;

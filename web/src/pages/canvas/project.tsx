@@ -38,6 +38,7 @@ import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, prepareNodeTextContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { createVideoNodeWorkflow } from "@/lib/canvas/video-node-workflow";
+import { remapCopiedNodeReferences } from "@/lib/canvas/canvas-clipboard";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-hover-toolbar";
 import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-toolbar";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
@@ -1159,11 +1160,7 @@ function InfiniteCanvasPage() {
             };
         });
 
-        const pastedNodes = nextNodes.map((node) => {
-            const groupId = node.metadata?.groupId;
-            if (!groupId) return node;
-            return { ...node, metadata: { ...node.metadata, groupId: idMap.get(groupId) } };
-        });
+        const pastedNodes = nextNodes.map((node) => remapCopiedNodeReferences(node, idMap));
 
         const nextConnections = clipboard.connections.flatMap((connection, index) => {
             const toNodeId = idMap.get(connection.toNodeId);

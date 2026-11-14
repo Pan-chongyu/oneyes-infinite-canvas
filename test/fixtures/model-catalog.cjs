@@ -17,10 +17,11 @@ const catalog = createModelCatalog(async (url, init) => {
 ipcMain.handle('config:read', () => stored);
 ipcMain.handle('config:write', (_event, value) => { stored = value; });
 ipcMain.handle('diagnostics:report', () => null);
+ipcMain.handle('collaboration:call', () => ({ status: 'offline' }));
 ipcMain.handle('models:list', async (_event, key) => { try { return { data: await catalog(key) }; } catch (error) { return { error: error.message }; } });
 app.whenReady().then(async () => {
     const win = new BrowserWindow({ show: false, width: 1000, height: 780, webPreferences: { preload: resolve('desktop/preload.cjs'), backgroundThrottling: false, contextIsolation: true, nodeIntegration: false } });
-    const js = code => win.webContents.executeJavaScript(code);
+    const js = code => win.webContents.executeJavaScript(code).catch(error => { throw new Error(`${error.message}: ${code}`, { cause: error }); });
     const wait = async condition => {
         const end = Date.now() + 20000;
         while (!await js(condition)) { if (Date.now() > end) throw Error(`Timed out: ${condition}`); await new Promise(resolve => setTimeout(resolve, 25)); }
@@ -190,6 +191,50 @@ app.whenReady().then(async () => {
         await toggle(true);
         await wait('Array.from(document.querySelectorAll("[contenteditable=true] img")).every(image=>image.src===mentionTest.state().image)');
         console.log('NATIVE_MENTION_IMAGE_PREFERENCE_RESTORE_REFRESH_PREVIEW_CARET_AND_EXISTING_BEHAVIOR_OK');
+        await js('showClipboardCanvas()');
+        await wait('window.clipboardTest && document.querySelector("[data-node-id=first]")');
+        const original = await js('clipboardTest.state()');
+        const shortcut = async key => {
+            await js('document.activeElement?.blur();window.getSelection()?.removeAllRanges()');
+            const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers });
+        };
+        await shortcut('a'); await shortcut('c');
+        const batches = [], contexts = new Map();
+        for (let index = 0; index < 2; index++) {
+            await shortcut('v');
+            await wait(`clipboardTest.state().nodes.length === ${original.nodes.length * (index + 2)}`);
+            const project = await js('clipboardTest.state()'), batch = project.nodes.slice(-original.nodes.length);
+            batches.push(batch);
+            for (const config of batch.filter(node => node.type === 'config')) {
+                const context = await js(`clipboardTest.context(${JSON.stringify(config.id)})`);
+                contexts.set(config.id, context.referenceImages);
+                assert.equal(context.imageCount, 2, 'pasted @ tokens must resolve both images after removing original nodes');
+                const expectedImages = ['blue', 'red'].map(color => batch.find(node => node.id.startsWith(color+'-') || node.metadata?.storageKey === original.nodes.find(node=>node.id===color).metadata.storageKey));
+                assert.deepEqual(context.referenceImages.map(image => image.id), expectedImages.map(image => image.id));
+                assert.deepEqual(context.referenceImages.map(image => image.storageKey), expectedImages.map(image => image.metadata.storageKey));
+                assert.ok(context.referenceImages.every(image => image.dataUrl.startsWith('data:image/')), 'local originals must still hydrate');
+                assert.equal(config.metadata.quality, 'high'); assert.equal(config.metadata.size, '16:9');
+                assert.ok(!/@\[node:(red|blue)\]/.test(config.metadata.composerContent));
+            }
+            const group = batch.find(node => node.type === 'group');
+            assert.ok(batch.filter(node => node.type === 'image').every(node => node.metadata.groupId === group.id));
+            await wait(`document.querySelectorAll('[contenteditable=true] [data-reference-node-id]').length === 3`);
+        }
+        assert.notEqual(batches[0][0].metadata.composerContent, batches[1][0].metadata.composerContent, 'repeated paste must create independent references');
+        assert.deepEqual((await js('clipboardTest.state()')).nodes.slice(0, original.nodes.length), original.nodes, 'original graph must not change');
+        await js('clipboardTest.flush()');
+        const saved = await js('clipboardTest.state()');
+        await win.loadURL(process.argv[2]);
+        await wait('Boolean(window.showClipboardCanvas)');
+        await js('showClipboardCanvas()');
+        await wait(`document.querySelectorAll('[data-node-id]').length === ${saved.nodes.length}`);
+        const restored = await js('clipboardTest.state()');
+        const stableNodes = nodes => JSON.parse(JSON.stringify(nodes.map(node => node.metadata?.storageKey ? { ...node, metadata: { ...node.metadata, content: undefined } } : node)));
+        assert.deepEqual(stableNodes(restored.nodes), stableNodes(saved.nodes)); assert.deepEqual(restored.connections, saved.connections);
+        for (const [id, images] of contexts) assert.deepEqual((await js(`clipboardTest.context(${JSON.stringify(id)})`)).referenceImages, images, 'reopened references must load the same original bytes via new blob URLs');
+        console.log('NATIVE_CANVAS_BULK_COPY_MENTIONS_MULTI_IMAGE_ORDER_GROUP_SHARED_INPUTS_REPEAT_PASTE_AND_RESTORE_OK');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
 });
