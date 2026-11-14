@@ -1,9 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { managedWindowsMcp, prepareWindowsMcp } from "./windows-mcp.js";
+import { extractWindowsMcpArchive, managedWindowsMcp, prepareWindowsMcp } from "./windows-mcp.js";
+
+test("Windows extraction handles Unicode paths without depending on the installed Archive module", { skip: process.platform !== "win32" }, async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "canvas-mcp-解压 空格-"));
+    const modulePath = process.env.PSModulePath;
+    try {
+        const source = path.join(dir, "source"), zip = path.join(dir, "依赖.zip"), stage = path.join(dir, "解压 目录");
+        await mkdir(source); await writeFile(path.join(source, "uv.exe"), "fixture executable");
+        const modules = path.join(dir, "modules"), archiveModule = path.join(modules, "Microsoft.PowerShell.Archive");
+        await mkdir(archiveModule, { recursive: true });
+        await writeFile(path.join(archiveModule, "Microsoft.PowerShell.Archive.psm1"), "function Expand-Archive { throw 'Incompatible Archive module' }; Export-ModuleMember -Function Expand-Archive");
+        await promisify(execFile)(path.join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory($env:ONEYES_TEST_SOURCE, $env:ONEYES_TEST_ZIP)"], { env: { ...process.env, ONEYES_TEST_SOURCE: source, ONEYES_TEST_ZIP: zip }, windowsHide: true });
+        process.env.PSModulePath = modules;
+        await extractWindowsMcpArchive(zip, stage);
+        assert.equal(await readFile(path.join(stage, "uv.exe"), "utf8"), "fixture executable");
+        await writeFile(zip, "corrupt archive");
+        await assert.rejects(extractWindowsMcpArchive(zip, path.join(dir, "corrupt")));
+        assert.equal(await readFile(path.join(stage, "uv.exe"), "utf8"), "fixture executable");
+    } finally {
+        if (modulePath === undefined) delete process.env.PSModulePath; else process.env.PSModulePath = modulePath;
+        assert.ok(path.resolve(dir).startsWith(path.resolve(tmpdir()) + path.sep));
+        await rm(dir, { recursive: true, force: true });
+    }
+});
 
 test("only the official enabled Windows-MCP stdio command qualifies for provisioning", () => {
     for (const command of ["uvx", "C:\\tools\\uvx.exe"]) assert.equal(managedWindowsMcp({ command, args: ["windows-mcp", "serve"] }), true);

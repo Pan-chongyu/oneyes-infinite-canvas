@@ -44,6 +44,11 @@ export async function probeWindowsMcp(settings: WindowsMcpSettings) {
     } finally { await client.close(); }
 }
 
+// Use the .NET Framework overload available to Windows PowerShell on both chips.
+export async function extractWindowsMcpArchive(zip: string, staging: string) {
+    await run(path.join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($env:ONEYES_UV_ZIP, $env:ONEYES_UV_STAGE)"], { env: { ...process.env, ONEYES_UV_ZIP: zip, ONEYES_UV_STAGE: staging }, windowsHide: true });
+}
+
 /** Install into the app's private directory; no PATH, registry, global Python or Codex config changes. */
 export async function installWindowsMcp(root: string) {
     const chip = machine().toLowerCase();
@@ -60,7 +65,7 @@ export async function installWindowsMcp(root: string) {
             const bytes = Buffer.from(await response.arrayBuffer());
             if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256) throw new Error("uv 下载校验失败，已停止安装");
             await writeFile(zip, bytes, { flag: "wx" });
-            await run(path.join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:ONEYES_UV_ZIP -DestinationPath $env:ONEYES_UV_STAGE"], { env: { ...env, ONEYES_UV_ZIP: zip, ONEYES_UV_STAGE: staging }, windowsHide: true });
+            await extractWindowsMcpArchive(zip, staging);
             await rm(uvDirectory, { recursive: true, force: true });
             await rename(staging, uvDirectory);
         } finally { await rm(zip, { force: true }); await rm(staging, { recursive: true, force: true }); }
