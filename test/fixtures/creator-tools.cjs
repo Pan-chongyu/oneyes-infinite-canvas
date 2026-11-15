@@ -29,12 +29,13 @@ app.whenReady().then(async()=>{
   assert.equal(await js('creatorTest.state().connections.length'),1);
   await js('creatorTest.clear(); creatorTest.seed("compose")');
   await js('creatorTest.start(); creatorTest.cancel()');await wait('creatorTest.state().nodes[1].metadata.status==="idle"');
+  await js('creatorTest.settled()');
   assert.equal(await js('creatorTest.state().nodes.length'),2);
   await js('creatorTest.seed("compose")');await js('creatorTest.start();creatorTest.switchProject()');
-  await js('new Promise(resolve=>setTimeout(resolve,100))');
+  await js('creatorTest.settled()');
   assert.equal(await js('creatorTest.state().projectId'),'B');assert.equal(await js('creatorTest.state().nodes.length'),1,'late results never reach another canvas');
   await js('creatorTest.seed("compose")');await js('creatorTest.start();creatorTest.remove()');
-  await js('new Promise(resolve=>setTimeout(resolve,100))');assert.equal(await js('creatorTest.state().nodes.length'),1);
+  await js('creatorTest.settled()');assert.equal(await js('creatorTest.state().nodes.length'),1);
   await js('creatorTest.seed("compose","loading")');
   await wait('creatorTest.state().nodes[1].metadata.status==="error"');
   assert.match(await js('document.body.innerText'),/上次本地处理已中断/);

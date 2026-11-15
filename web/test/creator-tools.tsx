@@ -22,6 +22,7 @@ context.fillStyle='red';context.fillRect(0,0,9,7);
 const original = await uploadImage(await input.convertToBlob({type:'image/png'}));
 const source:CanvasNodeData={id:'source',type:'image',title:'原始图',position:{x:0,y:0},width:9,height:7,metadata:imageMetadata(original)};
 const tool=(name:string,status='idle'):CanvasNodeData=>({id:'tool',type:'creator-tools:'+name,title:'处理节点',position:{x:20,y:20},width:320,height:190,metadata:{status:status as any,creatorSettings:{sourceIds:['source']}}});
+let pending: Promise<void> = Promise.resolve();
 function Fixture(){
  const [nodes,setNodes]=useState([source,tool('compose')]);
  const [connections,setConnections]=useState<CanvasConnection[]>([]);
@@ -36,8 +37,8 @@ function Fixture(){
  Object.assign(window,{creatorTest:{
   state:()=>({nodes,connections,projectId}),
   seed:(name='compose',status='idle')=>flushSync(()=>{setProjectId('A');setNodes([source,tool(name,status)]);setConnections([]);}),
-  start:()=>processing.start('tool'),cancel:()=>processing.cancel('tool'),
-  pair:async()=>{const first=processing.start('tool'),second=processing.start('tool');const same=first===second;await first;return same;},
+  start:()=>pending=processing.start('tool'),cancel:()=>processing.cancel('tool'),settled:()=>pending,
+  pair:async()=>{const first=processing.start('tool'),second=processing.start('tool');pending=first;const same=first===second;await first;return same;},
   switchProject:()=>flushSync(()=>{setProjectId('B');setNodes([source]);setConnections([]);}),
   remove:()=>flushSync(()=>setNodes(prev=>prev.filter(n=>n.id!=='tool'))),
   theme:(value:boolean)=>flushSync(()=>{setDark(value);document.documentElement.classList.toggle('dark',value);}),
