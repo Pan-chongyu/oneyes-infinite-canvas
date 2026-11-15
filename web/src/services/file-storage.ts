@@ -23,14 +23,21 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
-    if (!blob) return fallback;
+    if (!blob) return /^video-job:[a-f0-9-]{36}$/.test(storageKey) && window.oneYesDesktop?.videoTasks ? `oneyes-canvas://app/video-tasks/${storageKey.slice(10)}/content` : fallback;
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
 }
 
 export async function getMediaBlob(storageKey: string) {
-    return store.getItem<Blob>(storageKey);
+    const stored = await store.getItem<Blob>(storageKey);
+    if (stored) return stored;
+    if (/^video-job:[a-f0-9-]{36}$/.test(storageKey) && window.oneYesDesktop?.videoTasks) {
+        const response = await fetch(await resolveMediaUrl(storageKey));
+        if (!response.ok) throw Error('本地视频未保存完成，请从视频任务中继续取回');
+        return response.blob();
+    }
+    return null;
 }
 
 export async function setMediaBlob(storageKey: string, blob: Blob) {

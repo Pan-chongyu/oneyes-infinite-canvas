@@ -10,6 +10,7 @@ import { flushSync } from 'react-dom';
 import { CanvasVideoSettingsPopover } from '@/components/canvas/canvas-video-settings-popover';
 import type { AiConfig } from '@/stores/use-config-store';
 import type { VideoReferenceSummary } from '@/lib/video-capabilities';
+import { videoModelCatalog } from '@/lib/video-model-catalog';
 
 Object.assign(window, { oneYesDesktop: {} });
 initializeDesktopTransport();
@@ -113,4 +114,25 @@ Object.assign(window, { videoWaitTest: async () => {
         check(await canceled, 'unbounded polling remains cancelable');
         return 'VIDEO_LONG_WAIT_OK';
     } finally { window.setTimeout = setTimer; }
+} });
+
+Object.assign(window, { videoBridgeTest: async () => {
+    const canvas = document.createElement('canvas'); canvas.width = 4; canvas.height = 3;
+    canvas.getContext('2d')!.fillRect(0, 0, 4, 3);
+    const stored = await uploadImage(canvas.toDataURL('image/png'));
+    const image = { id: 'bridge-reference', name: 'fixture.png', type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+    for (const info of videoModelCatalog) {
+        const model = 'oneyes-minimax::' + (info.id.startsWith('grok-') ? info.aliases[0] : info.id);
+        const selected = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model, vquality: info.defaultResolution, videoSeconds: String(info.defaultSeconds), videoMode: info.modes[0], size: info.ratios.includes('16:9') ? '16:9' : info.ratios[0] };
+        const motion = info.id === 'kling-3.0-motion-control';
+        const images = motion ? [image] : info.id === 'grok-imagine-video-1.5' ? [{ ...image, storageKey: undefined, dataUrl: 'https://cdn.example.com/image.png', url: 'https://cdn.example.com/image.png' }] : [];
+        await createVideoGenerationTask(selected, 'offline bridge fixture', images, motion ? { videos: [{ id: 'motion', name: 'motion.mp4', url: 'https://cdn.example.com/motion.mp4', durationMs: 5000 }] } : undefined);
+    }
+    // The same material coming from local, @ and a connection is submitted once.
+    const wan = { ...config, model: 'default::wan3.0-video', size: '16:9', vquality: '1080', videoMode: 'reference' };
+    await createVideoGenerationTask(wan, 'deduplicated references', [image, { ...image, id: 'mention' }, { ...image, id: 'connection' }]);
+    let conflict = false;
+    try { await createVideoGenerationTask(wan, 'conflict', [image, { ...image, storageKey: 'different' }]); } catch (error) { conflict = /同一参考素材 ID/.test(String(error)); }
+    check(conflict, 'conflicting references must stop before POST');
+    return 'VIDEO_BRIDGE_NATIVE_OK';
 } });

@@ -22,6 +22,10 @@ import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer
 import { CanvasPromptChipInput } from "@/components/canvas/canvas-prompt-chip-input";
 import { buildNodeGenerationContext, buildNodeGenerationInputs } from "@/components/canvas/canvas-node-generation";
 import { buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
+import { MemoryRouter } from 'react-router-dom';
+import { VideoRecovery } from '@/components/layout/video-recovery';
+import { UserStatusActions } from '@/components/layout/user-status-actions';
+import { useVideoRecoveryStore } from '@/services/video-recovery';
 
 await useConfigStore.persist.rehydrate();
 useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-model-key", models: [] }] });
@@ -37,6 +41,7 @@ Object.assign(window, { modelTest: {
         const config = useConfigStore.getState().config;
         return resolveModelRequestConfig(config, config.videoModel);
     },
+    selectVideo: (model: string) => useConfigStore.getState().updateConfig('videoModel', model),
     restore: () => useConfigStore.persist.rehydrate(),
     checked: (name: string) => (Array.from(document.querySelectorAll("label.ant-checkbox-wrapper")).find(label => label.textContent?.trim() === name)?.querySelector("input") as HTMLInputElement)?.checked,
     toggle: (name: string) => (Array.from(document.querySelectorAll("label.ant-checkbox-wrapper")).find(label => label.textContent?.trim() === name)?.querySelector("input") as HTMLInputElement)?.click(),
@@ -48,6 +53,9 @@ function Probe() {
     const [canvas, setCanvas] = useState(false);
     const [mentions, setMentions] = useState(false);
     const [clipboard, setClipboard] = useState<React.ReactNode>(null);
+    const [recovery, setRecovery] = useState(false);
+    Object.assign(window, { showVideoRecovery: () => { useVideoRecoveryStore.setState({ open: true }); flushSync(() => setRecovery(true)); }, setRecoveryTheme: (theme: 'light' | 'dark') => flushSync(() => useThemeStore.getState().setTheme(theme)) });
+    if (recovery) return <MemoryRouter><div className="p-6"><UserStatusActions /><VideoRecovery /></div></MemoryRouter>;
     Object.assign(window, { showClipboardCanvas: async () => { const fixture = await import("./canvas-clipboard"); await fixture.prepareClipboardCanvas(); flushSync(() => setClipboard(<fixture.ClipboardCanvas />)); } });
     if (clipboard) return clipboard;
     Object.assign(window, { showModelCanvas: () => flushSync(() => setCanvas(true)), showMentionPreferences: () => flushSync(() => setMentions(true)) });

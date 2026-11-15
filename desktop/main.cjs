@@ -20,6 +20,7 @@ const { createEditorWindows } = require('./editor-windows.cjs');
 const { createCollaboration } = require('./collaboration.cjs');
 const { createTray, closeToTray } = require('./tray.cjs');
 const { configurePermissions } = require('./permissions.cjs');
+const { createVideoTasks, probeVideo } = require('./video-tasks.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 let window;
 let tray, quitting = false;
@@ -55,6 +56,15 @@ app.whenReady().then(async () => {
         changed: state => { if (window && !window.isDestroyed()) window.webContents.send('media:state', state); } });
     network.configure(saved ? JSON.parse(saved).state?.config : {});
     const account = createAccount({ vault: createVault(app.getPath('userData'), 'account'), fetcher: network.fetch });
+    const videoTasks = createVideoTasks({ directory: app.getPath('userData'), vault: createVault(app.getPath('userData'), 'video-tasks'), fetcher: network.fetch,
+        probe: probeVideo(join(app.isPackaged ? join(process.resourcesPath, 'media-bin') : join(__dirname, 'media-bin'), 'ffprobe' + (process.platform === 'win32' ? '.exe' : ''))),
+        credentials: async () => {
+            const config = JSON.parse(await vault.read() || '{}').state?.config || {};
+            const session = JSON.parse(await createVault(app.getPath('userData'), 'account').read() || '{}');
+            return (config.channels || []).filter(channel => !channel.oneYes || channel.oneYes.accountId === session.user?.id);
+        },
+        report: (stage, error) => report('video', stage, error),
+        changed: jobs => { if (window && !window.isDestroyed()) window.webContents.send('video-tasks:state', jobs); } });
     const listModels = createModelCatalog(network.fetch);
     if (smoke) {
         const smokePort = await new Promise(resolve => { const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
@@ -78,7 +88,7 @@ app.whenReady().then(async () => {
         if (!window || window.isDestroyed()) return;
         window.webContents.send('collaboration:event', state);
     } });
-    powerMonitor.on('resume', () => { void collaboration.call('reconnect').catch(() => {}); });
+    powerMonitor.on('resume', () => { void collaboration.call('reconnect').catch(() => {}); void videoTasks.wake().catch(() => {}); });
     let diagnosticsClosed = false;
     app.on('before-quit', event => {
         if (diagnosticsClosed) return;
@@ -87,7 +97,7 @@ app.whenReady().then(async () => {
         quitting = true;
         // Persist only; never hold app exit waiting for a network upload.
         void editors.flushAll().then(async () => {
-            updater.close(); agent.stop(); network.close(); await collaboration.close();
+            updater.close(); agent.stop(); await videoTasks.close(); network.close(); await collaboration.close();
             await Promise.allSettled([diagnostics.close(), media.close()]);
             diagnosticsClosed = true; tray?.destroy(); tray = undefined; app.quit();
         }).catch(async error => {
@@ -99,16 +109,22 @@ app.whenReady().then(async () => {
         try {
             if (request.url.startsWith('oneyes-canvas://app/media-tools/')) return await media.request(request);
             if (request.url.startsWith('oneyes-canvas://app/collaboration/')) return await collaboration.request(request);
+            if (request.url.startsWith('oneyes-canvas://app/video-tasks/')) return await videoTasks.request(request);
             const target = route(request.url, root);
             if (target.file) return net.fetch(target.file);
             if (target.image) return await downloadImage(request, target.image, network.fetch);
             if (target.webdav) return await requestWebdav(request, target.webdav, network.fetch);
             if (!['GET', 'HEAD', 'POST', 'DELETE', 'PATCH', 'PUT', 'OPTIONS', 'PROPFIND', 'MKCOL', 'COPY', 'MOVE', 'LOCK', 'UNLOCK', 'PROPPATCH'].includes(request.method)) return new Response(null, { status: 405 });
             const headers = {};
-            const skip = new Set(['host', 'connection', 'content-length', 'accept-encoding', 'origin', 'referer', 'proxy-authorization']);
+            const videoJob = request.headers.get('x-oneyes-video-job');
+            const skip = new Set(['host', 'connection', 'content-length', 'accept-encoding', 'origin', 'referer', 'proxy-authorization', 'x-oneyes-video-job']);
             for (const [name, value] of request.headers) if (!skip.has(name) && !name.startsWith('sec-')) headers[name] = value;
             const body = !['GET', 'HEAD'].includes(request.method) ? await request.arrayBuffer() : undefined;
             const urls = target.apis || [target.api];
+            if (videoJob) {
+                if (request.method !== 'POST') throw Error('视频创建方法无效');
+                await videoTasks.beforeSubmit(videoJob, urls[0], headers, body);
+            }
             let upstream;
             for (let index = 0; index < urls.length; index += 1) {
                 const oneYes = ['oneyes.ai', 'api.oneyes.ai'].includes(new URL(urls[index]).hostname);
@@ -127,6 +143,7 @@ app.whenReady().then(async () => {
                 break;
             }
             if (!upstream) throw new Error('OneYes 接口无响应');
+            if (videoJob) await videoTasks.receipt(videoJob, upstream);
             if (upstream.status >= 300 && upstream.status < 400) return Response.json({ error: { message: 'OneYes 接口发生重定向，已停止请求以保护 API Key' } }, { status: 502 });
             const responseHeaders = new Headers(upstream.headers);
             for (const name of ['content-encoding', 'content-length', 'transfer-encoding', 'connection']) responseHeaders.delete(name);
@@ -148,8 +165,13 @@ app.whenReady().then(async () => {
     ipcMain.handle('window:theme', (event, theme) => { trusted(event); syncWindowTheme(window, nativeTheme, theme); });
     ipcMain.handle('window:fullscreen', event => { trusted(event); return window.isFullScreen(); });
     ipcMain.handle('config:read', event => { trusted(event); return vault.read(); });
-    ipcMain.handle('config:write', async (event, value) => { trusted(event); const config = JSON.parse(value).state?.config; await vault.write(value); network.configure(config); });
-    ipcMain.handle('config:remove', async event => { trusted(event); await vault.remove(); network.configure({}); });
+    ipcMain.handle('config:write', async (event, value) => { trusted(event); const config = JSON.parse(value).state?.config; await vault.write(value); network.configure(config); await videoTasks.wake(); });
+    ipcMain.handle('config:remove', async event => { trusted(event); await vault.remove(); network.configure({}); await videoTasks.wake(); });
+    ipcMain.handle('video-tasks:call', async (event, operation, args) => {
+        trusted(event);
+        if (!['list', 'prepare', 'adopt', 'retry', 'submissionError'].includes(operation)) throw Error('不支持的视频任务操作');
+        return operation === 'submissionError' ? videoTasks.submissionError(args.key, args.reason) : videoTasks[operation](args);
+    });
     ipcMain.handle('proxy:test', async (event, config) => {
         trusted(event);
         try { return { data: await network.test(config) }; }
@@ -157,7 +179,11 @@ app.whenReady().then(async () => {
     });
     ipcMain.handle('account:call', async (event, operation, args) => {
         trusted(event);
-        try { return { data: await account.call(operation, args) }; }
+        try {
+            const data = await account.call(operation, args);
+            if (['login', 'login_2fa', 'logout', 'reuse'].includes(operation)) await videoTasks.wake();
+            return { data };
+        }
         catch (error) { report('account', 'request', error); return { error: error.message }; }
     });
     ipcMain.handle('models:list', async (event, apiKey) => {

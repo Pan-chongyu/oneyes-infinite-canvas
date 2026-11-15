@@ -18,6 +18,14 @@ ipcMain.handle('config:read', () => stored);
 ipcMain.handle('config:write', (_event, value) => { stored = value; });
 ipcMain.handle('diagnostics:report', () => null);
 ipcMain.handle('collaboration:call', () => ({ status: 'offline' }));
+let recoveryRetries = 0;
+const recoveryJobs = [{ key: '00000000-0000-0000-0000-000000000001', taskId: 'original-task', model: 'default::gemini-omni-flash-1.2', provider: 'openai', site: 'https://oneyes.ai', channelId: 'default', state: 'credentials', reason: '请恢复原 API Key 后继续查询', createdAt: Date.now(), parameters: { vquality: '1080p', videoSeconds: '5', size: '16:9' } },
+    { key: '00000000-0000-0000-0000-000000000002', model: 'default::wan3.0-video', provider: 'openai', site: 'https://oneyes.ai', channelId: 'default', state: 'unknown', reason: '未取得可靠回执，请先核对官网任务和用量', createdAt: Date.now(), parameters: { vquality: '720p', videoSeconds: '5', size: '16:9' } }];
+ipcMain.handle('video-tasks:call', (_event, operation, args) => {
+    if (operation === 'list') return recoveryJobs;
+    assert.equal(operation, 'retry'); assert.equal(args, recoveryJobs[0].key); recoveryRetries++;
+    return recoveryJobs.map(job => job.taskId ? { ...job, state: 'download_error', reason: '下载未完成，已保留原任务' } : job);
+});
 ipcMain.handle('models:list', async (_event, key) => { try { return { data: await catalog(key) }; } catch (error) { return { error: error.message }; } });
 app.whenReady().then(async () => {
     const win = new BrowserWindow({ show: false, width: 1000, height: 780, webPreferences: { preload: resolve('desktop/preload.cjs'), backgroundThrottling: false, contextIsolation: true, nodeIntegration: false } });
@@ -87,14 +95,15 @@ app.whenReady().then(async () => {
         win.show(); win.focus();
         await wait('document.hasFocus()');
         for (const name of variants) {
+            await js(`modelTest.selectVideo(${JSON.stringify('oneyes-minimax::' + name)})`);
             await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-            await wait('document.querySelectorAll("[role=option]").length === 10');
+            await wait('document.querySelectorAll("[role=option]").length === 6');
             const labels = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent.trim())');
-            for (const variant of variants) assert.ok(labels.includes(`${variant}（OneYes Grok）`), variant);
+            for (const variant of variants.slice(0, 2)) assert.ok(labels.some(label => label.startsWith(variant + ' [') && label.endsWith('（OneYes Grok）')), variant);
             assert.ok(labels.every(label => !/sdxl|gpt-5/.test(label)));
-            await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.textContent.trim()===${JSON.stringify(`${name}（OneYes Grok）`)}).focus()`);
+            await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.getAttribute('data-model-id')===${JSON.stringify(`oneyes-minimax::${name}`)}).focus()`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
             await wait(`modelTest.state().config.videoModel === ${JSON.stringify(`oneyes-minimax::${name}`)} && !document.querySelector("[role=listbox]")`);
@@ -122,9 +131,11 @@ app.whenReady().then(async () => {
             assert.ok(textBounds.every(text=>text.right<=bounds.viewport.right && text.scrollHeight<=text.height), 'full model versions must wrap without hidden text: '+JSON.stringify(textBounds));
             const wheel = { x: Math.round(bounds.viewport.x + bounds.viewport.width / 2), y: Math.round(bounds.viewport.y + bounds.viewport.height / 2) };
             const beforeScroll = await js('document.querySelector("[data-radix-select-viewport]").scrollTop');
-            win.webContents.sendInputEvent({ type: 'mouseMove', ...wheel });
-            win.webContents.sendInputEvent({ type: 'mouseWheel', deltaX: 0, deltaY: -120, ...wheel });
-            await wait(`document.querySelector("[data-radix-select-viewport]").scrollTop > ${beforeScroll}`);
+            if (await js('(()=>{const viewport=document.querySelector("[data-radix-select-viewport]");return viewport.scrollHeight>viewport.clientHeight+viewport.scrollTop})()')) {
+                win.webContents.sendInputEvent({ type: 'mouseMove', ...wheel });
+                win.webContents.sendInputEvent({ type: 'mouseWheel', deltaX: 0, deltaY: -120, ...wheel });
+                await wait(`document.querySelector("[data-radix-select-viewport]").scrollTop > ${beforeScroll}`);
+            }
             if (process.env.ONEYES_MODEL_SCREENSHOTS) {
                 await mkdir(process.env.ONEYES_MODEL_SCREENSHOTS, { recursive: true });
                 await writeFile(join(process.env.ONEYES_MODEL_SCREENSHOTS, `config-model-${scale}-${dark ? 'dark' : 'light'}.png`), (await win.capturePage()).toPNG());
@@ -132,14 +143,14 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'End' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'End' });
             await wait('document.activeElement === Array.from(document.querySelectorAll("[role=option]")).at(-1)');
-            const target = await js(`(()=>{const item=document.activeElement,r=item.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),visible:item.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),text:item.textContent.trim()};})()`);
+            const target = await js(`(()=>{const item=document.activeElement,r=item.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),visible:item.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),model:item.getAttribute('data-model-id'),text:item.textContent.trim()};})()`);
             assert.equal(target.visible, true, 'last model must be clickable above neighboring nodes');
-            assert.notEqual((await js('modelNodeTest.state()')).metadata.model, `oneyes-minimax::${target.text.replace(/（OneYes Grok）$/, '')}`);
+            assert.notEqual((await js('modelNodeTest.state()')).metadata.model, target.model);
             win.webContents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y });
             win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: target.x, y: target.y });
             win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: target.x, y: target.y });
             await wait('!document.querySelector("[role=listbox]")');
-            assert.equal((await js('modelNodeTest.state()')).metadata.model, `oneyes-minimax::${target.text.replace(/（OneYes Grok）$/, '')}`);
+            assert.equal((await js('modelNodeTest.state()')).metadata.model, target.model);
             assert.deepEqual(await js('modelNodeTest.events()'), { drag: 0, background: 0, viewport: 0 }, 'model list interaction must not drag or zoom the canvas');
         }
         console.log('NATIVE_CONFIG_MODEL_LIST_ZOOM_EDGES_OVERLAP_AND_POINTER_SELECTION_OK');
@@ -235,6 +246,23 @@ app.whenReady().then(async () => {
         assert.deepEqual(stableNodes(restored.nodes), stableNodes(saved.nodes)); assert.deepEqual(restored.connections, saved.connections);
         for (const [id, images] of contexts) assert.deepEqual((await js(`clipboardTest.context(${JSON.stringify(id)})`)).referenceImages, images, 'reopened references must load the same original bytes via new blob URLs');
         console.log('NATIVE_CANVAS_BULK_COPY_MENTIONS_MULTI_IMAGE_ORDER_GROUP_SHARED_INPUTS_REPEAT_PASTE_AND_RESTORE_OK');
+        await js('showVideoRecovery()');
+        await wait('document.querySelector(".ant-modal-body")?.textContent.includes("等待恢复凭据")');
+        const recovery = await js('document.querySelector(".ant-modal-body").textContent');
+        assert.match(recovery, /提交待核实/); assert.match(recovery, /不会重新生成、重复付费/); assert.match(recovery, /original-task/);
+        assert.equal(await js('[...document.querySelectorAll(".ant-modal-body button")].filter(button=>button.textContent.includes("重试查询")).length'), 1, 'an unknown submission cannot offer paid automatic regeneration');
+        await js('[...document.querySelectorAll(".ant-modal-body button")].find(button=>button.textContent.includes("重试查询")).click()');
+        await wait('document.querySelector(".ant-modal-body")?.textContent.includes("下载未完成")');
+        assert.equal(recoveryRetries, 1);
+        if (!process.env.CI) {
+            await mkdir('.secrets', { recursive: true });
+            for (const theme of ['light', 'dark']) {
+                await js(`setRecoveryTheme(${JSON.stringify(theme)})`);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                await writeFile(`.secrets/qa-video-recovery-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            }
+        }
+        console.log('VIDEO_RECOVERY_UI_OK: real native IPC, original receipt, credentials and uncertain state, retry query, no new generation action');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
 });

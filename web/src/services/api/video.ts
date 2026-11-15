@@ -7,23 +7,27 @@ import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { isGrokVideoModel, isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, normalizeVideoResolutionForModel } from "@/lib/video-capabilities";
+import { getVideoModelInfo, videoModelConfigError } from "@/lib/video-model-info";
+import type { VideoModelInfo } from "@/lib/video-model-catalog";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { prepareReferenceFiles } from "./image-references";
+import { buildVideoBridgeRequest, encodeVideoBridgeRequest, usesVideoBridgeRequest, videoBridgeMediaUrl } from "./video-bridge-request";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { adoptVideoTask, videoRecoveryInput, type VideoRecoveryJob } from '../video-recovery';
 
 type VideoResponse = { id?: string; request_id?: string; status?: string; error?: { message?: string } | string; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null; video?: { url?: string; respect_moderation?: boolean } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
-type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: ReferenceAudio[] };
+type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: ReferenceAudio[]; target?: VideoRecoveryJob['target']; onPrepared?: (key: string) => Promise<void>; nativeJobKey?: string };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
-export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "gemini" | "plugin"; model: string };
+export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string; saved?: UploadedFile };
+export type VideoGenerationTask = { id: string; provider: "openai" | "gemini" | "plugin"; model: string; nativeJobKey?: string };
 type GeminiInlineData = { bytesBase64Encoded: string; mimeType: string };
 type GeminiVideoOperation = {
     name?: string;
@@ -52,6 +56,18 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 }
 
 export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
+    const api = window.oneYesDesktop?.videoTasks;
+    if (api && task.provider !== 'plugin') {
+        const key = task.nativeJobKey || await adoptVideoTask(config, task);
+        for (;;) {
+            options?.signal?.throwIfAborted();
+            const job = (await api.call('list')).find(item => item.key === key);
+            if (!job) throw Error('原视频恢复记录不存在，请检查本机数据目录；不会重新生成');
+            if (job.state === 'saved' && job.result) return { saved: job.result };
+            if (['failed', 'expired', 'missing', 'unknown', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(job.reason || '请从“视频任务”继续恢复原任务');
+            await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
+        }
+    }
     for (;;) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         try {
@@ -79,21 +95,60 @@ function videoTaskFailed(message: string) {
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const api = window.oneYesDesktop?.videoTasks;
+    if (!api || resolveModelScript(config, config.model || config.videoModel)) return createVideoTask(config, prompt, references, options);
+    const selected = { ...config, model: config.model || config.videoModel };
+    const key = await api.call('prepare', { ...videoRecoveryInput(selected, prompt, options?.target), references: [...references, ...options?.videos || [], ...options?.audios || []].map(item => ({ id: item.id, storageKey: item.storageKey })) });
+    try {
+        await options?.onPrepared?.(key);
+        const task = await createVideoTask(config, prompt, references, { ...options, nativeJobKey: key });
+        return { ...task, nativeJobKey: key };
+    } catch (error) {
+        await api.call('submissionError', { key, reason: error instanceof Error ? error.message : '视频提交未完成' });
+        throw error;
+    }
+}
+
+function submissionHeaders(options?: VideoMediaOptions) { return options?.nativeJobKey ? { 'x-oneyes-video-job': options.nativeJobKey } : {}; }
+
+async function createVideoTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
-    if (isUnsupportedGrokVideoResolution({ ...config, model: selectedModel }, { imageCount: references.length, audioCount: options?.audios?.length || 0, videoCount: options?.videos?.length || 0 })) throw new Error(apiText("grokVideoReferenceResolution"));
-    if (isUnsupportedMiniMaxVideoResolution({ ...config, model: selectedModel })) throw new Error(apiText("miniMaxVideoResolution"));
+    const info = getVideoModelInfo(config, selectedModel);
+    if (info) {
+        references = uniqueVideoReferences(references, image => image.storageKey || image.dataUrl || image.url || image.id);
+        options = { ...options, videos: uniqueVideoReferences(options?.videos || [], item => item.storageKey || item.url || item.id), audios: uniqueVideoReferences(options?.audios || [], item => item.storageKey || item.url || item.id) };
+    }
+    if (!info && isUnsupportedGrokVideoResolution({ ...config, model: selectedModel }, { imageCount: references.length, audioCount: options?.audios?.length || 0, videoCount: options?.videos?.length || 0 })) throw new Error(apiText("grokVideoReferenceResolution"));
+    if (!info && isUnsupportedMiniMaxVideoResolution({ ...config, model: selectedModel })) throw new Error(apiText("miniMaxVideoResolution"));
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
+    // A canonical Grok ID may route to an existing native pool with edit/audio
+    // capabilities beyond the 88API catalog. Keep that established path intact.
+    const nativeGrok = info?.id.startsWith("grok-imagine-video") && modelOptionName(selectedModel) === info.id;
+    const parameterError = nativeGrok ? undefined : videoModelConfigError(config, selectedModel, { imageCount: references.length, videoCount: options?.videos?.length || 0, audioCount: options?.audios?.length || 0 });
+    if (parameterError) throw new Error(parameterError);
+    if (info && usesVideoBridgeRequest(info)) return createBridgeVideoTask(requestConfig, selectedModel, prompt, references, info, options);
     const channel = resolveModelChannel(config, selectedModel);
     // Seedance served by OneYes' Grok group speaks Grok JSON too. Do not infer
     // the protocol from a display name or apply xAI-only model limits to it.
-    if (isGrokVideoModel(selectedModel) || (/^(?:doubao-)?seedance(?:-|$)/i.test(modelOptionName(selectedModel)) && (channel.oneYes?.platform === "grok" || channel.id === GROK_VIDEO_CHANNEL_ID))) {
+    if (isGrokVideoModel(selectedModel) || info?.id.startsWith("grok-imagine-video") || (/^(?:doubao-)?seedance(?:-|$)/i.test(modelOptionName(selectedModel)) && (channel.oneYes?.platform === "grok" || channel.id === GROK_VIDEO_CHANNEL_ID))) {
         return createGrokVideoTask(requestConfig, selectedModel, prompt, references, options);
     }
     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
+}
+
+function uniqueVideoReferences<T extends { id: string }>(items: T[], identity: (item: T) => string) {
+    const seen = new Map<string, string>(), sources = new Set<string>();
+    return items.filter(item => {
+        const source = identity(item);
+        if (seen.has(item.id) && seen.get(item.id) !== source) throw Error("同一参考素材 ID 指向不同文件，请重新选择素材；未提交生成。");
+        seen.set(item.id, source);
+        if (sources.has(source)) return false;
+        sources.add(source); return true;
+    });
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
@@ -152,6 +207,7 @@ function videoPluginResult(result: unknown): VideoGenerationResult {
 }
 
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
+    if (result.saved) return result.saved;
     if (result.blob) return uploadMediaFile(result.blob, "video");
     if (result.url) {
         return uploadMediaFile(result.url, "video");
@@ -168,7 +224,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     const body = new FormData();
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
-    body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
+    body.append("seconds", getVideoModelInfo(config, model) ? config.videoSeconds : normalizeVideoSeconds(config.videoSeconds));
     body.append("size", normalizeVideoSize(config.size, config.vquality) || "1280x720");
     if (ratio && ratio !== "auto") {
         body.append("ratio", ratio);
@@ -180,24 +236,22 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     if (mode === "frames") {
         if (images[0]) {
             body.append("first_frame", images[0], "first.png");
-            body.append("images", images[0], "first.png");
         }
         if (images[1]) {
             body.append("last_frame", images[1], "last.png");
-            body.append("images", images[1], "last.png");
         }
     } else {
         images.forEach((file, idx) => {
             body.append("image[]", file, `ref_${idx + 1}.png`);
-            body.append("images", file, `ref_${idx + 1}.png`);
         });
     }
     videos.forEach((file) => body.append("video[]", file));
     audios.forEach((file) => body.append("audio[]", file));
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal, timeout: 0 })).data);
-        if (!created.id) throw new Error(apiText("noVideoTaskId"));
-        return { id: created.id, provider: "openai", model };
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: { ...aiHeaders(config), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 })).data);
+        const id = created.request_id || created.id;
+        if (!id) throw new Error(apiText("noVideoTaskId"));
+        return { id, provider: "openai", model };
     } catch (error) {
 
         reportError("video", "submit", error, "video-openai");
@@ -205,19 +259,57 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     }
 }
 
+async function createBridgeVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], info: VideoModelInfo, options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const videos = options?.videos || [], audios = options?.audios || [];
+    // Keep public-only inputs as URLs. In particular, do not download a video
+    // and disguise it as inline media when the upstream requires a prior upload.
+    const videoInputs = info.provider === "zhiying"
+        ? await Promise.all(videos.map(video => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)))
+        : videos.map(video => videoBridgeMediaUrl(video.url, "视频"));
+    const audioInputs = info.provider === "zhiying"
+        ? await Promise.all(audios.map(audio => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)))
+        : info.id.startsWith("wan3.0-video")
+            ? audios.map(audio => videoBridgeMediaUrl(audio.url, "音频"))
+            : await Promise.all(audios.map(async audio => readFileAsDataUrl(await referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options))));
+    const grok = info.id.startsWith("grok-");
+    const images = grok ? [] : await prepareReferenceFiles(references, options?.signal, info.id === "veo-3.1" ? "png" : undefined);
+    const referenceVideoDurationTotal = videos.every(video => Number.isFinite(video.durationMs) && video.durationMs! > 0)
+        ? videos.reduce((total, video) => total + video.durationMs! / 1000, 0)
+        : undefined;
+    const request = await encodeVideoBridgeRequest(buildVideoBridgeRequest(info, config, modelOptionName(model), prompt, {
+        images,
+        imageDataUrls: grok ? references.map(image => videoBridgeMediaUrl(image.url || image.dataUrl, "图片")) : info.provider === "zhiying" ? [] : await Promise.all(images.map(readFileAsDataUrl)),
+        videos: videoInputs,
+        audios: audioInputs,
+        referenceVideoDurationTotal,
+    }), info);
+    options?.signal?.throwIfAborted();
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), request.body, { headers: { ...aiHeaders(config, request.contentType), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 })).data);
+        const id = created.request_id || created.id;
+        if (!id) throw new Error(apiText("noVideoTaskId"));
+        return { id, provider: "openai", model };
+    } catch (error) {
+        reportError("video", "submit", error, "video-bridge");
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
+    }
+}
+
 // Grok's native API accepts JSON, not the generic OpenAI multipart fields.
 async function createGrokVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const videos = options?.videos || [], audios = options?.audios || [];
+    const info = getVideoModelInfo(config, model);
+    const grokModel = isGrokVideoModel(model) || Boolean(info?.id.startsWith("grok-imagine-video"));
     if (videos.length && (videos.length !== 1 || references.length || audios.length)) throw new Error(apiText("grokVideoEditReferences"));
-    if (modelOptionName(model) === "grok-imagine-video-1.5" && !references.length && !videos.length) throw new Error(apiText("grokVideoImageRequired"));
+    if ((info?.id || modelOptionName(model)) === "grok-imagine-video-1.5" && !references.length && !videos.length) throw new Error(apiText("grokVideoImageRequired"));
     const body: Record<string, unknown> = { model: modelOptionName(model), prompt };
     if (videos.length) {
         body.video = { url: await readFileAsDataUrl(await referenceMediaToFile(videos[0], "ref.mp4", "invalidReferenceVideo", options)) };
     } else {
-        body.duration = Number(normalizeVideoSeconds(config.videoSeconds));
+        body.duration = Number(info ? config.videoSeconds : normalizeVideoSeconds(config.videoSeconds));
         body.aspect_ratio = videoAspectRatio(config.size);
         body.resolution = normalizeVideoResolution(config.vquality, model);
-        if (!isGrokVideoModel(model)) {
+        if (!grokModel) {
             body.watermark = boolConfig(config.videoWatermark, false);
             body.generate_audio = boolConfig(config.videoGenerateAudio, true);
         }
@@ -232,7 +324,7 @@ async function createGrokVideoTask(config: AiConfig, model: string, prompt: stri
     }
     options?.signal?.throwIfAborted();
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, videos.length ? "/videos/edits" : "/videos/generations"), body, { headers: aiHeaders(config, "application/json"), signal: options?.signal, timeout: 0 })).data);
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, videos.length ? "/videos/edits" : "/videos/generations"), body, { headers: { ...aiHeaders(config, "application/json"), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 })).data);
         const id = created.request_id || created.id;
         if (!id) throw new Error(apiText("noVideoTaskId"));
         return { id, provider: "openai", model };
@@ -312,7 +404,7 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 addWatermark: boolConfig(config.videoWatermark, false),
             },
-        }, { headers: geminiVideoHeaders(config), signal: options?.signal, timeout: 0 })).data, apiText("noVideoTask"));
+        }, { headers: { ...geminiVideoHeaders(config), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 })).data, apiText("noVideoTask"));
         if (!created.name) throw new Error(apiText("noVideoTaskId"));
         return { id: created.name, provider: "gemini", model };
     } catch (error) {
@@ -480,6 +572,10 @@ function readAxiosError(error: unknown, fallback: string) {
         if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
         const message = readApiErrorMessage(responseData);
+        if (error.response?.status === 413) return "视频请求超过当前入口大小限制，未自动重新生成。请减少参考素材或使用支持的上传入口；不会自动降低画质。";
+        if (/moderation|content.?policy|可识别人物|真人|审核/i.test(message)) return "参考素材未通过内容审核，请调整素材后手动提交；不会自动重试或绕过审核。";
+        if (/task[_ ]not[_ ]found/i.test(message)) return apiText("videoTaskMissing");
+        if (/Duplicate or conflicting Wan|Conflicting.*frame/i.test(message)) return "参考图片字段冲突，请检查首尾帧与参考素材模式，移除重复来源后重试。";
         if (/1080p.*not supported.*reference-to-video/is.test(message)) return apiText("grokVideoReferenceResolution");
         if (error.response?.status === 415 || /(?:status|HTTP)\s*415\b/i.test(message)) return apiText("videoUnsupportedMedia");
         if (error.response?.status === 422) return `${apiText("videoInvalidParameters")}${message ? `：${message}` : ""}`;

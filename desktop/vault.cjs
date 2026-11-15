@@ -1,17 +1,20 @@
 const { randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
-const { readFile, writeFile, rename, unlink, mkdir } = require('node:fs/promises');
+const { readFile, rename, unlink, mkdir, open } = require('node:fs/promises');
 const { join } = require('node:path');
 // AES-GCM local files, without Keychain. A process running as the same OS user
 // can also read the key; this protects files at rest, not a compromised account.
 function createVault(directory, name = 'config') {
-    if (!['config', 'account', 'diagnostics', 'collaboration', 'collaboration-profile'].includes(name)) throw new Error('不支持的存储');
+    if (!['config', 'account', 'diagnostics', 'collaboration', 'collaboration-profile', 'video-tasks'].includes(name)) throw new Error('不支持的存储');
     const keyPath = join(directory, name + '.key'), path = join(directory, name + '.enc');
     let queue = Promise.resolve();
     const serial = action => { const next = queue.then(action); queue = next.catch(() => {}); return next; };
     async function key(create = false) {
         await mkdir(directory, { recursive: true, mode: 0o700 });
         if (create) {
-            try { await writeFile(keyPath, randomBytes(32), { flag: 'wx', mode: 0o600 }); }
+            try {
+                const handle = await open(keyPath, 'wx', 0o600);
+                try { await handle.writeFile(randomBytes(32)); await handle.sync(); } finally { await handle.close(); }
+            }
             catch (error) { if (error.code !== 'EEXIST') throw error; }
         }
         const bytes = await readFile(keyPath);
@@ -32,8 +35,13 @@ function createVault(directory, name = 'config') {
             const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', await key(true), iv);
             const data = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
             const temporary = path + '.tmp';
-            await writeFile(temporary, Buffer.concat([iv, cipher.getAuthTag(), data]), { mode: 0o600 });
+            const handle = await open(temporary, 'w', 0o600);
+            try { await handle.writeFile(Buffer.concat([iv, cipher.getAuthTag(), data])); await handle.sync(); } finally { await handle.close(); }
             await rename(temporary, path);
+            if (process.platform !== 'win32') {
+                const directoryHandle = await open(directory, 'r');
+                try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
+            }
         }),
         remove: () => serial(async () => { try { await unlink(path); } catch(e) { if (e.code !== 'ENOENT') throw e; } }),
     };

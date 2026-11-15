@@ -88,14 +88,14 @@ test('MiniMax H accepts only 768P, 1080P and 2K without submitting unsupported r
     const calls: AxiosRequestConfig[] = [];
     try {
         adapter(() => { posts++; return { data: { id: 'unexpected' } }; });
-        await assert.rejects(createVideoGenerationTask(miniMax, 'invalid resolution'), /MiniMax H.*768P.*1080P.*2K/);
+        await assert.rejects(createVideoGenerationTask(miniMax, 'invalid resolution'), /768p.*1080p.*2K/i);
         assert.equal(posts, 0);
 
         for (const [resolution, expected] of [['768', '768P'], ['1080', '1080P'], ['2k', '2K']] as const) {
             adapter(request => { posts++; calls.push(request); return { data: { id: `mini-${expected}` } }; });
-            const task = await createVideoGenerationTask({ ...miniMax, vquality: resolution }, 'valid resolution');
+            const task = await createVideoGenerationTask({ ...miniMax, size: '16:9', vquality: resolution }, 'valid resolution');
             assert.equal(task.id, `mini-${expected}`);
-            assert.equal((calls.at(-1)?.data as FormData).get('resolution_name'), expected);
+            assert.equal(JSON.parse(calls.at(-1)!.data).resolution, expected.toLowerCase());
         }
         assert.equal(posts, 3);
     } finally { axios.defaults.adapter = original; }

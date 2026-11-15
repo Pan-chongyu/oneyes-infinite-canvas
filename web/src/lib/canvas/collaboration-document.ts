@@ -23,7 +23,7 @@ export function trackSharedUndoAction(undo: Y.UndoManager) {
     };
 }
 const privateFields = /api.?key|access.?token|refresh.?token|secret|password|authorization|cookie|^(?:headers|auth|token|__proto__|constructor|prototype)$/i;
-const localFields = new Set(['imageTaskId', 'videoTaskId', 'videoTaskProvider', 'status', 'loadingMessage', 'errorDetails', 'taskId', 'editorOutputId', 'model', 'assistantModel', 'imageModel', 'videoModel', 'audioModel']);
+const localFields = new Set(['imageTaskId', 'videoTaskId', 'videoTaskProvider', 'videoJobKey', 'videoRecoveryState', 'status', 'loadingMessage', 'errorDetails', 'taskId', 'editorOutputId', 'model', 'assistantModel', 'imageModel', 'videoModel', 'audioModel']);
 const plain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const textFields = new Set(['title','content','prompt','note']);

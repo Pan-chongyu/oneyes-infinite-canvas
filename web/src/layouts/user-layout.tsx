@@ -5,6 +5,7 @@ import { AppTopNav } from "@/components/layout/app-top-nav";
 import { OneYesSetupDialog } from "@/components/layout/oneyes-setup-dialog";
 import { DesktopUpdate } from "@/components/layout/desktop-update";
 import { DesktopTitlebar } from "@/components/layout/desktop-titlebar";
+import { VideoRecovery } from '@/components/layout/video-recovery';
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     return (
@@ -19,6 +20,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
             </div>
             <OneYesSetupDialog />
             <DesktopUpdate />
+            <VideoRecovery />
         </div>
     );
 }

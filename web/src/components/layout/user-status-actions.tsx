@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { Tooltip } from "antd";
-import { BookOpen, Keyboard, Puzzle, Settings2 } from "lucide-react";
+import { BookOpen, Keyboard, Puzzle, Settings2, ListVideo } from "lucide-react";
+import { useVideoRecoveryStore } from '@/services/video-recovery';
 import { useTranslation } from "react-i18next";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
@@ -18,6 +19,7 @@ type UserStatusActionsProps = {
 };
 
 export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
+    const videoJobs = useVideoRecoveryStore(state => state.jobs);
     const { i18n, t } = useTranslation();
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
@@ -31,6 +33,10 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
 
     return (
         <div className="inline-flex shrink-0 items-center gap-1">
+            {window.oneYesDesktop?.videoTasks ? <button type="button" className={`${naturalIconClass} relative`} style={iconStyle} onClick={() => useVideoRecoveryStore.setState({ open: true })} aria-label="视频任务与恢复" title="视频任务与恢复">
+                <ListVideo className="size-4" />
+                {videoJobs.some(job => job.state !== 'saved') ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" /> : null}
+            </button> : null}
             {onOpenPlugins ? (
                 <button type="button" className={naturalIconClass} style={iconStyle} onClick={onOpenPlugins} aria-label={t("topNav.plugins")} title={t("topNav.plugins")}>
                     <Puzzle className="size-4" />

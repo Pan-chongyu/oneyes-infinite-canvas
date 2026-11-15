@@ -13,6 +13,7 @@ import { imageTasks as durableImageTasks, storedTaskImage, storeGeneratedImage, 
 import { applyCanvasImageTask, failMissingCanvasImageTasks, markCanvasImageTask } from "@/lib/canvas/canvas-image-task";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
+import { applyVideoRecovery, useVideoRecoveryStore } from '@/services/video-recovery';
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { ensureImagePreview, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
@@ -225,6 +226,7 @@ function InfiniteCanvasPage() {
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const imageTasks = useImageTaskStore(state => state.tasks);
+    const videoJobs = useVideoRecoveryStore(state => state.jobs);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
@@ -376,14 +378,27 @@ function InfiniteCanvasPage() {
 
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
-            const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios });
+            const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios, target: { projectId, nodeId }, onPrepared: async key => {
+                flushSync(() => setNodes(previous => {
+                    const next = previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoJobKey: key, videoTaskId: undefined } } : item);
+                    nodesRef.current = next; return next;
+                }));
+                if (!nodesRef.current.some(item => item.id === nodeId)) throw Error('视频节点已删除，已停止提交');
+                updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current }); await flushCanvasStorage();
+            } });
             if (task.provider !== "plugin") {
-                setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" : "openai", model: config.model } } : item)));
+                flushSync(() => setNodes((prev) => {
+                    const next = prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, ...extra, prompt, videoJobKey: task.nativeJobKey, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" as const : "openai" as const, model: config.model, size: config.size, seconds: config.videoSeconds, vquality: config.vquality, generateAudio: config.videoGenerateAudio, watermark: config.videoWatermark, videoMode: config.videoMode } } : item));
+                    nodesRef.current = next;
+                    return next;
+                }));
+                updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
+                await flushCanvasStorage();
             }
             const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal }));
             setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
         },
-        [],
+        [projectId, updateProject],
     );
 
     const pollVideoNodeTask = useCallback(
@@ -405,7 +420,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(node.id);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
                 controller = startGenerationRequest(node.id, node.id, node.id);
-                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(generationConfig, { id: taskId, provider: node.metadata?.videoTaskProvider === "gemini" ? "gemini" : "openai", model: generationConfig.model }, { signal: controller.signal }));
+                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(generationConfig, { id: taskId, provider: node.metadata?.videoTaskProvider === "gemini" ? "gemini" : "openai", model: node.metadata?.model || generationConfig.model, nativeJobKey: node.metadata?.videoJobKey }, { signal: controller.signal }));
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === node.id
@@ -571,10 +586,25 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded) return;
+        if (window.oneYesDesktop?.videoTasks) return; // The persistent worker also runs while this canvas is closed.
         nodesRef.current.filter(hasResumableVideoTask).forEach((node) => void pollVideoNodeTask(node, true));
         // Resume once after the current canvas is restored, not on later config identity changes.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectLoaded]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        setNodes(previous => {
+            let changed = false;
+            const next = previous.map(node => {
+                const job = [...videoJobs].reverse().find(job => job.target?.projectId === projectId && job.target.nodeId === node.id && (!node.metadata?.videoJobKey || node.metadata.videoJobKey === job.key));
+                const updated = job ? applyVideoRecovery(node, job) : node;
+                if (updated !== node) changed = true;
+                return updated;
+            });
+            return changed ? next : previous;
+        });
+    }, [projectId, projectLoaded, videoJobs]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;

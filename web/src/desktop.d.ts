@@ -2,6 +2,13 @@ export {};
 declare global {
     interface Window {
         oneYesDesktop?: {
+            videoTasks?: {
+                call(operation: 'list'): Promise<import('./services/video-recovery').VideoRecoveryJob[]>;
+                call(operation: 'prepare' | 'adopt', args: Record<string, unknown>): Promise<string>;
+                call(operation: 'retry', key: string): Promise<import('./services/video-recovery').VideoRecoveryJob[]>;
+                call(operation: 'submissionError', args: { key: string; reason: string }): Promise<void>;
+                subscribe(callback: (jobs: import('./services/video-recovery').VideoRecoveryJob[]) => void): () => void;
+            };
             editor?: { open(key: string): Promise<void> };
             media?: {
                 create(operation: 'analyze' | 'sample' | 'concat' | 'mix' | 'extract' | 'subtitles' | 'editAnalyze' | 'editRender' | 'videoSuperResolution', count: number, options: Record<string, unknown> | undefined): Promise<string>;
