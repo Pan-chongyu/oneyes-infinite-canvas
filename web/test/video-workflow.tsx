@@ -18,7 +18,7 @@ import { CanvasNodeType } from "@/types/canvas";
 
 await useConfigStore.persist.rehydrate();
 await useCanvasStore.persist.rehydrate();
-useConfigStore.setState({ config: { ...defaultConfig, textModel: "default::gpt-5.4", videoModel: "default::grok-imagine-video", channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-key", models: [{ name: "gpt-5.4", capability: "text" }, { name: "grok-imagine-video", capability: "video" }] }] } });
+useConfigStore.setState({ config: { ...defaultConfig, textModel: "default::gpt-5.4", videoModel: "default::grok-imagine-video", channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-key", models: [{ name: "gpt-5.4", capability: "text" }, { name: "grok-imagine-video", capability: "video" }] }, { ...defaultConfig.channels[0], id: 'old-channel', apiKey: 'original-recovery-key', models: [{ name: 'seedance-2.0', capability: 'video', unavailable: true }] }] } });
 let projectId = localStorage.getItem("video-workflow-project");
 if (!projectId) {
     const file = await uploadMediaFile(await (await fetch("/sample.mp4")).blob(), "video");
@@ -46,6 +46,12 @@ window.fetch = async (input, options) => {
 };
 Object.assign(window, { videoWorkflowTest: {
     state, flush: flushCanvasStorage, calls: () => calls, errors: () => errors, mode: (value: string) => { mode = value; },
+    seedRetiredTask: async () => {
+        const node = createCanvasNode(CanvasNodeType.Video, { x: 300, y: 300 }, { content: '', status: 'error', errorDetails: '暂时无法查询视频进度，原任务已保留。', model: 'old-channel::seedance-2.0', videoTaskId: 'original-task', videoTaskProvider: 'openai', vquality: '720', seconds: '5', size: '16:9' });
+        node.id = 'retired-video';
+        useCanvasStore.getState().updateProject(projectId!, { nodes: [...state().nodes, node] });
+        await flushCanvasStorage();
+    },
     original: async () => { const source = state().nodes.find(node => node.id === "source-video")!; return { node: source, bytes: (await getMediaBlob(source.metadata!.storageKey!))!.size }; },
     theme: (dark: boolean) => useThemeStore.getState().setTheme(dark ? "dark" : "light"),
     service: async (kind: "cancel" | "invalid" | "missing" | "mixed" | "existing" | "ordinary") => {

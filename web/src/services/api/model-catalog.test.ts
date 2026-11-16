@@ -101,6 +101,34 @@ test("automatic setup keeps valid defaults, fills all media defaults and never n
     assert.deepEqual(useConfigStore.getState().config, config);
 });
 
+test('refresh retires exact Seedance IDs without switching to a different pricing ID or mutating pending jobs', async () => {
+    const legacy = ['seedance-2.0', 'doubao-seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0 [720p ¥1/秒]'];
+    const remote = ['doubao-seedance-2.0', 'doubao-seedance-2.5', 'doubao-seedance-2.0 [Token计价]'];
+    bridge(async () => ({ data: remote }));
+    const { useVideoRecoveryStore } = await import('@/services/video-recovery');
+    const { videoModelDefaultsKey } = await import('@/lib/video-model-defaults');
+    for (const name of legacy) {
+        const selected = 'default::' + name;
+        const config = { ...defaultConfig, channels: [{ ...channel(), models: legacy.map(name => ({ name, capability: 'video' as const })) }], videoModel: selected, vquality: '1080', size: '1920x1080', videoSeconds: '12' };
+        useConfigStore.getState().replaceConfig(config);
+        const jobs = [{ key: 'original-unknown', state: 'unknown', model: selected, site: config.baseUrl, channelId: 'default', provider: 'openai' as const, createdAt: 1, parameters: { vquality: '1080', videoSeconds: '12' } }];
+        useVideoRecoveryStore.setState({ jobs });
+        await useModelCatalogStore.getState().sync(true);
+        const next = useConfigStore.getState().config;
+        assert.equal(next.videoModel, selected, 'refresh may not silently select another paid video model');
+        assert.equal(next.channels[0].models.find(model => model.name === name)?.unavailable, true);
+        assert.equal(useConfigStore.getState().isAiConfigReady(next, selected), false);
+        assert.deepEqual(selectableModelsByCapability(next, 'video').sort(), remote.map(name => 'default::' + name).sort());
+        assert.equal(resolveModelRequestConfig(next, selected).model, name);
+        assert.notEqual(videoModelDefaultsKey(next, selected), videoModelDefaultsKey(next, 'default::doubao-seedance-2.0'));
+        assert.equal(next.vquality, '1080'); assert.equal(next.videoSeconds, '12'); assert.equal(next.size, '1920x1080');
+        assert.deepEqual(useVideoRecoveryStore.getState().jobs, jobs, 'catalog refresh cannot recreate or adopt an unknown task');
+        await useConfigStore.persist.rehydrate();
+        assert.equal(useConfigStore.getState().config.videoModel, selected);
+    }
+    useVideoRecoveryStore.setState({ jobs: [] });
+});
+
 test('live file limits are sanitized, refreshed, persisted and isolated to the owning key', async () => {
     bridge(async () => ({ data: ['seedance-2.0-official'] }));
     let limit: unknown = { image: 12, video: 20, audio: 22, private: 'discard' };

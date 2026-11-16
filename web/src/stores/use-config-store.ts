@@ -210,6 +210,10 @@ export function modelCapabilityOf(config: AiConfig, value: string): ModelCapabil
     return findChannelModel(config, value)?.model.capability;
 }
 
+export function isModelUnavailable(config: AiConfig, value: string) {
+    return findChannelModel(config, value)?.model.unavailable === true;
+}
+
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
     if (!capability) return true;
     return modelCapabilityOf(config, value) === capability;
@@ -449,7 +453,10 @@ export function configureModelDefaults(config: AiConfig): AiConfig {
     for (const [capability, key] of [["image", "imageModel"], ["video", "videoModel"], ["text", "textModel"], ["audio", "audioModel"]] as const) {
         const options = selectableModelsByCapability(configured, capability);
         const current = normalizeModelOptionValue(config[key], config.channels);
-        next[key] = options.includes(current) ? current : options.includes(defaultConfig[key]) ? defaultConfig[key] : options[0] || "";
+        // Discovery cannot authorize a different paid video model or pricing ID.
+        // Retain an unavailable selection so readiness blocks it until the user
+        // explicitly chooses another model (and applies that model's defaults).
+        next[key] = (key === 'videoModel' && isModelUnavailable(config, current)) || options.includes(current) ? current : options.includes(defaultConfig[key]) ? defaultConfig[key] : options[0] || "";
     }
     return { ...next, model: next.imageModel };
 }

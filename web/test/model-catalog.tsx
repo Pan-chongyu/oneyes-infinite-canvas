@@ -42,6 +42,7 @@ Object.assign(window, { modelTest: {
         return resolveModelRequestConfig(config, config.videoModel);
     },
     selectVideo: (model: string) => useConfigStore.getState().updateConfig('videoModel', model),
+    replace: (config: typeof defaultConfig) => useConfigStore.getState().replaceConfig(config),
     restore: () => useConfigStore.persist.rehydrate(),
     checked: (name: string) => (Array.from(document.querySelectorAll("label.ant-checkbox-wrapper")).find(label => label.textContent?.trim() === name)?.querySelector("input") as HTMLInputElement)?.checked,
     toggle: (name: string) => (Array.from(document.querySelectorAll("label.ant-checkbox-wrapper")).find(label => label.textContent?.trim() === name)?.querySelector("input") as HTMLInputElement)?.click(),

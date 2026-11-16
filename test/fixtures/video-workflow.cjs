@@ -22,6 +22,17 @@ app.whenReady().then(async () => {
     ipcMain.handle('media:release', (_event, id) => media.release(id));
     for (const name of ['config:read', 'config:write', 'config:remove', 'diagnostics:report', 'diagnostics:recover', 'window:theme']) ipcMain.handle(name, () => null);
     ipcMain.handle('collaboration:call', () => ({ status: 'offline' }));
+    const recoveries = []; let recoveryResult, recoveryJob;
+    ipcMain.handle('video-tasks:call', (_event, operation, input) => {
+        if (operation === 'list') return recoveryJob ? [recoveryJob] : [];
+        assert.equal(operation, 'adopt', 'recovery cannot prepare or submit a paid task');
+        assert.equal(input.model, 'old-channel::seedance-2.0'); assert.equal(input.taskId, 'original-task');
+        assert.equal(input.apiKey, 'original-recovery-key'); assert.equal(input.channelId, 'old-channel');
+        assert.equal(input.parameters.vquality, '720'); assert.equal(input.parameters.videoSeconds, '5');
+        assert.ok(recoveryResult); recoveries.push(input);
+        recoveryJob = { ...input, apiKey: undefined, key: 'retired-job', state: 'saved', result: recoveryResult };
+        return recoveryJob.key;
+    });
     protocol.handle('oneyes-canvas', request => { const path = new URL(request.url).pathname; if (path.startsWith('/media-tools/')) return media.request(request); if (path === '/plugins/index.json') return Response.json([]); const { file } = route(request.url, root); assert.ok(file); return net.fetch(file); });
     const external = [];
     win.webContents.session.webRequest.onBeforeRequest((details, callback) => { const blocked = /^https?:/.test(details.url); if (blocked) external.push(details.url); callback({ cancel: blocked }); });
@@ -101,6 +112,20 @@ app.whenReady().then(async () => {
         await wait(`!videoWorkflowTest.state().nodes.find(n=>n.id===${JSON.stringify(config.id)}).metadata.loadingMessage`);
         assert.equal((await js('videoWorkflowTest.calls()')).length, 3, 'cancellation does not retry a paid request');
         assert.deepEqual(await js('videoWorkflowTest.errors()'), []); assert.deepEqual(external, []);
+        const saved = (await js('videoWorkflowTest.original()')).node.metadata;
+        recoveryResult = { url: saved.content, storageKey: saved.storageKey, bytes: saved.bytes, mimeType: saved.mimeType, width: saved.naturalWidth, height: saved.naturalHeight, durationMs: saved.durationMs };
+        await js('videoWorkflowTest.seedRetiredTask()');
+        const restored = new Promise(resolve => win.webContents.once('did-finish-load', resolve)); win.reload(); await restored;
+        await wait('Boolean(window.videoWorkflowTest && document.querySelector("[data-node-id=retired-video]"))');
+        assert.equal(recoveries.length, 0);
+        await js(`(()=>{const button=[...document.querySelectorAll('[data-node-id=retired-video] button')].find(button=>button.textContent.includes('重试'));if(!button)throw Error('Missing receipt recovery button');button.click()})()`);
+        await wait('videoWorkflowTest.state().nodes.find(n=>n.id==="retired-video").metadata.status==="success"');
+        const recovered = await js('videoWorkflowTest.state().nodes.find(n=>n.id==="retired-video").metadata');
+        assert.equal(recovered.model, 'old-channel::seedance-2.0'); assert.equal(recovered.videoTaskId, 'original-task');
+        assert.equal(recovered.vquality, '720'); assert.equal(recovered.seconds, '5'); assert.equal(recovered.storageKey, saved.storageKey);
+        assert.equal(recoveries.length, 1); assert.deepEqual(await js('videoWorkflowTest.calls()'), []);
+        assert.deepEqual(await js('videoWorkflowTest.errors()'), []); assert.deepEqual(external, []);
+        console.log('NATIVE_RETIRED_MODEL_CANVAS_RECEIPT_RECOVERY_ORIGINAL_MODEL_KEY_AND_PARAMETERS_OK');
         if (process.env.CANVAS_VIDEO_WORKFLOW_SCREENSHOT) { win.showInactive(); win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 500)); await writeFile(join(tmpdir(), 'oneyes-video-workflow.png'), (await win.capturePage()).toPNG()); }
         console.log('VIDEO_WORKFLOW_OK', { frames: 3, originalSize: '192x128', mockedModelRequests: 4, nativeSampling: true, restart: true, manualRetry: true, cancel: true });
     } catch (error) { console.error('VIDEO_WORKFLOW_FAILED', error); console.error(await js('({body:document.body.innerText.slice(-1400),errors:window.videoWorkflowTest?.errors()})')); throw error; }

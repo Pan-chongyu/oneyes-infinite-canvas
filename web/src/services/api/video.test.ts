@@ -291,6 +291,46 @@ test('bridge 413 errors distinguish inline text, total envelope and CDN limits w
     } finally { axios.defaults.adapter = original; }
 });
 
+test('retired Seedance per-second IDs cannot authorize or post replacement Token-priced models', async () => {
+    let posts = 0, reads = 0;
+    window.oneYesDesktop!.models.list = async () => { reads++; return { data: ['doubao-seedance-2.0', 'doubao-seedance-2.5'] }; };
+    try {
+        adapter(() => { posts++; return { data: { id: 'must-not-create' } }; });
+        for (const model of ['seedance-2.0', 'doubao-seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0 [720p ¥1/秒]']) {
+            const selected = { ...config, model: 'default::' + model, videoSeconds: '5', vquality: '720', size: '16:9' };
+            const before = structuredClone(selected);
+            await assert.rejects(createVideoGenerationTask(selected, 'fixture'), /不包含.*刷新/);
+            assert.deepEqual(selected, before);
+        }
+        assert.equal(reads, 4); assert.equal(posts, 0);
+    } finally { axios.defaults.adapter = original; }
+});
+
+test('retired video receipts recover only by original task GET and key without model discovery or pricing remap', async () => {
+    let discoveries = 0;
+    window.oneYesDesktop!.models.list = async () => { discoveries++; throw Error('Recovery must not require a create catalog'); };
+    const model = 'old-channel::seedance-2.0 [720p ¥1/秒]';
+    const selected = { ...config, videoModel: 'default::doubao-seedance-2.0', channels: [...config.channels, {
+        ...config.channels[0], id: 'old-channel', apiKey: 'original-recovery-key',
+        models: [{ name: 'seedance-2.0 [720p ¥1/秒]', capability: 'video' as const, unavailable: true }],
+    }] };
+    const before = structuredClone(selected), requests: AxiosRequestConfig[] = [];
+    try {
+        adapter(request => {
+            requests.push(request);
+            assert.equal(request.method, 'get'); assert.equal(request.timeout, 0);
+            assert.equal(request.headers?.Authorization, 'Bearer original-recovery-key');
+            assert.equal(request.params, undefined); assert.equal(request.data, undefined);
+            assert.match(request.url!, /\/v1\/videos\/original-task(?:\/content)?$/);
+            return { data: request.url!.endsWith('/content') ? new Blob(['original-video'], { type: 'video/mp4' }) : { status: 'done', url: 'https://oneyes.ai/v1/videos/original-task/content' } };
+        });
+        const result = await waitForVideoGenerationTask(selected, { id: 'original-task', model, provider: 'openai' });
+        assert.equal(await result.blob?.text(), 'original-video');
+        assert.equal(discoveries, 0); assert.equal(requests.length, 2);
+        assert.deepEqual(selected, before);
+    } finally { axios.defaults.adapter = original; }
+});
+
 test('submit, terminal status and JSON/HTML download errors never expose private service details or replay a create', async () => {
     const privateText = 'VendorOther https://private.invalid/account Bearer sk-private balance=987654';
     const forbidden = /VendorOther|private.invalid|Bearer|sk-private|987654|充值/;
