@@ -40,6 +40,19 @@ test('model errors provide actions without reflecting keys, raw exceptions or se
     await assert.rejects(createModelCatalog(async () => new Response('<html>private</html>'))('key'), /列表格式无效/);
 });
 
+test('detailed native catalog preserves the exact allowed IDs and file limits without unrelated metadata', async () => {
+    const list = createModelCatalog(async () => Response.json({ data: [
+        { id: 'seedance-2.0-official', reference_file_max_bytes: { image: 16777216, video: 67108864, audio: 67108864 }, private: 'not-forwarded' },
+        { id: 'sd-2.5-fullblood-line3', reference_file_max_bytes: 33554432 },
+    ] }));
+    const entries = await list('fixture-key', true);
+    assert.deepEqual(entries, [
+        { id: 'sd-2.5-fullblood-line3', reference_file_max_bytes: 33554432 },
+        { id: 'seedance-2.0-official', reference_file_max_bytes: { image: 16777216, video: 67108864, audio: 67108864 } },
+    ]);
+    assert.deepEqual(await list('fixture-key'), entries.map(entry => entry.id));
+});
+
 test('native models respect saved forwarding mode, avoid duplicate prefixes and never bypass an invalid proxy', async () => {
     const seen = [];
     const network = await createNetwork(async (url, init) => {

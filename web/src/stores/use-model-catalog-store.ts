@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { fetchModelCatalog, modelCatalogIdentity } from "@/services/api/model-catalog";
+import { fetchModelCatalogEntries, modelCatalogIdentity } from "@/services/api/model-catalog";
 import { reportError } from "@/services/diagnostics";
 import { configureModelDefaults, syncChannelModels, useConfigStore } from "./use-config-store";
 import { useOneYesAccountStore } from "./use-oneyes-account-store";
@@ -16,7 +16,7 @@ export const useModelCatalogStore = create<{
         const current = ++revision;
         if (!channels.length) { set({ syncing: false, errors: {}, checked: [], updatedAt: 0 }); return; }
         set({ syncing: true });
-        const results = await Promise.allSettled(channels.map(channel => fetchModelCatalog(channel, force)));
+        const results = await Promise.allSettled(channels.map(channel => fetchModelCatalogEntries(channel, force)));
         if (current !== revision) return;
         const store = useConfigStore.getState(), errors: Record<string, string> = {}, checked: string[] = [];
         let updated = false;
@@ -31,7 +31,7 @@ export const useModelCatalogStore = create<{
             }
             updated = true;
             checked.push(channel.id);
-            return syncChannelModels(channel, result.value);
+            return syncChannelModels(channel, result.value.map(entry => entry.id), Object.fromEntries(result.value.map(entry => [entry.id, entry.referenceFileMaxBytes])));
         });
         if (updated) {
             const next = configureModelDefaults({ ...store.config, channels: synced });

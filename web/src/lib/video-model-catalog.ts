@@ -1,3 +1,4 @@
+import type { ReferenceFileMaxBytes } from './video-material-policy';
 export type VideoModelInfo = {
     id: string;
     provider: "88api" | "zhiying";
@@ -11,6 +12,7 @@ export type VideoModelInfo = {
     defaultSeconds: number;
     modes: ("frames" | "reference")[];
     referenceLimits: { images?: number; videos?: number; audios?: number; total?: number };
+    referenceFileMaxBytes?: ReferenceFileMaxBytes;
     priceLines: string[];
     notes: string[];
     audio?: "optional" | "required" | "unsupported";

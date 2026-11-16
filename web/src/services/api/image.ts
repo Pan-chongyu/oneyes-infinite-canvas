@@ -13,6 +13,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
+import { referenceFileMaxBytes, type ReferenceFileMaxBytes } from '@/lib/video-material-policy';
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -879,31 +880,34 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
     }
 }
 
-export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+export type ModelCatalogEntry = { id: string; referenceFileMaxBytes?: ReferenceFileMaxBytes };
+function modelEntries(values: (string | { id?: string; reference_file_max_bytes?: unknown })[]): ModelCatalogEntry[] {
+    if (values.some(value => typeof (typeof value === 'string' ? value : value?.id) !== 'string' || !(typeof value === 'string' ? value : value.id)?.trim())) throw Error('上游未返回有效模型，已保留本地配置');
+    return values.map(value => ({ id: (typeof value === 'string' ? value : value.id!).trim(), referenceFileMaxBytes: typeof value === 'string' ? undefined : referenceFileMaxBytes(value.reference_file_max_bytes) }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+}
+async function fetchImageModelEntries(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">): Promise<ModelCatalogEntry[]> {
     if (window.oneYesDesktop && config.apiFormat !== "gemini" && isOneYes(config.baseUrl)) {
-        const result = await window.oneYesDesktop.models.list(config.apiKey);
+        const result = await window.oneYesDesktop.models.list(config.apiKey, true);
         if (result.error) throw new Error(result.error);
         if (!Array.isArray(result.data)) throw new Error(apiText("modelReadFailed"));
-        return result.data;
+        return modelEntries(result.data);
     }
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
             validateGeminiPayload(response.data);
-            return (response.data.models || [])
+            return modelEntries((response.data.models || [])
                 .map((model) => model.name?.replace(/^models\//, ""))
                 .filter((id): id is string => Boolean(id))
-                .sort((a, b) => a.localeCompare(b));
+                .sort((a, b) => a.localeCompare(b)));
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+        const response = await axios.get<{ data?: Array<{ id?: string; reference_file_max_bytes?: unknown }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
             headers: {
                 Authorization: `Bearer ${config.apiKey}`,
             },
         });
-        return (response.data.data || [])
-            .map((model) => model.id)
-            .filter((id): id is string => Boolean(id))
-            .sort((a, b) => a.localeCompare(b));
+        return modelEntries(response.data.data || []);
     } catch (error) {
 
         reportError("image", "request", error);
@@ -911,6 +915,8 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
     }
 }
 
+export async function fetchImageModels(config: Pick<AiConfig, 'baseUrl' | 'apiKey' | 'apiFormat'>) { return (await fetchImageModelEntries(config)).map(entry => entry.id); }
+export async function fetchChannelModelEntries(channel: ModelChannel) { return fetchImageModelEntries(channel); }
 export async function fetchChannelModels(channel: ModelChannel) {
     return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
 }

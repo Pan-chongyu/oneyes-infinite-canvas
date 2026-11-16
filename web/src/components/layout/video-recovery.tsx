@@ -9,6 +9,7 @@ import { flushCanvasStorage, useCanvasStore } from '@/stores/canvas/use-canvas-s
 import { buildGenerationConfig } from '@/lib/canvas/canvas-generation-helpers';
 
 const labels: Record<string, string> = { prepared: '准备提交', submitting: '正在提交', unknown: '提交待核实', confirmation: '待确认原账号',
+    throttled: '大素材排队中', not_submitted: '未提交上游',
     pending: '上游生成中', querying: '查询原任务', downloading: '正在下载', saving: '验证并保存', saved: '已保存',
     credentials: '等待恢复凭据', waiting: '等待网络恢复', save_error: '保存失败', download_error: '等待重新取回', failed: '任务失败', missing: '上游找不到任务', expired: '任务已过期' };
 

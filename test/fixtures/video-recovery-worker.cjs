@@ -20,10 +20,11 @@ process.on('message', async input => {
     } catch (error) { process.send({ fatal: error.stack }); }
 });
 (async () => {
-    const input = { site: base, apiKey: key, channelId: 'fixture', model: 'fixture::offline-video', provider: process.env.VIDEO_TEST_PROVIDER || 'openai',
+    const input = { site: base, apiKey: key, channelId: 'fixture', model: 'fixture::offline-video', provider: process.env.VIDEO_TEST_PROVIDER || 'openai', retryLargeMaterial: process.env.VIDEO_TEST_RETRY_LARGE === '1',
         parameters: { prompt: 'offline fixture', size: '16:9', vquality: '1080', videoSeconds: '5' }, target: { projectId: 'persisted-project', nodeId: 'original-video' } };
     if (process.env.VIDEO_TEST_MODE === 'submit') {
         const id = await manager.prepare(input), url = base + (input.provider === 'gemini' ? '/v1beta/models/offline-video:predictLongRunning' : '/v1/videos'), headers = { ...(input.provider === 'gemini' ? { 'x-goog-api-key': key } : { Authorization: 'Bearer ' + key }), 'Content-Type': 'application/json' };
+        headers['Idempotency-Key'] = id;
         const body = JSON.stringify({ model: 'offline-video', prompt: 'fixture', resolution: '1080p', duration: 5 });
         await manager.beforeSubmit(id, url, headers, body);
         await manager.receipt(id, await fetch(url, { method: 'POST', headers, body }));

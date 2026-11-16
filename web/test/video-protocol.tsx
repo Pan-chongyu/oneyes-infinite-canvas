@@ -11,8 +11,12 @@ import { CanvasVideoSettingsPopover } from '@/components/canvas/canvas-video-set
 import type { AiConfig } from '@/stores/use-config-store';
 import type { VideoReferenceSummary } from '@/lib/video-capabilities';
 import { videoModelCatalog } from '@/lib/video-model-catalog';
+Object.assign(window, { videoAvailableModels: [...videoModelCatalog.flatMap(model => [model.id, ...model.aliases]), 'seedance-2.5'] });
 
-Object.assign(window, { oneYesDesktop: {} });
+Object.assign(window, { oneYesDesktop: { models: { list: async (apiKey: string) => {
+    const response = await fetch('oneyes-canvas://app/proxy?url=' + encodeURIComponent('https://oneyes.ai/v1/models'), { headers: { Authorization: 'Bearer ' + apiKey } });
+    return { data: (await response.json()).data };
+} } } });
 initializeDesktopTransport();
 const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: 'fixture-key' }], model: 'default::grok-imagine-video', size: '1:1', vquality: '480', videoSeconds: '5', proxyEnabled: true, proxyMode: 'upstream' as const };
 useConfigStore.setState({ config });
@@ -135,4 +139,17 @@ Object.assign(window, { videoBridgeTest: async () => {
     try { await createVideoGenerationTask(wan, 'conflict', [image, { ...image, storageKey: 'different' }]); } catch (error) { conflict = /同一参考素材 ID/.test(String(error)); }
     check(conflict, 'conflicting references must stop before POST');
     return 'VIDEO_BRIDGE_NATIVE_OK';
+} });
+
+Object.assign(window, { videoBusyTest: async () => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 4;
+    const stored = await uploadImage(canvas.toDataURL('image/png'));
+    const image = { id: 'busy-image', name: 'fixture.png', type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+    Object.assign(window.oneYesDesktop!, { videoTasks: { call: async (operation: string, args: unknown) => {
+        const response = await fetch('oneyes-canvas://app/test-video-tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, args }) });
+        if (!response.ok) throw Error('Fixture task bridge failed');
+        return (await response.json()).data;
+    } } });
+    const task = await createVideoGenerationTask({ ...config, model: 'default::wan3.0-video', size: '16:9', vquality: '720', videoMode: 'reference' }, 'busy fixture', [image]);
+    check(task.id === 'busy-one-task', 'busy retry must create exactly one upstream task'); return task.nativeJobKey;
 } });

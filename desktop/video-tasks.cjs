@@ -14,7 +14,7 @@ const site = value => {
 };
 const sameSite = (a, b) => site(a) === site(b) || /^https:\/\/(?:api\.)?oneyes\.ai(?:\/v1)?$/.test(site(a)) && /^https:\/\/(?:api\.)?oneyes\.ai(?:\/v1)?$/.test(site(b));
 const api = base => /\/v1$/.test(base) ? base : base + '/v1';
-const terminal = new Set(['failed', 'missing', 'expired', 'unknown', 'confirmation']);
+const terminal = new Set(['failed', 'missing', 'expired', 'unknown', 'not_submitted', 'confirmation']);
 const message = value => typeof value === 'string' ? value : value?.message || value?.error?.message || value?.msg || '';
 function unwrap(value) {
     if (value?.code !== undefined) {
@@ -57,6 +57,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             if (data.version !== 1 || !Array.isArray(data.jobs) || data.jobs.some(job => !/^[a-f0-9-]{36}$/.test(job.key))) throw Error('视频任务清单损坏，已保留原文件');
             jobs = data.jobs;
             for (const job of jobs) if (!job.taskId && ['prepared', 'submitting'].includes(job.state)) { job.state = 'unknown'; job.reason = '上次提交未取得可靠回执，请先核对官网任务和用量；不会自动重新生成'; }
+            for (const job of jobs) if (!job.taskId && job.state === 'throttled') { job.state = 'not_submitted'; job.reason = '上次请求因大素材繁忙未提交上游，等待已被退出中断。原幂等键与参数已保留；不会自动重建或重新生成'; }
         }
         await mkdir(files, { recursive: true, mode: 0o700 });
     })();
@@ -184,7 +185,8 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             await ready;
             const base = site(input.site);
             if (!input.apiKey || !input.channelId || !['openai', 'gemini'].includes(input.provider) || typeof input.model !== 'string') throw Error('视频恢复信息无效');
-            const job = { key: randomUUID(), model: input.model, site: base, channelId: input.channelId, accountId: input.accountId, credential: fingerprint(input.apiKey), provider: input.provider,
+            const key = randomUUID();
+            const job = { key, idempotencyKey: key, retryLargeMaterial: input.retryLargeMaterial === true, model: input.model, site: base, channelId: input.channelId, accountId: input.accountId, credential: fingerprint(input.apiKey), provider: input.provider,
                 parameters: Object.fromEntries(['prompt', 'size', 'vquality', 'videoSeconds', 'videoMode', 'videoGenerateAudio', 'videoWatermark'].map(key => [key, String(input.parameters?.[key] ?? '')])),
                 references: (input.references || []).map(item => ({ id: item.id, storageKey: item.storageKey })),
                 target: input.target && { projectId: String(input.target.projectId), nodeId: String(input.target.nodeId) }, createdAt: Date.now(), state: 'prepared' };
@@ -195,8 +197,11 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         },
         async beforeSubmit(key, url, headers, body) {
             await ready; const job = get(key), parsed = new URL(url);
-            if (job.state !== 'prepared' || !sameSite(parsed.origin + new URL(job.site).pathname.replace(/\/$/, ''), job.site)
+            if (!['prepared', 'throttled'].includes(job.state) || !sameSite(parsed.origin + new URL(job.site).pathname.replace(/\/$/, ''), job.site)
                 || fingerprint(headers.Authorization?.replace(/^Bearer /, '') || headers.authorization?.replace(/^Bearer /, '') || headers['x-goog-api-key'] || '') !== job.credential) throw Error('视频提交关联校验失败，已停止重复提交');
+            const idempotency = headers['Idempotency-Key'] || headers['idempotency-key'];
+            const contentType = headers['Content-Type'] || headers['content-type'];
+            if (idempotency && idempotency !== job.idempotencyKey) throw Error('原视频幂等键不一致，已停止提交');
             const root = new URL(job.site).pathname.replace(/\/$/, '');
             if (!parsed.pathname.startsWith(root + '/') || !/(?:\/videos(?:\/generations|\/edits)?|:predictLongRunning)$/.test(parsed.pathname)) throw Error('视频提交路径无效');
             let sent;
@@ -206,15 +211,22 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
                 sent = Object.fromEntries(['model', 'duration', 'seconds', 'resolution', 'size', 'aspect_ratio', 'ratio', 'parameters'].filter(key => data[key] !== undefined).map(key => [key, data[key]]));
             }
             await serial(async () => {
-                if (job.state !== 'prepared') throw Error('此视频已提交，已停止重复提交');
-                Object.assign(job, { state: 'submitting', submittedAt: Date.now(), updatedAt: Date.now(), sentParameters: sent, requestHash: body ? fingerprint(Buffer.from(body)) : undefined });
+                const hash = body ? fingerprint(Buffer.from(body)) : undefined;
+                if (job.state !== 'prepared' && !(job.state === 'throttled' && job.retryLargeMaterial && idempotency === job.idempotencyKey && job.requestHash === hash && job.requestUrl === parsed.href && job.requestContentType === contentType && job.retryAt <= Date.now())) throw Error('此视频已提交、原请求发生变化或尚未到重试时间，已停止重复提交');
+                Object.assign(job, { state: 'submitting', submittedAt: Date.now(), updatedAt: Date.now(), sentParameters: sent, requestHash: hash, requestUrl: parsed.href, requestContentType: contentType });
                 await save();
             });
         },
         async receipt(key, response) {
             const job = get(key);
             let data;
-            try { data = unwrap(await response.clone().json()); } catch { /* Preserve uncertain submission, never replay. */ }
+            try { data = await response.clone().json(); } catch { /* Preserve uncertain submission, never replay. */ }
+            if (job.retryLargeMaterial && response.status === 429 && (data?.error?.code || data?.code) === 'large_material_busy') {
+                const retry = response.headers.get('retry-after') || '5';
+                const at = /^\d+(?:\.\d+)?$/.test(retry) ? Date.now() + Number(retry) * 1000 : Date.parse(retry);
+                await patch(job, { state: 'throttled', retryAt: Number.isFinite(at) ? at : Date.now() + 5000, reason: '大素材通道繁忙，尚未提交上游；按服务器要求等待，随后使用同一幂等键提交原请求' }); return;
+            }
+            try { data = unwrap(data); } catch { /* Retain uncertain response without replaying it. */ }
             const id = data?.request_id || data?.id || data?.name;
             if (response.ok && typeof id === 'string' && id) {
                 await patch(job, { taskId: id, state: 'pending' }); void run(job); return;
@@ -224,6 +236,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         async submissionError(key, reason) {
             await ready; const job = get(key);
             if (job.taskId || terminal.has(job.state)) return;
+            if (job.state === 'throttled') { await patch(job, { state: 'not_submitted', reason: '大素材繁忙等待已中断，尚未提交上游；原幂等键与参数保留，不会自动重新生成' }); return; }
             await patch(job, { state: job.state === 'prepared' ? 'failed' : 'unknown', reason: job.state === 'prepared' ? reason : '提交结果不确定，请先核对官网任务与用量；不会自动重新生成' });
         },
         async adopt(input) {

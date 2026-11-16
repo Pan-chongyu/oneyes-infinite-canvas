@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
 import type { AiConfig } from '@/stores/use-config-store';
@@ -9,6 +9,16 @@ globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k, v)
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } = await import('./video');
 const { defaultConfig } = await import('@/stores/use-config-store');
+const { videoModelCatalog } = await import('@/lib/video-model-catalog');
+const availableModels = [...videoModelCatalog.flatMap(model => [model.id, ...model.aliases]), 'sora-2', 'seedance-2.5'];
+const desktop = () => ({ models: { list: async () => ({ data: availableModels }) } }) as unknown as NonNullable<Window['oneYesDesktop']>;
+beforeEach(() => { window.oneYesDesktop = desktop(); });
+const interceptor = axios.interceptors.request.use(request => {
+    if (request.url?.startsWith('oneyes-canvas://app/oneyes-api')) request.url = request.url.replace('oneyes-canvas://app/oneyes-api', 'https://oneyes.ai');
+    return request;
+});
+const { queryClient } = await import('@/lib/query-client');
+after(() => { axios.interceptors.request.eject(interceptor); queryClient.clear(); });
 const { isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, usesGrokVideoReferences } = await import('@/lib/video-capabilities');
 const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: 'fixture-key' }], model: 'default::grok-imagine-video', videoSeconds: '5', size: '1:1', vquality: '480' };
 const original = axios.defaults.adapter;
@@ -95,7 +105,7 @@ test('MiniMax H accepts only 768P, 1080P and 2K without submitting unsupported r
             adapter(request => { posts++; calls.push(request); return { data: { id: `mini-${expected}` } }; });
             const task = await createVideoGenerationTask({ ...miniMax, size: '16:9', vquality: resolution }, 'valid resolution');
             assert.equal(task.id, `mini-${expected}`);
-            assert.equal(JSON.parse(calls.at(-1)!.data).resolution, expected.toLowerCase());
+            assert.equal(JSON.parse(await (calls.at(-1)!.data as Blob).text()).resolution, expected.toLowerCase());
         }
         assert.equal(posts, 3);
     } finally { axios.defaults.adapter = original; }
@@ -120,8 +130,8 @@ test('OneYes Grok Seedance uses JSON booleans and the exact selected channel; ma
                 assert.equal(selected.vquality, '1080');
             }
         }
-        await createVideoGenerationTask({ ...config, channels: [{ ...grok, id: 'other-grok-id' }], model: 'other-grok-id::doubao-seedance-2.5' }, 'alias');
-        assert.equal(JSON.parse(calls.at(-1)!.data).model, 'doubao-seedance-2.5');
+        await createVideoGenerationTask({ ...config, channels: [{ ...grok, id: 'other-grok-id' }], model: 'other-grok-id::doubao-seedance-2.5', vquality: '720', size: '16:9' }, 'alias');
+        assert.equal(JSON.parse(await (calls.at(-1)!.data as Blob).text()).model, 'doubao-seedance-2.5');
         assert.equal(calls.length, 5);
         adapter(request => { calls.push(request); return { data: { id: 'multipart-task' } }; });
         await createVideoGenerationTask({ ...config, model: 'default::seedance-2.5' }, 'other protocol');
@@ -225,7 +235,7 @@ test('422 validation arrays identify rejected fields and 404 explains model/grou
     let posts = 0;
     const before = structuredClone(config);
     const reports: unknown[] = [];
-    window.oneYesDesktop = { diagnostics: { report: async input => { reports.push(input); } } } as NonNullable<Window['oneYesDesktop']>;
+    window.oneYesDesktop = { ...desktop(), diagnostics: { report: async input => { reports.push(input); }, recover: async () => {} } };
     try {
         for (const [status, data, pattern] of [
             [422, { detail: [{ loc: ['body', 'resolution'], msg: 'unsupported resolution', input: 'private-reference' }, { loc: ['body', 'duration'], msg: 'invalid duration' }] }, /422.*resolution：unsupported resolution；duration：invalid duration/],
@@ -244,5 +254,39 @@ test('422 validation arrays identify rejected fields and 404 explains model/grou
         }
         assert.equal(posts, 4); assert.deepEqual(config, before);
         assert.ok(reports.every(value => (value as { stage: string }).stage === 'submit'));
-    } finally { axios.defaults.adapter = original; delete window.oneYesDesktop; }
+    } finally { axios.defaults.adapter = original; }
+});
+
+test('each create revalidates this key against exact upstream IDs rather than stale cached names or guessed aliases', async () => {
+    const { fetchModelCatalog } = await import('./model-catalog');
+    const selected = { ...config, model: 'default::wan3.0-video', size: '16:9', vquality: '720', videoSeconds: '5', videoMode: 'reference' };
+    const before = structuredClone(selected); let posts = 0, discoveries = 0;
+    try {
+        await fetchModelCatalog(selected.channels[0]); // Seed a catalog with this model allowed.
+        window.oneYesDesktop!.models.list = async key => { discoveries++; assert.equal(key, 'fixture-key'); return { data: ['wan3.0-video-prime'] }; };
+        adapter(() => { posts++; return { data: { id: 'unexpected' } }; });
+        await assert.rejects(createVideoGenerationTask(selected, 'fixture'), /当前 API Key.*不包含.*刷新.*分组/);
+        assert.equal(posts, 0); assert.equal(discoveries, 1); assert.deepEqual(selected, before);
+        const alias = videoModelCatalog.find(model => model.id === 'wan3.0-video')!.aliases[0];
+        window.oneYesDesktop!.models.list = async () => ({ data: ['wan3.0-video'] });
+        await assert.rejects(createVideoGenerationTask({ ...selected, model: `default::${alias}` }, 'fixture'), /不包含/);
+        assert.equal(posts, 0, 'a permitted canonical ID cannot authorize a different priced alias');
+        window.oneYesDesktop!.models.list = async key => ({ data: key === 'fixture-other-key' ? ['wan3.0-video-prime'] : ['wan3.0-video'] });
+        await assert.rejects(createVideoGenerationTask({ ...selected, channels: [{ ...selected.channels[0], apiKey: 'fixture-other-key' }] }, 'fixture'), /不包含/);
+        assert.equal(posts, 0);
+        axios.defaults.adapter = async request => { posts++; throw new AxiosError('permission rejected', 'ERR_BAD_REQUEST', request, undefined, { config: request, status: 404, statusText: '', headers: {}, data: { error: { code: 'model_not_allowed', message: 'Not Found' } } }); };
+        await assert.rejects(createVideoGenerationTask(selected, 'fixture'), /无权调用.*刷新.*不会自动换 Key/);
+        assert.equal(posts, 1); assert.deepEqual(selected, before);
+    } finally { axios.defaults.adapter = original; }
+});
+
+test('bridge 413 errors distinguish inline text, total envelope and CDN limits without retrying or switching sites', async () => {
+    const selected = { ...config, model: 'default::wan3.0-video', size: '16:9', vquality: '720' }; let posts = 0;
+    try {
+        for (const [code, pattern] of [['inline_text_too_large', /32 MiB.*二进制/], ['bridge_request_too_large', /128 MiB.*CDN/], ['', /模型.*访问入口.*更改接口地址/]] as const) {
+            axios.defaults.adapter = async request => { posts++; assert.equal(request.url, 'https://oneyes.ai/v1/videos'); throw new AxiosError('too large', 'ERR_BAD_REQUEST', request, undefined, { config: request, status: 413, statusText: '', headers: {}, data: { code } }); };
+            await assert.rejects(createVideoGenerationTask(selected, 'fixture'), pattern);
+        }
+        assert.equal(posts, 3); assert.equal(selected.baseUrl, config.baseUrl); assert.equal(selected.vquality, '720');
+    } finally { axios.defaults.adapter = original; }
 });

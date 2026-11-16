@@ -113,16 +113,61 @@ test("verified request fixtures pass the actual deployed bridge normalizers when
         const request = buildVideoBridgeRequest(model, { ...config(id), videoMode: "reference" }, id, "offline reference fixture", { ...empty(), imageDataUrls: [imageUrl], videos: ["https://cdn.example.com/reference.mp4"] });
         assert.doesNotThrow(() => bridge88.normalizeCreateBody({ requestBuffer: Buffer.from(JSON.stringify(request.body)) }, "application/json"), `${id} reference video`);
     }
+    for (const id of ['wan3.0-video', 'wan3.0-video-prime', 'veo-3.1', 'veo-3.1-fast', 'gemini-omni-flash-1.1', 'gemini-omni-flash-1.2']) for (const mode of ['frames', 'reference'] as const) {
+        const model = info(id), selected = { ...config(id), videoMode: mode, ...(id === 'veo-3.1' ? { videoSeconds: '8' } : {}) };
+        const request = await encodeVideoBridgeRequest(buildVideoBridgeRequest(model, selected, id, 'binary fixture', { ...empty(), images: [image, image] }), model);
+        const bytes = Buffer.from(await request.body.arrayBuffer());
+        const plan = bridge88.normalizeCreateBody({ requestBuffer: bytes }, request.contentType);
+        assert.ok(plan); assert.ok(!bytes.includes(Buffer.from('data:image/')));
+    }
 });
 
-test('Zhiying checks exact serialized bytes including boundary and UTF-8 without altering media', async () => {
-    const model = info('sd-2.5-fullblood');
-    const request = (size: number) => buildVideoBridgeRequest(model, config(model.id), model.id, '中文🎬', { ...empty(), images: [new File([new Uint8Array(size)], 'fixture.png', { type: 'image/png' })] });
-    const overhead = (await new Response(request(0).body as FormData).blob()).size;
-    const accepted = await encodeVideoBridgeRequest(request(8 * 1024 * 1024 - overhead), model);
-    assert.equal((accepted.body as Blob).size, 8 * 1024 * 1024);
-    assert.match(accepted.contentType!, /multipart\/form-data; boundary=/);
-    await assert.rejects(encodeVideoBridgeRequest(request(8 * 1024 * 1024 - overhead + 1), model), /8 MiB.*未提交生成/);
+test('bridge counts exact 128 MiB serialized binary bytes including boundary and UTF-8', async () => {
+    const model = info('seedance-2.0-official'), unit = 1024 * 1024;
+    const request = (first: number, second: number) => buildVideoBridgeRequest(model, config(model.id), model.id, '中文🎬', { ...empty(), videos: [new File([new Uint8Array(first)], 'a.mp4'), new File([new Uint8Array(second)], 'b.mp4')] });
+    const overhead = (await new Response(request(0, 0).body as FormData).blob()).size;
+    const accepted = await encodeVideoBridgeRequest(request(64 * unit, 64 * unit - overhead), model);
+    assert.equal(accepted.body.size, 128 * unit); assert.match(accepted.contentType, /multipart\/form-data; boundary=/);
+    await assert.rejects(encodeVideoBridgeRequest(request(64 * unit, 64 * unit - overhead + 1), model), /超过 128 MiB/);
+});
+
+test('multipart sums only text UTF-8 bytes and never counts binary media as inline text', async () => {
+    const form = new FormData(), max = 32 * 1024 * 1024;
+    form.append('one', '中'.repeat(Math.floor(max / 3))); form.append('two', 'x'.repeat(max % 3));
+    form.append('reference_videos', new File([new Uint8Array(33 * 1024 * 1024)], 'clip.mp4'));
+    await encodeVideoBridgeRequest({ body: form }, info('seedance-2.0-official'));
+    form.append('extra', 'x'); await assert.rejects(encodeVideoBridgeRequest({ body: form }, info('seedance-2.0-official')), /普通文本字段合计超过 32 MiB/);
+});
+
+test('per-model file limits and live catalog values remain independent of the 128 MiB envelope', () => {
+    const file = (size: number) => new File([new Uint8Array(size)], 'fixture.png', { type: 'image/png' });
+    for (const id of ['seedance-2.0-official', 'seedance-2.0-fast-official', 'seedance-2.5-official', 'sd-2.5-fullblood-line3', 'wan3.0-video']) {
+        const max = (id.startsWith('seedance') ? 16 : id.startsWith('sd-') ? 32 : 20) * 1024 * 1024;
+        const model = info(id), selected = { ...config(id), videoMode: 'reference' };
+        buildVideoBridgeRequest(model, selected, id, 'fixture', { ...empty(), images: [file(max)] });
+        assert.throws(() => buildVideoBridgeRequest(model, selected, id, 'fixture', { ...empty(), images: [file(max + 1)] }), /单文件限制/);
+    }
+    const model = { ...info('seedance-2.0-official'), referenceFileMaxBytes: { image: 12, video: 20, audio: 22 } };
+    assert.throws(() => buildVideoBridgeRequest(model, config(model.id), model.id, 'fixture', { ...empty(), images: [file(13)] }), /12 字节/);
+    buildVideoBridgeRequest(model, config(model.id), model.id, 'fixture', { ...empty(), images: [file(12)] });
+});
+
+test('Wan and Google send local images as binary parts, preserve bytes/order and never add Base64 copies', async () => {
+    for (const id of ['wan3.0-video', 'veo-3.1', 'gemini-omni-flash-1.1']) for (const mode of ['frames', 'reference']) {
+        const selected = { ...config(id), videoMode: mode, videoSeconds: id === 'veo-3.1' ? '8' : config(id).videoSeconds };
+        const body = buildVideoBridgeRequest(info(id), selected, id, 'fixture', { ...empty(), images: [image, image] }).body as FormData;
+        const files = [...body.entries()].filter(([, value]) => value instanceof File);
+        assert.deepEqual(files.map(([key]) => key), mode === 'frames' ? ['first_frame', 'last_frame'] : [id.startsWith('wan') ? 'reference_images' : 'images', id.startsWith('wan') ? 'reference_images' : 'images']);
+        for (const [, file] of files) assert.deepEqual(await (file as File).arrayBuffer(), await image.arrayBuffer());
+        assert.ok([...body.values()].every(value => typeof value !== 'string' || !value.includes('data:image/')));
+        if (mode === 'frames') assert.throws(() => buildVideoBridgeRequest(info(id), selected, id, 'fixture', { ...empty(), images: [image], videos: ['https://cdn.example/video.mp4'] }), /不能.*混用/);
+    }
+});
+
+test('MiniMax aggregates only encoded inline media at the exact decimal limit', async () => {
+    const request = (extra: number) => ({ body: { model: 'minimax-h3', metadata: { referenceImages: ['data:image/png;base64,' + 'A'.repeat(16_000_000)], referenceAudios: ['data:audio/wav;base64,' + 'A'.repeat(16_000_000 + extra)] } }, contentType: 'application/json' });
+    await encodeVideoBridgeRequest(request(0), info('minimax-h3'));
+    await assert.rejects(encodeVideoBridgeRequest(request(1), info('minimax-h3')), /32,000,000 字节/);
 });
 
 test('Omni duration and material limits reject invalid combinations without rewriting selections', () => {

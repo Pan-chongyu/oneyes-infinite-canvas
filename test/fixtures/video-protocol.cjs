@@ -3,23 +3,45 @@ const { mkdtempSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const assert = require('node:assert/strict');
+const { createVideoTasks } = require('../../desktop/video-tasks.cjs');
+const { createVault } = require('../../desktop/vault.cjs');
 app.setPath('userData', mkdtempSync(join(tmpdir(), 'canvas-video-protocol-')));
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 app.whenReady().then(async () => {
     const posts = [], gets = []; let polls = 0, longPolls = 0;
+    const busyRequests = [];
+    const manager = createVideoTasks({ directory: app.getPath('userData'), vault: createVault(app.getPath('userData'), 'video-tasks'), credentials: async () => [], probe: async () => ({}),
+        fetcher: async (_url, init) => { assert.equal(init.method, 'GET'); return Response.json({ status: 'pending' }); } });
     protocol.handle('oneyes-canvas', async request => {
         const url = new URL(request.url);
+        if (url.pathname === '/test-video-tasks') {
+            const { operation, args } = await request.json();
+            assert.ok(['prepare', 'list', 'submissionError'].includes(operation));
+            return Response.json({ data: operation === 'submissionError' ? await manager.submissionError(args.key, args.reason) : await manager[operation](args) });
+        }
         if (url.pathname === '/proxy') {
             const target = new URL(url.searchParams.get('url'));
             assert.equal(target.origin, 'https://oneyes.ai');
             assert.equal(request.headers.get('Authorization'), 'Bearer fixture-key');
+            if (request.method === 'GET' && target.pathname === '/v1/models') {
+                const catalog = await win.webContents.executeJavaScript('videoAvailableModels');
+                return Response.json({ data: catalog.map(id => ({ id })) });
+            }
             if (request.method === 'POST') {
                 const type = request.headers.get('content-type');
+                const job = request.headers.get('x-oneyes-video-job');
+                if (job) {
+                    const bytes = await request.arrayBuffer(), headers = Object.fromEntries(request.headers);
+                    await manager.beforeSubmit(job, target.href, headers, bytes);
+                    busyRequests.push({ bytes: Buffer.from(bytes), key: request.headers.get('idempotency-key'), type });
+                    const response = busyRequests.length === 1 ? Response.json({ error: { code: 'large_material_busy' } }, { status: 429, headers: { 'Retry-After': '0.1' } }) : Response.json({ request_id: 'busy-one-task' });
+                    await manager.receipt(job, response); return response;
+                }
                 const raw = process.env.ONEYES_BRIDGE_TEST_DIRECTORY && posts.length >= 12 ? Buffer.from(await request.clone().arrayBuffer()) : undefined;
                 const body = /multipart\/form-data/.test(type) ? Object.fromEntries(await request.formData()) : await request.json();
                 if (raw) {
                     const { pathToFileURL } = require('node:url');
-                    const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, /multipart/.test(type) ? 'zhiying-request.mjs' : '88api-request.mjs')).href)).default;
+                    const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, /^(sd-|seedance-.*official|seedance-2.5-dedicated|SD-特价|wan3\.0$)/.test(body.model) ? 'zhiying-request.mjs' : '88api-request.mjs')).href)).default;
                     assert.doesNotThrow(() => adapter.normalizeCreateBody({ requestBuffer: raw }, type), body.model);
                 }
                 posts.push({ path: target.pathname, body, type });
@@ -85,8 +107,15 @@ app.whenReady().then(async () => {
         const zhiying = bridge.find(item => item.body.model === 'sd-2.5-fullblood');
         assert.match(zhiying.type, /multipart\/form-data; boundary=/);
         assert.deepEqual(Object.keys(zhiying.body), ['model', 'prompt', 'resolution', 'duration', 'aspect_ratio']);
-        assert.equal(bridge.at(-1).body.reference_images.length, 1);
+        assert.ok(bridge.at(-1).body.reference_images instanceof File);
+        assert.ok(!JSON.stringify(bridge.at(-1).body).includes('data:image/'));
+        const key = await win.webContents.executeJavaScript('videoBusyTest()');
+        assert.equal(busyRequests.length, 2); assert.equal(busyRequests[0].key, key); assert.equal(busyRequests[1].key, key);
+        assert.equal(busyRequests[0].type, busyRequests[1].type); assert.deepEqual(busyRequests[0].bytes, busyRequests[1].bytes);
+        assert.match(busyRequests[0].type, /multipart\/form-data; boundary=/); assert.ok(!busyRequests[0].bytes.includes(Buffer.from('data:image/')));
+        assert.equal((await manager.list())[0].taskId, 'busy-one-task'); await manager.close();
         console.log('GROK_VIDEO_NATIVE_OK: JSON, Seedance booleans, id/request_id, frames, references, audio, edit, Worker MIME, 202/done, authenticated content, no duplicate POST');
+        console.log('VIDEO_BUSY_NATIVE_OK: Fetch binary multipart, unchanged boundary/bytes, durable idempotency, one accepted task');
         app.exit(0);
-    } catch (error) { console.error(error); app.exit(1); }
+    } catch (error) { await manager.close(); console.error(error); app.exit(1); }
 }).catch(error => { console.error(error); app.exit(1); });

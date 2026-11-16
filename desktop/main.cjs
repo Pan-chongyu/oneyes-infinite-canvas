@@ -186,9 +186,9 @@ app.whenReady().then(async () => {
         }
         catch (error) { report('account', 'request', error); return { error: error.message }; }
     });
-    ipcMain.handle('models:list', async (event, apiKey) => {
+    ipcMain.handle('models:list', async (event, apiKey, details) => {
         trusted(event);
-        try { return { data: await listModels(apiKey) }; }
+        try { return { data: await listModels(apiKey, details === true) }; }
         catch (error) { report('models', 'request', error); return { error: error.message }; }
     });
     ipcMain.handle('agent:call', async (event, operation) => {

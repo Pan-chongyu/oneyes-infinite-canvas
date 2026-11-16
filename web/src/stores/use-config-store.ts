@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { videoModelOptionName } from "@/lib/video-model-info";
+import { referenceFileMaxBytes, type ReferenceFileMaxBytes } from '@/lib/video-material-policy';
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio" | "decision";
@@ -16,6 +17,7 @@ export type ChannelModel = {
     script?: string;
     manual?: boolean;
     unavailable?: boolean;
+    referenceFileMaxBytes?: ReferenceFileMaxBytes;
 };
 
 export type ModelChannel = {
@@ -337,7 +339,8 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = guessCapability(name) === "decision" ? "decision" : typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script, ...(typeof item !== "string" && item.manual ? { manual: true } : {}), ...(typeof item !== "string" && item.unavailable ? { unavailable: true } : {}) });
+        const limits = typeof item === 'string' ? undefined : referenceFileMaxBytes(item.referenceFileMaxBytes);
+        result.push({ name, capability, script, ...(limits !== undefined ? { referenceFileMaxBytes: limits } : {}), ...(typeof item !== "string" && item.manual ? { manual: true } : {}), ...(typeof item !== "string" && item.unavailable ? { unavailable: true } : {}) });
     }
     return result;
 }
@@ -418,7 +421,7 @@ export function modelOptionsFromChannels(channels: ModelChannel[]) {
 }
 
 /** Update discovery without replacing user classifications, scripts or explicit exclusions. */
-export function syncChannelModels(channel: ModelChannel, names: string[]): ModelChannel {
+export function syncChannelModels(channel: ModelChannel, names: string[], metadata?: Record<string, ReferenceFileMaxBytes | undefined>): ModelChannel {
     if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== "string" || !name.trim())) throw new Error("上游未返回有效模型，已保留本地配置");
     const platform = channel.id === GROK_VIDEO_CHANNEL_ID ? "grok" : channel.oneYes?.platform || (channel.id === "oneyes-deepseek" ? "deepseek" : channel.id === "oneyes-typesafe" ? "typesafe" : "openai");
     const allowed = platform === "openai" ? ["image", "text", "video", "audio"] : [platform === "deepseek" ? "text" : platform === "typesafe" ? "decision" : "video"];
@@ -427,9 +430,10 @@ export function syncChannelModels(channel: ModelChannel, names: string[]): Model
     const excluded = new Set(channel.excludedModels || []);
     const models: ChannelModel[] = channel.models.map(model => {
         const { unavailable: _unavailable, ...saved } = model;
-        return !returned.has(model.name) && !model.manual && !model.script ? { ...saved, unavailable: true } : saved;
+        const current = metadata && returned.has(model.name) ? { ...saved, referenceFileMaxBytes: metadata[model.name] } : saved;
+        return !returned.has(model.name) && !model.manual && !model.script ? { ...current, unavailable: true } : current;
     });
-    for (const model of remote) if (!excluded.has(model.name) && !models.some(saved => saved.name === model.name)) models.push(model);
+    for (const model of remote) if (!excluded.has(model.name) && !models.some(saved => saved.name === model.name)) models.push({ ...model, ...(metadata?.[model.name] !== undefined ? { referenceFileMaxBytes: metadata[model.name] } : {}) });
     return { ...channel, models: normalizeChannelModels(models) };
 }
 

@@ -15,10 +15,13 @@ async function fixture(t, provider = 'openai') {
     const video = join(directory, 'fixture.mp4');
     await promisify(execFile)(resolve('desktop/media-bin/ffmpeg' + (process.platform === 'win32' ? '.exe' : '')), ['-v', 'error', '-f', 'lavfi', '-i', 'color=black:s=320x180:r=10:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', video], { windowsHide: true });
     const bytes = await readFile(video), children = new Set();
-    const state = { posts: 0, queries: 0, downloads: 0, ranges: 0, mode: 'pending', badUrl: true, downloadStarted: false };
+    const state = { posts: 0, accepted: 0, bodies: [], keys: [], queries: 0, downloads: 0, ranges: 0, mode: 'pending', badUrl: true, downloadStarted: false };
     const server = createServer(async (req, res) => {
         if (req.method === 'POST') {
-            state.posts++; for await (const _ of req) { /* consume request */ }
+            state.posts++; const parts = []; for await (const chunk of req) parts.push(chunk);
+            state.bodies.push(Buffer.concat(parts)); state.keys.push(req.headers['idempotency-key']);
+            if (state.mode === 'busy') { res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '0.1' }); res.end(JSON.stringify({ error: { code: 'large_material_busy' } })); return; }
+            state.accepted++;
             res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(provider === 'gemini' ? { name: 'operations/receipt-1' } : { request_id: 'receipt-1' })); return;
         }
         assert.equal(req.method, 'GET', 'recovery can never POST');
@@ -154,4 +157,35 @@ test('concurrent attempts to submit the same local receipt permit exactly one PO
         assert.equal(results.filter(result => result.status === 'fulfilled').length, 1); assert.equal(f.state.posts, 1);
         assert.equal((await manager.list())[0].taskId, 'receipt-1');
     } finally { await manager.close(); }
+});
+
+test('large-material busy permits only the same durable key and exact body after Retry-After', async t => {
+    const f = await fixture(t), manager = createVideoTasks({ directory: f.directory, vault: createVault(f.directory, 'video-tasks'), fetcher: fetch, probe: async () => ({}), credentials: async () => [], interval: 10000 });
+    try {
+        const key = await manager.prepare({ site: f.base, apiKey: 'fixture-key', channelId: 'fixture', model: 'fixture', provider: 'openai', retryLargeMaterial: true });
+        const url = f.base + '/v1/videos', headers = { Authorization: 'Bearer fixture-key', 'Content-Type': 'application/json', 'Idempotency-Key': key }, body = JSON.stringify({ model: 'fixture', duration: 5 });
+        const send = async () => { await manager.beforeSubmit(key, url, headers, body); await manager.receipt(key, await fetch(url, { method: 'POST', headers, body })); };
+        f.state.mode = 'busy'; await send();
+        const job = (await manager.list())[0]; assert.equal(job.state, 'throttled'); assert.equal(job.idempotencyKey, key); assert.equal(f.state.accepted, 0);
+        await assert.rejects(manager.beforeSubmit(key, url, headers, body), /重试时间/);
+        await new Promise(resolve => setTimeout(resolve, Math.max(0, job.retryAt - Date.now())));
+        await assert.rejects(manager.beforeSubmit(key, url, { ...headers, 'Idempotency-Key': 'another' }, body), /幂等键/);
+        await assert.rejects(manager.beforeSubmit(key, url, headers, body + ' '), /停止重复提交/);
+        await assert.rejects(manager.beforeSubmit(key, url + '/generations', headers, body), /停止重复提交/);
+        await assert.rejects(manager.beforeSubmit(key, url, { ...headers, 'Content-Type': 'application/json; charset=utf-8' }, body), /停止重复提交/);
+        await assert.rejects(manager.beforeSubmit(key, url, { Authorization: 'Bearer fixture-key', 'Content-Type': 'application/json' }, body), /停止重复提交/);
+        f.state.mode = 'pending'; await send();
+        assert.equal((await manager.list())[0].taskId, 'receipt-1'); assert.equal(f.state.accepted, 1); assert.equal(f.state.posts, 2);
+        assert.deepEqual(f.state.keys, [key, key]); assert.deepEqual(f.state.bodies[0], f.state.bodies[1]);
+        await assert.rejects(send(), /停止重复提交/); assert.equal(f.state.posts, 2);
+    } finally { await manager.close(); }
+});
+
+test('process loss during a guaranteed unsent busy response retains the key without replaying on cold start', async t => {
+    const f = await fixture(t); f.state.mode = 'busy';
+    const first = f.worker('submit', { VIDEO_TEST_RETRY_LARGE: '1' }), job = await first.waitState('throttled'); await first.kill();
+    f.state.mode = 'completed'; const restored = f.worker();
+    const stopped = await restored.waitState('not_submitted'); assert.equal(stopped.idempotencyKey, job.key); assert.equal(stopped.requestHash, job.requestHash);
+    assert.equal(f.state.accepted, 0); assert.equal(f.state.posts, 1); assert.equal(f.state.queries, 0);
+    const journal = JSON.parse(await createVault(f.directory, 'video-tasks').read()); assert.equal(journal.jobs[0].idempotencyKey, job.key);
 });

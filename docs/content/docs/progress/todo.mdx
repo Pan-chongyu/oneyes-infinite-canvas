@@ -5,7 +5,7 @@ description: Planned follow-up work
 
 # TODO
 
-- 视频恢复的服务端配合：提供普通用户 Key 鉴权的素材上传／文件 ID 接口、明确上游任务与成片保留期、通过模型元数据明确同名 Grok 的路由提供方，并提供鉴权的任务列表／幂等编号查询，帮助核对未收到回执的提交。客户端保留原任务和待核实状态，不自动重发付费请求；详见仓库 `docs/VIDEO_BRIDGE.zh-CN.md`。
+- 视频恢复的服务端配合：为仍要求公开 HTTPS 的本地素材提供普通用户 Key 鉴权的预上传／文件 ID 接口、明确上游任务与成片保留期、通过模型元数据明确同名 Grok 的路由提供方，并提供鉴权的任务列表／幂等编号查询，帮助核对未收到回执的提交。智赢创建内二进制上传、Wan／Google 图片二进制与明确未受理的繁忙响应原键重试已适配；未知状态仍不自动重发付费请求；详见仓库 `docs/VIDEO_BRIDGE.zh-CN.md`。
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

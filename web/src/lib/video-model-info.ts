@@ -18,7 +18,10 @@ export function getVideoModelInfo(config: AiConfig, value = config.model || conf
     } catch { return undefined; }
     // Bare Grok IDs may address the native account pool. Only the audited,
     // exact priced aliases identify the bridge until /models exposes routing.
-    return videoModelCatalog.find((entry) => entry.aliases.includes(model) || !entry.id.startsWith("grok-") && model === entry.id);
+    const info = videoModelCatalog.find((entry) => entry.aliases.includes(model) || !entry.id.startsWith("grok-") && model === entry.id);
+    if (!info) return;
+    const limits = channel?.models.find(entry => entry.name === model)?.referenceFileMaxBytes;
+    return limits === undefined ? info : { ...info, referenceFileMaxBytes: limits };
 }
 
 export function videoModelOptionName(config: AiConfig, value: string) {

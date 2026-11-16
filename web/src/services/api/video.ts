@@ -15,6 +15,9 @@ import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolv
 import { runModelPlugin } from "./model-plugin";
 import { prepareReferenceFiles } from "./image-references";
 import { buildVideoBridgeRequest, encodeVideoBridgeRequest, usesVideoBridgeRequest, videoBridgeMediaUrl } from "./video-bridge-request";
+import { submitVideoBridge, videoBridgeErrorCode } from './video-bridge-submit';
+import { fetchModelCatalogEntries } from './model-catalog';
+import { isOneYes } from './image-stream';
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { adoptVideoTask, videoRecoveryInput, type VideoRecoveryJob } from '../video-recovery';
@@ -64,7 +67,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
             const job = (await api.call('list')).find(item => item.key === key);
             if (!job) throw Error('原视频恢复记录不存在，请检查本机数据目录；不会重新生成');
             if (job.state === 'saved' && job.result) return { saved: job.result };
-            if (['failed', 'expired', 'missing', 'unknown', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(job.reason || '请从“视频任务”继续恢复原任务');
+            if (['failed', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(job.reason || '请从“视频任务”继续恢复原任务');
             await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
         }
     }
@@ -95,10 +98,22 @@ function videoTaskFailed(message: string) {
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const selectedModel = config.model || config.videoModel;
+    const channel = resolveModelChannel(config, selectedModel);
+    const parameterError = videoModelConfigError(config, selectedModel);
+    if (parameterError) throw Error(parameterError);
+    if (channel.apiFormat !== 'gemini' && isOneYes(channel.baseUrl) && !resolveModelScript(config, selectedModel)) {
+        const entries = await fetchModelCatalogEntries(channel, true);
+        options?.signal?.throwIfAborted();
+        const entry = entries.find(item => item.id === modelOptionName(selectedModel));
+        if (!entry) throw Error('当前 API Key 的可用模型列表不包含所选模型。请刷新模型列表并检查官网分组权限；原模型与设置已保留，不会自动换 Key、分组或付费模型。');
+        // Use this key's current limits without changing saved selections.
+        config = { ...config, channels: config.channels.map(item => item.id === channel.id ? { ...item, models: [...item.models.filter(model => model.name !== entry.id), { ...item.models.find(model => model.name === entry.id), name: entry.id, capability: 'video', referenceFileMaxBytes: entry.referenceFileMaxBytes }] } : item) };
+    }
     const api = window.oneYesDesktop?.videoTasks;
     if (!api || resolveModelScript(config, config.model || config.videoModel)) return createVideoTask(config, prompt, references, options);
     const selected = { ...config, model: config.model || config.videoModel };
-    const key = await api.call('prepare', { ...videoRecoveryInput(selected, prompt, options?.target), references: [...references, ...options?.videos || [], ...options?.audios || []].map(item => ({ id: item.id, storageKey: item.storageKey })) });
+    const key = await api.call('prepare', { ...videoRecoveryInput(selected, prompt, options?.target), retryLargeMaterial: Boolean(getVideoModelInfo(selected)), references: [...references, ...options?.videos || [], ...options?.audios || []].map(item => ({ id: item.id, storageKey: item.storageKey })) });
     try {
         await options?.onPrepared?.(key);
         const task = await createVideoTask(config, prompt, references, { ...options, nativeJobKey: key });
@@ -109,7 +124,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     }
 }
 
-function submissionHeaders(options?: VideoMediaOptions) { return options?.nativeJobKey ? { 'x-oneyes-video-job': options.nativeJobKey } : {}; }
+function submissionHeaders(options?: VideoMediaOptions): Record<string, string> { return options?.nativeJobKey ? { 'x-oneyes-video-job': options.nativeJobKey, 'Idempotency-Key': options.nativeJobKey } : {}; }
 
 async function createVideoTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
@@ -266,11 +281,12 @@ async function createBridgeVideoTask(config: AiConfig, model: string, prompt: st
     const videoInputs = info.provider === "zhiying"
         ? await Promise.all(videos.map(video => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)))
         : videos.map(video => videoBridgeMediaUrl(video.url, "视频"));
+    const audioFiles = info.id.startsWith('wan3.0-video') ? undefined : await Promise.all(audios.map(audio => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
     const audioInputs = info.provider === "zhiying"
-        ? await Promise.all(audios.map(audio => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)))
+        ? audioFiles!
         : info.id.startsWith("wan3.0-video")
             ? audios.map(audio => videoBridgeMediaUrl(audio.url, "音频"))
-            : await Promise.all(audios.map(async audio => readFileAsDataUrl(await referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options))));
+            : await Promise.all(audioFiles!.map(readFileAsDataUrl));
     const grok = info.id.startsWith("grok-");
     const images = grok ? [] : await prepareReferenceFiles(references, options?.signal, info.id === "veo-3.1" ? "png" : undefined);
     const referenceVideoDurationTotal = videos.every(video => Number.isFinite(video.durationMs) && video.durationMs! > 0)
@@ -278,14 +294,15 @@ async function createBridgeVideoTask(config: AiConfig, model: string, prompt: st
         : undefined;
     const request = await encodeVideoBridgeRequest(buildVideoBridgeRequest(info, config, modelOptionName(model), prompt, {
         images,
-        imageDataUrls: grok ? references.map(image => videoBridgeMediaUrl(image.url || image.dataUrl, "图片")) : info.provider === "zhiying" ? [] : await Promise.all(images.map(readFileAsDataUrl)),
+        imageDataUrls: grok ? references.map(image => videoBridgeMediaUrl(image.url || image.dataUrl, "图片")) : info.provider === "zhiying" || info.id.startsWith('wan3.0-video') || /^(veo-|gemini-omni-)/.test(info.id) ? [] : await Promise.all(images.map(readFileAsDataUrl)),
         videos: videoInputs,
         audios: audioInputs,
+        audioFiles,
         referenceVideoDurationTotal,
     }), info);
     options?.signal?.throwIfAborted();
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), request.body, { headers: { ...aiHeaders(config, request.contentType), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 })).data);
+        const created = unwrapVideoResponse((await submitVideoBridge<ApiVideoResponse>(aiApiUrl(config, '/videos'), request.body, { ...aiHeaders(config, request.contentType), 'Idempotency-Key': options?.nativeJobKey || crypto.randomUUID(), ...submissionHeaders(options) }, options?.signal)).data);
         const id = created.request_id || created.id;
         if (!id) throw new Error(apiText("noVideoTaskId"));
         return { id, provider: "openai", model };
@@ -572,7 +589,11 @@ function readAxiosError(error: unknown, fallback: string) {
         if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
         const message = readApiErrorMessage(responseData);
-        if (error.response?.status === 413) return "视频请求超过当前入口大小限制，未自动重新生成。请减少参考素材或使用支持的上传入口；不会自动降低画质。";
+        const code = videoBridgeErrorCode(responseData);
+        if (code === 'model_not_allowed' || /model[_ ]not[_ ]allowed|模型.*(?:未获准|无权限|未允许)/i.test(message)) return '当前 API Key 无权调用该模型，请刷新模型列表并检查官网 Key 分组权限；不会自动换 Key、分组或放宽模型权限。';
+        if (error.response?.status === 413 && code === 'inline_text_too_large') return '内联文本或 Base64 素材超过 32 MiB，请使用二进制文件 part 或受支持的预上传素材；未自动重新生成，不会降低画质。';
+        if (error.response?.status === 413 && code === 'bridge_request_too_large') return '视频桥创建正文超过 128 MiB（含封装开销），请减少素材或使用受支持的预上传入口；模型单文件与 CDN 限制独立生效，未自动重发或更改站点地址。';
+        if (error.response?.status === 413) return "当前模型或访问入口拒绝了素材大小。桥正文上限不代表模型单文件或 CDN 额度，请检查素材与站点限制；未自动重发，不会降低画质或更改接口地址。";
         if (/moderation|content.?policy|可识别人物|真人|审核/i.test(message)) return "参考素材未通过内容审核，请调整素材后手动提交；不会自动重试或绕过审核。";
         if (/task[_ ]not[_ ]found/i.test(message)) return apiText("videoTaskMissing");
         if (/Duplicate or conflicting Wan|Conflicting.*frame/i.test(message)) return "参考图片字段冲突，请检查首尾帧与参考素材模式，移除重复来源后重试。";

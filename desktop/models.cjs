@@ -1,7 +1,7 @@
 // Keep model discovery out of renderer Fetch/Axios custom-scheme handling.
 // The destination is fixed; this bridge cannot forward a key to another host.
 function createModelCatalog(fetcher) {
-    return async apiKey => {
+    return async (apiKey, details = false) => {
         if (typeof apiKey !== 'string' || !apiKey.trim() || /[\r\n]/.test(apiKey)) throw new Error('请先填写有效的 OneYes API Key');
         let response;
         try {
@@ -23,7 +23,7 @@ function createModelCatalog(fetcher) {
         if (!Array.isArray(body?.data) || body.data.some(item => typeof item?.id !== 'string' || !item.id.trim())) throw new Error('OneYes 模型列表格式无效，请稍后重新检查');
         const names = [...new Set(body.data.map(item => item.id))].sort((a, b) => a.localeCompare(b));
         if (!names.length) throw new Error('该 Key 没有可用模型，请检查官网分组权限后重新配置');
-        return names;
+        return details === true ? names.map(id => ({ id, reference_file_max_bytes: body.data.find(item => item.id === id).reference_file_max_bytes })) : names;
     };
 }
 module.exports = { createModelCatalog };

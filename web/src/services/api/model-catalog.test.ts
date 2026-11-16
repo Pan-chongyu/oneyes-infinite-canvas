@@ -4,7 +4,7 @@ const values = new Map<string, string>();
 globalThis.localStorage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: key => { values.delete(key); }, clear: () => values.clear(), key: i => [...values.keys()][i] ?? null, get length() { return values.size; } };
 globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { queryClient } = await import("@/lib/query-client");
-const { fetchModelCatalog } = await import("./model-catalog");
+const { fetchModelCatalog, fetchModelCatalogEntries } = await import("./model-catalog");
 const { configureModelDefaults, defaultConfig, GROK_VIDEO_CHANNEL_ID, normalizeOneYesConfig, resolveModelRequestConfig, selectableModelsByCapability, syncChannelModels, useConfigStore } = await import("@/stores/use-config-store");
 const { useModelCatalogStore } = await import("@/stores/use-model-catalog-store");
 const { useOneYesAccountStore } = await import("@/stores/use-oneyes-account-store");
@@ -99,6 +99,25 @@ test("automatic setup keeps valid defaults, fills all media defaults and never n
     assert.ok(useModelCatalogStore.getState().updatedAt);
     await useConfigStore.persist.rehydrate();
     assert.deepEqual(useConfigStore.getState().config, config);
+});
+
+test('live file limits are sanitized, refreshed, persisted and isolated to the owning key', async () => {
+    bridge(async () => ({ data: ['seedance-2.0-official'] }));
+    let limit: unknown = { image: 12, video: 20, audio: 22, private: 'discard' };
+    window.oneYesDesktop!.models.list = async key => ({ data: [{ id: 'seedance-2.0-official', reference_file_max_bytes: key === 'fixture-secret-a' ? limit : 99 }] });
+    const first = useConfigStore.getState().config.channels[0];
+    assert.deepEqual(await fetchModelCatalogEntries(first), [{ id: 'seedance-2.0-official', referenceFileMaxBytes: { image: 12, video: 20, audio: 22 } }]);
+    await useModelCatalogStore.getState().sync(true);
+    const synced = useConfigStore.getState().config;
+    assert.deepEqual(synced.channels[0].models[0].referenceFileMaxBytes, { image: 12, video: 20, audio: 22 });
+    assert.deepEqual(normalizeOneYesConfig(JSON.parse(JSON.stringify(synced))), synced);
+    assert.equal((await fetchModelCatalogEntries({ ...first, apiKey: 'fixture-other-key' }))[0].referenceFileMaxBytes, 99);
+    limit = { image: -1, video: 3.5, audio: '64', private: 100 };
+    await useModelCatalogStore.getState().sync(true);
+    assert.equal(useConfigStore.getState().config.channels[0].models[0].referenceFileMaxBytes, undefined);
+    limit = { image: 7 };
+    await useModelCatalogStore.getState().sync(true);
+    assert.deepEqual(useConfigStore.getState().config.channels[0].models[0].referenceFileMaxBytes, { image: 7 });
 });
 
 test("partial failure and empty or invalid catalogs retain existing configuration without automatic retries", async () => {
