@@ -126,6 +126,7 @@ export function CanvasNodeHoverToolbar({
     const isAudio = node.type === CanvasNodeType.Audio;
     const hasImage = isImage && Boolean(node.metadata?.content);
     const hasVideo = isVideo && Boolean(node.metadata?.content);
+    const needsVideoReview = isVideo && Boolean(node.metadata?.videoJobKey) && !node.metadata?.videoTaskId && !hasVideo;
     const hasAudio = isAudio && Boolean(node.metadata?.content);
     const isText = node.type === CanvasNodeType.Text;
     const isConfig = node.type === CanvasNodeType.Config;
@@ -158,7 +159,7 @@ export function CanvasNodeHoverToolbar({
         ...(hasVideo ? [{ id: "reverseVideoPrompt", title: t("canvas.videoWorkflow.reverse"), label: t("canvas.imageTools.reversePrompt"), icon: <Sparkles className="size-4" />, onClick: () => onReversePrompt(node) }] : []),
         ...(hasVideo && onCreateVideoConfig ? [{ id: "videoConfig", title: t("canvas.videoWorkflow.generateHint"), label: t("canvas.configNode.title"), icon: <Settings2 className="size-4" />, onClick: () => onCreateVideoConfig(node) }] : []),
         ...(canQueryVideoTask ? [{ id: "queryVideoTask", title: t("canvas.nodeToolbar.queryVideoTaskTitle"), label: t("canvas.nodeToolbar.queryVideoTask"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
-        ...(canRetry ? [{ id: "retry", title: t("canvas.nodeToolbar.retryTitle"), label: t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
+        ...(canRetry ? [{ id: "retry", title: needsVideoReview ? '查看原视频恢复记录，不重新生成' : t("canvas.nodeToolbar.retryTitle"), label: needsVideoReview ? '查看原任务' : t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: t(hasAudio ? "canvas.nodeToolbar.downloadAudio" : hasVideo ? "canvas.nodeToolbar.downloadVideo" : "canvas.nodeToolbar.downloadImage"), label: t("common.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
         ...(isVideo ? [{ id: "edit", title: t("common.edit"), label: t("common.edit"), icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),

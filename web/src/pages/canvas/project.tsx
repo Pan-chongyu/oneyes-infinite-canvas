@@ -14,7 +14,7 @@ import { imageTasks as durableImageTasks, storedTaskImage, storeGeneratedImage, 
 import { applyCanvasImageTask, failMissingCanvasImageTasks, markCanvasImageTask } from "@/lib/canvas/canvas-image-task";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
-import { applyVideoRecovery, useVideoRecoveryStore } from '@/services/video-recovery';
+import { applyVideoRecovery, refreshVideoRecovery, useVideoRecoveryStore } from '@/services/video-recovery';
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { ensureImagePreview, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
@@ -464,6 +464,20 @@ function InfiniteCanvasPage() {
         },
         [effectiveConfig, finishGenerationRequest, message, startGenerationRequest, t],
     );
+
+    const reviewUnconfirmedVideoTask = useCallback(async (node: CanvasNodeData) => {
+        if (node.type !== CanvasNodeType.Video || !node.metadata?.videoJobKey || node.metadata.videoTaskId || node.metadata.content) return false;
+        useVideoRecoveryStore.setState({ open: true });
+        try {
+            await refreshVideoRecovery();
+            const job = useVideoRecoveryStore.getState().jobs.find(job => job.key === node.metadata!.videoJobKey);
+            if (job) setNodes(previous => previous.map(item => item.id === node.id ? applyVideoRecovery(item, job) : item));
+            message.info(job?.state === 'not_submitted' ? '原请求未提交生成，记录已保留。请核对后明确发起新的生成任务。' : '请先核对原视频任务与官网用量；本次只查看恢复记录，不会重新生成。');
+        } catch {
+            useVideoRecoveryStore.setState({ error: '暂时无法读取原视频记录，请稍后重试；不会重新生成。' });
+        }
+        return true;
+    }, [message]);
 
     const stopGenerationByRunningId = useCallback((runningId: string) => {
         const affectedNodeIds = new Set<string>();
@@ -2468,6 +2482,7 @@ function InfiniteCanvasPage() {
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
+            if (sourceNode && await reviewUnconfirmedVideoTask(sourceNode)) return;
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
@@ -2897,7 +2912,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageTaskOptions, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageTaskOptions, isAiConfigReady, message, openConfigDialog, reviewUnconfirmedVideoTask, startGenerationRequest, t],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -2916,6 +2931,7 @@ function InfiniteCanvasPage() {
                 else message.info("提交结果尚未确认，请先查看官网用量；需要重新生成时请明确发起新的生成任务。");
                 return;
             }
+            if (await reviewUnconfirmedVideoTask(node)) return;
             if (hasResumableVideoTask(node)) {
                 await pollVideoNodeTask(node);
                 return;
@@ -3068,7 +3084,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageTaskOptions, isAiConfigReady, message, openConfigDialog, pollVideoNodeTask, startGenerationRequest, t],
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, imageTaskOptions, isAiConfigReady, message, openConfigDialog, pollVideoNodeTask, reviewUnconfirmedVideoTask, startGenerationRequest, t],
     );
 
     const deleteBatchImage = useCallback((nodeId: string, imageId: string) => {

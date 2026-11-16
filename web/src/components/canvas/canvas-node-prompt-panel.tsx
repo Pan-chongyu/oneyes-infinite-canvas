@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
+import { ArrowUp, LoaderCircle, Maximize2, RefreshCw, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -44,6 +44,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = modeOverride ?? defaultMode(node.type);
+    const needsVideoReview = node.type === CanvasNodeType.Video && Boolean(node.metadata?.videoJobKey) && !node.metadata?.videoTaskId && !node.metadata?.content;
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
@@ -65,7 +66,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return;
+        if ((!text && !needsVideoReview) || isRunning) return;
         onGenerate(node.id, mode, text);
     };
 
@@ -132,9 +133,10 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                     type="primary"
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
                     danger={isRunning}
-                    disabled={!isRunning && !prompt.trim()}
+                    disabled={!isRunning && !prompt.trim() && !needsVideoReview}
                     onClick={() => (isRunning ? onStop(node.id) : submit())}
-                    aria-label={t(isRunning ? "canvas.promptPanel.stopGeneration" : "canvas.promptPanel.generate")}
+                    aria-label={!isRunning && needsVideoReview ? '查看原任务' : t(isRunning ? "canvas.promptPanel.stopGeneration" : "canvas.promptPanel.generate")}
+                    title={!isRunning && needsVideoReview ? '查看原视频恢复记录，不重新生成' : undefined}
                 >
                     <span className="flex items-center gap-1.5">
                         {isRunning ? (
@@ -144,7 +146,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                                 <span className="text-xs font-medium">{t("canvas.promptPanel.stop")}</span>
                             </>
                         ) : (
-                            <ArrowUp className="size-4" />
+                            needsVideoReview ? <RefreshCw className="size-4" /> : <ArrowUp className="size-4" />
                         )}
                     </span>
                 </Button>

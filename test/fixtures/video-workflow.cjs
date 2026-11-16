@@ -22,8 +22,10 @@ app.whenReady().then(async () => {
     ipcMain.handle('media:release', (_event, id) => media.release(id));
     for (const name of ['config:read', 'config:write', 'config:remove', 'diagnostics:report', 'diagnostics:recover', 'window:theme']) ipcMain.handle(name, () => null);
     ipcMain.handle('collaboration:call', () => ({ status: 'offline' }));
-    const recoveries = []; let recoveryResult, recoveryJob;
+    const recoveries = [], videoOperations = [], modelReads = []; let recoveryResult, recoveryJob;
+    ipcMain.handle('models:list', (_event, key) => { modelReads.push(key); return { data: ['grok-imagine-video'] }; });
     ipcMain.handle('video-tasks:call', (_event, operation, input) => {
+        videoOperations.push(operation);
         if (operation === 'list') return recoveryJob ? [recoveryJob] : [];
         assert.equal(operation, 'adopt', 'recovery cannot prepare or submit a paid task');
         assert.equal(input.model, 'old-channel::seedance-2.0'); assert.equal(input.taskId, 'original-task');
@@ -126,6 +128,35 @@ app.whenReady().then(async () => {
         assert.equal(recoveries.length, 1); assert.deepEqual(await js('videoWorkflowTest.calls()'), []);
         assert.deepEqual(await js('videoWorkflowTest.errors()'), []); assert.deepEqual(external, []);
         console.log('NATIVE_RETIRED_MODEL_CANVAS_RECEIPT_RECOVERY_ORIGINAL_MODEL_KEY_AND_PARAMETERS_OK');
+        const unconfirmedCases = [...['unknown', 'submitting', 'prepared', 'not_submitted'].map(status => ({ status, entry: 'overlay' })), ...['toolbar', 'panel'].map(entry => ({ status: 'unknown', entry }))];
+        for (const { status, entry } of unconfirmedCases) {
+            recoveryJob = { key: 'unconfirmed-job', model: 'default::grok-imagine-video', site: 'https://oneyes.ai', channelId: 'default', provider: 'openai', state: status, createdAt: Date.now(), parameters: { size: '16:9', vquality: '480', videoSeconds: '5' } };
+            await js('videoWorkflowTest.seedUnconfirmedTask()');
+            const loaded = new Promise(resolve => win.webContents.once('did-finish-load', resolve)); win.reload(); await loaded;
+            await wait('Boolean(window.videoWorkflowTest && document.querySelector("[data-node-id=unconfirmed-video]"))');
+            const before = videoOperations.length;
+            if (entry === 'overlay') await js(`(()=>{const button=[...document.querySelectorAll('[data-node-id=unconfirmed-video] button')].find(button=>button.textContent.includes('查看原任务'));if(!button)throw Error('Missing safe recovery action');button.click()})()`);
+            else {
+                await js(`(()=>{const node=document.querySelector('[data-node-id=unconfirmed-video]'),r=node.getBoundingClientRect();node.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:r.x+r.width/2,clientY:r.y+r.height/2}))})()`);
+                await js(`window.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}))`);
+                await wait('Boolean(document.querySelector("[data-node-toolbar=unconfirmed-video]"))');
+                if (entry === 'toolbar') await js(`Array.from(document.querySelectorAll('[data-node-toolbar=unconfirmed-video] button')).find(button=>button.textContent.includes('查看原任务')).click()`);
+                else {
+                    await js(`Array.from(document.querySelectorAll('[data-node-toolbar=unconfirmed-video] button')).find(button=>button.textContent.trim()==='编辑').click()`);
+                    await wait('Boolean(document.querySelector("button[aria-label=查看原任务]"))');
+                    await js('document.querySelector("button[aria-label=查看原任务]").click()');
+                }
+            }
+            await wait('Boolean(document.querySelector(".ant-modal-body")?.textContent.includes("unconfirmed-job"))');
+            assert.equal(await js('[...document.querySelectorAll(".ant-modal-body button")].some(button=>/重试查询|生成/.test(button.textContent))'), false, status);
+            assert.ok(videoOperations.slice(before).length > 0);
+            assert.ok(videoOperations.slice(before).every(operation => operation === 'list'), status + ': ordinary retry cannot prepare, adopt or submit');
+            assert.equal(modelReads.length, 0); assert.equal(recoveries.length, 1);
+            assert.equal((await js('videoWorkflowTest.state().nodes.find(n=>n.id==="unconfirmed-video").metadata')).videoJobKey, 'unconfirmed-job');
+            assert.deepEqual(await js('videoWorkflowTest.calls()'), []); assert.deepEqual(external, []);
+        }
+        assert.deepEqual(await js('videoWorkflowTest.errors()'), []);
+        console.log('NATIVE_UNKNOWN_SUBMITTING_PREPARED_AND_NOT_SUBMITTED_OVERLAY_TOOLBAR_AND_GENERATE_PANEL_ZERO_PREPARE_OR_POST_OK');
         if (process.env.CANVAS_VIDEO_WORKFLOW_SCREENSHOT) { win.showInactive(); win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 500)); await writeFile(join(tmpdir(), 'oneyes-video-workflow.png'), (await win.capturePage()).toPNG()); }
         console.log('VIDEO_WORKFLOW_OK', { frames: 3, originalSize: '192x128', mockedModelRequests: 4, nativeSampling: true, restart: true, manualRetry: true, cancel: true });
     } catch (error) { console.error('VIDEO_WORKFLOW_FAILED', error); console.error(await js('({body:document.body.innerText.slice(-1400),errors:window.videoWorkflowTest?.errors()})')); throw error; }

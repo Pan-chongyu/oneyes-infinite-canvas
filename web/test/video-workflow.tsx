@@ -10,6 +10,8 @@ import { defaultConfig, useConfigStore } from "@/stores/use-config-store";
 import { flushCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { getAntThemeConfig } from "@/lib/app-theme";
+import { VideoRecovery } from '@/components/layout/video-recovery';
+import { useVideoRecoveryStore } from '@/services/video-recovery';
 import { createCanvasNode, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { createVideoNodeWorkflow } from "@/lib/canvas/video-node-workflow";
 import { buildNodeGenerationContext, buildNodeResponseMessages, prepareNodeTextContext } from "@/components/canvas/canvas-node-generation";
@@ -52,6 +54,12 @@ Object.assign(window, { videoWorkflowTest: {
         useCanvasStore.getState().updateProject(projectId!, { nodes: [...state().nodes, node] });
         await flushCanvasStorage();
     },
+    seedUnconfirmedTask: async () => {
+        const node = createCanvasNode(CanvasNodeType.Video, { x: 300, y: 300 }, { content: '', status: 'error', prompt: '隔离模拟视频', model: 'default::grok-imagine-video', videoJobKey: 'unconfirmed-job', vquality: '480', seconds: '5', size: '16:9' });
+        node.id = 'unconfirmed-video';
+        useCanvasStore.getState().updateProject(projectId!, { nodes: [...state().nodes.filter(item => item.id !== node.id), node] });
+        await flushCanvasStorage();
+    },
     original: async () => { const source = state().nodes.find(node => node.id === "source-video")!; return { node: source, bytes: (await getMediaBlob(source.metadata!.storageKey!))!.size }; },
     theme: (dark: boolean) => useThemeStore.getState().setTheme(dark ? "dark" : "light"),
     service: async (kind: "cancel" | "invalid" | "missing" | "mixed" | "existing" | "ordinary") => {
@@ -75,6 +83,7 @@ Object.assign(window, { videoWorkflowTest: {
 } });
 function Fixture() {
     const theme = useThemeStore(store => store.theme);
-    return <ConfigProvider theme={getAntThemeConfig(theme === "dark")}><App><CanvasProject /></App></ConfigProvider>;
+    const recoveryOpen = useVideoRecoveryStore(store => store.open);
+    return <ConfigProvider theme={getAntThemeConfig(theme === "dark")}><App><CanvasProject />{recoveryOpen ? <VideoRecovery /> : null}</App></ConfigProvider>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[`/canvas/${projectId}`]}><Routes><Route path="/canvas/:id" element={<Fixture />} /></Routes></MemoryRouter></QueryClientProvider></React.StrictMode>);
