@@ -274,10 +274,11 @@ app.whenReady().then(async () => {
         await js('showVideoRecovery()');
         await wait('document.querySelector(".ant-modal-body")?.textContent.includes("等待恢复凭据")');
         const recovery = await js('document.querySelector(".ant-modal-body").textContent');
-        assert.match(recovery, /提交待核实/); assert.match(recovery, /不会重新生成、重复付费/); assert.match(recovery, /original-task/);
+        assert.match(recovery, /提交待核实/); assert.match(recovery, /不会重新生成、重复付费/); assert.match(recovery, /记录编号：00000000-0000-0000-0000-000000000001/);
+        assert.doesNotMatch(recovery, /original-task|https:\/\//, 'ordinary recovery details expose local records, never service task IDs or sites');
         assert.equal(await js('[...document.querySelectorAll(".ant-modal-body button")].filter(button=>button.textContent.includes("重试查询")).length'), 1, 'an unknown submission cannot offer paid automatic regeneration');
         await js('[...document.querySelectorAll(".ant-modal-body button")].find(button=>button.textContent.includes("重试查询")).click()');
-        await wait('document.querySelector(".ant-modal-body")?.textContent.includes("下载未完成")');
+        await wait('document.querySelector(".ant-modal-body")?.textContent.includes("视频结果取回未完成")');
         assert.equal(recoveryRetries, 1);
         if (!process.env.CI) {
             await mkdir('.secrets', { recursive: true });

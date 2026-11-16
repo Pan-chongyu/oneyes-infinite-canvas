@@ -86,7 +86,7 @@ export function videoErrorText(value, context = {}) {
     else if (/^该模型支持 768p \/ 1080p \/ 2K，请主动选择支持的分辨率；已保留原设置。$/.test(text)) kind = 'minimax_resolution';
     else if (code === 'duration_invalid' || /duration.{0,80}(?:invalid|outside|out of range|unsupported|not supported)|(?:invalid|unsupported).{0,30}duration|时长.{0,20}(?:不支持|超出|超范围|无效)|不支持.{0,10}时长|支持 [\d /–.-]+ 秒|固定 \d+ 秒|最多支持 \d+ 秒/i.test(text)) kind = 'duration_invalid';
     else if (code === 'resolution_or_ratio_invalid' || /(?:unsupported|invalid).{0,30}(?:resolution|aspect.?ratio)|(?:resolution|aspect.?ratio).{0,30}(?:unsupported|not supported|invalid)|(?:分辨率|画幅比例|像素尺寸).{0,20}(?:不支持|无效|不符)|(?:不支持|仅支持).{0,20}(?:分辨率|比例)|请(?:主动选择支持的分辨率|调整画幅比例)/i.test(text)) kind = 'resolution_invalid';
-    else if (/watermark|水印开关参数无效/i.test(text)) kind = 'watermark_invalid';
+    else if (code === 'watermark_invalid' || /watermark.{0,50}(?:invalid|must|not supported)|(?:invalid|unsupported).{0,30}watermark|水印(?:开关)?参数无效/i.test(text)) kind = 'watermark_invalid';
     else if (/需要(?:至少一张)?参考图片|requires an input image/i.test(text)) kind = 'reference_required';
     else if (code === 'reference_upload_required' || /素材.*(?:上传|读取)|参考.*(?:损坏|解码|无法|HTTPS)|invalid image data/i.test(text)) kind = 'reference_upload_required';
     else if (status === 415 || /(?:status|HTTP)\s*415\b/i.test(text)) kind = 'unsupported_media';

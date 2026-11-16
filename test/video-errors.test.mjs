@@ -15,7 +15,7 @@ test('latest six sanitized incidents use fixed categories; generic 500 never gue
     assert.equal(videoErrorText({ error: { message: 'Video creation outcome is unknown; task id could not be confirmed' } }), messages.creation_outcome_unknown);
     assert.equal(videoErrorText({ message: 'The requested upstream video model is not available' }), messages.model_unavailable);
     assert.equal(videoErrorText({ message: 'duration outside selected model range' }), messages.duration_invalid);
-    for (const message of ['gateway error', 'service failed duration=5 resolution=720', '服务错误，时长=5 分辨率=720']) assert.equal(videoErrorText({ message }, { status: 500 }), messages.unknown);
+    for (const message of ['gateway error', 'service failed duration=5 resolution=720 watermark=false', '服务错误，时长=5 分辨率=720']) assert.equal(videoErrorText({ message }, { status: 500 }), messages.unknown);
 });
 
 test('untrusted money codes and details never become a site recharge instruction', () => {
