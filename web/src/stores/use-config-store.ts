@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { videoModelOptionName } from "@/lib/video-model-info";
+import { videoDisplayText } from "@/lib/video-display-text";
 import { referenceFileMaxBytes, type ReferenceFileMaxBytes } from '@/lib/video-material-policy';
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -411,6 +412,7 @@ export function modelOptionName(value: string) {
 export function modelOptionLabel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const name = videoModelOptionName(config, value);
+    if (modelCapabilityOf(config, value) === 'video') return videoDisplayText(name);
     if (!decoded) return name;
     const channel = config.channels.find((item) => item.id === decoded.channelId);
     return channel ? `${name}（${channel.name}）` : name;

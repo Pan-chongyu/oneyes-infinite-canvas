@@ -4,6 +4,7 @@ import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { videoDisplayText } from "@/lib/video-display-text";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -287,7 +288,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             {imageBytes ? <InfoRow label={t("canvas.nodeToolbar.imageSize")} value={formatBytes(imageBytes)} /> : null}
                             {node.metadata?.errorDetails ? (
                                 <div className="rounded-lg border p-3 text-red-400" style={{ borderColor: theme.node.stroke }}>
-                                    {node.metadata.errorDetails}
+                                    {node.type === CanvasNodeType.Video ? videoDisplayText(node.metadata.errorDetails) : node.metadata.errorDetails}
                                 </div>
                             ) : null}
                         </div>

@@ -101,7 +101,7 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
             await wait('document.querySelectorAll("[role=option]").length === 6');
             const labels = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent.trim())');
-            for (const variant of variants.slice(0, 2)) assert.ok(labels.some(label => label.startsWith(variant + ' [') && label.endsWith('（OneYes Grok）')), variant);
+            for (const variant of variants.slice(0, 2)) assert.ok(labels.some(label => label.startsWith(variant + ' [') && label.endsWith(']') && !label.includes('OneYes Grok')), variant);
             assert.ok(labels.every(label => !/sdxl|gpt-5/.test(label)));
             await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.getAttribute('data-model-id')===${JSON.stringify(`oneyes-minimax::${name}`)}).focus()`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });

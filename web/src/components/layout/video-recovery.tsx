@@ -7,6 +7,7 @@ import { adoptVideoTask, applyVideoRecovery, refreshVideoRecovery, useVideoRecov
 import { useConfigStore } from '@/stores/use-config-store';
 import { flushCanvasStorage, useCanvasStore } from '@/stores/canvas/use-canvas-store';
 import { buildGenerationConfig } from '@/lib/canvas/canvas-generation-helpers';
+import { videoDisplayText } from '@/lib/video-display-text';
 
 const labels: Record<string, string> = { prepared: '准备提交', submitting: '正在提交', unknown: '提交待核实', confirmation: '待确认原账号',
     throttled: '大素材排队中', not_submitted: '未提交上游',
@@ -59,17 +60,17 @@ export function VideoRecovery() {
     const close = () => useVideoRecoveryStore.setState({ open: false });
     return <Modal open={open} onCancel={close} title="视频任务" footer={null} width={640}>
         <p className="mb-4 text-xs leading-relaxed text-muted-foreground">退出或重启后继续取回原任务。重试只查询或下载，不会重新生成、重复付费。</p>
-        {error ? <p role="alert" className="mb-3 text-sm text-destructive">{error}</p> : null}
+        {error ? <p role="alert" className="mb-3 text-sm text-destructive">{videoDisplayText(error)}</p> : null}
         <div className="max-h-[65vh] overflow-auto">
             {!jobs.length ? <Empty description="暂无视频恢复任务" /> : [...jobs].reverse().map(job => <section key={job.key} className="border-b border-border py-3 last:border-0">
-                <div className="flex items-center justify-between gap-3"><span className="min-w-0 truncate text-sm font-medium" title={job.model}>{job.model.split('::').at(-1)}</span><Tag className="shrink-0">{labels[job.state] || job.state}</Tag></div>
-                <p className="mt-1 break-all text-xs text-muted-foreground">{job.site}{job.accountId ? ` · 账号 ${job.accountId}` : ''} · {new Date(job.createdAt).toLocaleString()}</p>
+                <div className="flex items-center justify-between gap-3"><span className="min-w-0 truncate text-sm font-medium" title={videoDisplayText(job.model.split('::').at(-1) || '')}>{videoDisplayText(job.model.split('::').at(-1) || '')}</span><Tag className="shrink-0">{labels[job.state] || job.state}</Tag></div>
+                <p className="mt-1 break-all text-xs text-muted-foreground">{videoDisplayText(job.site)}{job.accountId ? ` · 账号 ${job.accountId}` : ''} · {new Date(job.createdAt).toLocaleString()}</p>
                 <p className="mt-1 break-all text-xs text-muted-foreground">任务：{job.taskId || '尚未获得可靠任务 ID'} · {job.parameters.vquality} · {job.parameters.videoSeconds} 秒 · {job.parameters.size}</p>
-                {job.reason ? <p role="status" className="mt-2 text-sm leading-relaxed">{job.reason}</p> : null}
+                {job.reason ? <p role="status" className="mt-2 text-sm leading-relaxed">{videoDisplayText(job.reason)}</p> : null}
                 <div className="mt-2 flex flex-wrap gap-1">
-                    {job.state === 'saved' && job.result ? <Button type="text" size="small" icon={<Download size={14} />} onClick={() => void fetch(job.result!.url).then(async response => { if (!response.ok) throw Error('读取视频失败'); saveAs(await response.blob(), `OneYes-Video-${job.key}.${job.result!.mimeType === 'video/webm' ? 'webm' : 'mp4'}`); }).catch(error => message.error(String(error)))}>保存视频</Button> : job.taskId ? <Button type="text" size="small" icon={<RefreshCw size={14} />} onClick={() => {
-                        const retry = () => void api.call('retry', job.key).then(jobs => useVideoRecoveryStore.setState({ jobs })).catch(error => message.error(String(error)));
-                        if (job.state === 'confirmation') modal.confirm({ title: '确认原提交账号', content: `请确认 ${job.site} 的当前渠道仍属于原提交账号。仅查询任务 ${job.taskId}，不会重新生成。`, okText: '确认原账号并恢复', cancelText: '暂不恢复', onOk: retry }); else retry();
+                    {job.state === 'saved' && job.result ? <Button type="text" size="small" icon={<Download size={14} />} onClick={() => void fetch(job.result!.url).then(async response => { if (!response.ok) throw Error('读取视频失败'); saveAs(await response.blob(), `OneYes-Video-${job.key}.${job.result!.mimeType === 'video/webm' ? 'webm' : 'mp4'}`); }).catch(error => message.error(videoDisplayText(String(error))))}>保存视频</Button> : job.taskId ? <Button type="text" size="small" icon={<RefreshCw size={14} />} onClick={() => {
+                        const retry = () => void api.call('retry', job.key).then(jobs => useVideoRecoveryStore.setState({ jobs })).catch(error => message.error(videoDisplayText(String(error))));
+                        if (job.state === 'confirmation') modal.confirm({ title: '确认原提交账号', content: videoDisplayText(`请确认 ${job.site} 的当前配置仍属于原提交账号。仅查询任务 ${job.taskId}，不会重新生成。`), okText: '确认原账号并恢复', cancelText: '暂不恢复', onOk: retry }); else retry();
                     }}>{job.state === 'confirmation' ? '确认原账号并恢复' : '重试查询／下载'}</Button> : null}
                     {job.target && projects.some(project => project.id === job.target!.projectId && project.nodes.some(node => node.id === job.target!.nodeId)) ? <Button type="text" size="small" onClick={() => { close(); navigate('/canvas/' + job.target!.projectId); }}>返回画布</Button> : <span className="self-center text-xs text-muted-foreground">{job.target ? '原画布或节点已删除，仍可保存视频' : '独立生成任务'}</span>}
                 </div>

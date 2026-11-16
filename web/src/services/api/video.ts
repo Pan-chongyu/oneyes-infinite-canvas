@@ -9,6 +9,7 @@ import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/medi
 import { isGrokVideoModel, isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, normalizeVideoResolutionForModel } from "@/lib/video-capabilities";
 import { getVideoModelInfo, videoModelConfigError } from "@/lib/video-model-info";
 import type { VideoModelInfo } from "@/lib/video-model-catalog";
+import { videoDisplayText } from "@/lib/video-display-text";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -67,7 +68,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
             const job = (await api.call('list')).find(item => item.key === key);
             if (!job) throw Error('原视频恢复记录不存在，请检查本机数据目录；不会重新生成');
             if (job.state === 'saved' && job.result) return { saved: job.result };
-            if (['failed', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(job.reason || '请从“视频任务”继续恢复原任务');
+            if (['failed', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(videoDisplayText(job.reason || '请从“视频任务”继续恢复原任务'));
             await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
         }
     }
@@ -120,7 +121,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         return { ...task, nativeJobKey: key };
     } catch (error) {
         await api.call('submissionError', { key, reason: error instanceof Error ? error.message : '视频提交未完成' });
-        throw error;
+        throw error instanceof Error ? new Error(videoDisplayText(error.message), { cause: error }) : error;
     }
 }
 
@@ -556,10 +557,10 @@ function readApiErrorMessage(value: unknown): string {
             const parsed = JSON.parse(value);
             const inner = readApiErrorMessage(parsed) || value;
             if (inner === value && typeof parsed === "object" && Object.keys(parsed).length === 0) return "";
-            return inner;
+            return videoDisplayText(inner);
         } catch {
-            if (/<[a-z][\s\S]*>/i.test(value)) return apiText("htmlError", { preview: `${value.slice(0, 80)}...` });
-            return value;
+            if (/<[a-z][\s\S]*>/i.test(value)) return apiText("htmlError", { preview: `${videoDisplayText(value).slice(0, 80)}...` });
+            return videoDisplayText(value);
         }
     }
     if (Array.isArray(value)) return value.map(readApiErrorMessage).filter(Boolean).join("；");
@@ -567,7 +568,7 @@ function readApiErrorMessage(value: unknown): string {
     const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown; loc?: unknown };
     if (Array.isArray(payload.loc) && typeof payload.msg === "string") {
         const field = payload.loc.filter(part => (typeof part === "string" || typeof part === "number") && !["body", "query", "path"].includes(String(part))).join(".");
-        return field ? `${field}：${payload.msg}` : payload.msg;
+        return videoDisplayText(field ? `${field}：${payload.msg}` : payload.msg);
     }
     // error may be a string or an object containing a message.
     const errorMsg =
@@ -592,8 +593,8 @@ function readAxiosError(error: unknown, fallback: string) {
         const code = videoBridgeErrorCode(responseData);
         if (code === 'model_not_allowed' || /model[_ ]not[_ ]allowed|模型.*(?:未获准|无权限|未允许)/i.test(message)) return '当前 API Key 无权调用该模型，请刷新模型列表并检查官网 Key 分组权限；不会自动换 Key、分组或放宽模型权限。';
         if (error.response?.status === 413 && code === 'inline_text_too_large') return '内联文本或 Base64 素材超过 32 MiB，请使用二进制文件 part 或受支持的预上传素材；未自动重新生成，不会降低画质。';
-        if (error.response?.status === 413 && code === 'bridge_request_too_large') return '视频桥创建正文超过 128 MiB（含封装开销），请减少素材或使用受支持的预上传入口；模型单文件与 CDN 限制独立生效，未自动重发或更改站点地址。';
-        if (error.response?.status === 413) return "当前模型或访问入口拒绝了素材大小。桥正文上限不代表模型单文件或 CDN 额度，请检查素材与站点限制；未自动重发，不会降低画质或更改接口地址。";
+        if (error.response?.status === 413 && code === 'bridge_request_too_large') return '视频请求正文超过 128 MiB（含封装开销），请减少素材或使用受支持的预上传入口；模型单文件与 CDN 限制独立生效，未自动重发或更改站点地址。';
+        if (error.response?.status === 413) return "当前模型或访问入口拒绝了素材大小。完整请求上限不代表模型单文件或 CDN 额度，请检查素材与站点限制；未自动重发，不会降低画质或更改接口地址。";
         if (/moderation|content.?policy|可识别人物|真人|审核/i.test(message)) return "参考素材未通过内容审核，请调整素材后手动提交；不会自动重试或绕过审核。";
         if (/task[_ ]not[_ ]found/i.test(message)) return apiText("videoTaskMissing");
         if (/Duplicate or conflicting Wan|Conflicting.*frame/i.test(message)) return "参考图片字段冲突，请检查首尾帧与参考素材模式，移除重复来源后重试。";

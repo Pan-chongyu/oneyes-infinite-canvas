@@ -158,7 +158,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
                             <ul className="space-y-1">{info.priceLines.map((line) => <li key={line} className="break-words">{line}</li>)}</ul>
                             <p style={{ color: theme.node.muted }}>参考售价，最终按任务实际用量结算。</p>
                         </SettingGroup>
-                        <SettingGroup title={nativeGrok ? "88API 通道参考限制" : "参考素材与限制"} color={theme.node.muted}>
+                        <SettingGroup title="参考素材与限制" color={theme.node.muted}>
                             <div style={{ color: theme.node.muted }}>
                                 {([
                                     ["images", "图片"], ["videos", "视频"], ["audios", "音频"], ["total", "素材总数"],

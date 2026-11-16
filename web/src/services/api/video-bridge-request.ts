@@ -40,7 +40,7 @@ export async function encodeVideoBridgeRequest(request: VideoBridgeRequest, info
     }
     const response = new Response(request.body instanceof FormData ? request.body : JSON.stringify(request.body));
     const body = await response.blob();
-    if (body.size > VIDEO_BRIDGE_BODY_MAX_BYTES) throw Error(`视频桥创建正文超过 128 MiB，本次 ${(body.size / 1024 / 1024).toFixed(2)} MiB（含封装开销），未提交生成。模型单文件和 CDN 限制另行生效，请减少素材或使用受支持的预上传入口；不会降低画质或更改站点地址。`);
+    if (body.size > VIDEO_BRIDGE_BODY_MAX_BYTES) throw Error(`视频请求正文超过 128 MiB，本次 ${(body.size / 1024 / 1024).toFixed(2)} MiB（含封装开销），未提交生成。模型单文件和 CDN 限制另行生效，请减少素材或使用受支持的预上传入口；不会降低画质或更改站点地址。`);
     return { body, contentType: request.contentType || response.headers.get("Content-Type")! };
 }
 
@@ -50,7 +50,7 @@ export function videoBridgeMediaUrl(value: string | undefined, label: string) {
         const url = new URL(value || "");
         if (url.protocol === "https:" && !url.username && !url.password) return url.href;
     } catch { /* Local/blob media requires an upload capability exposed by the selected adapter. */ }
-    throw new Error(`该模型的参考${label}需要公开 HTTPS 链接；当前协议桥不支持直接提交本地${label}，请使用已上传的素材链接。`);
+    throw new Error(`该模型的参考${label}需要公开 HTTPS 链接；该模型暂不支持直接提交本地${label}，请使用已上传的素材链接。`);
 }
 
 export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParameters, model: string, prompt: string, media: VideoBridgeMedia): VideoBridgeRequest {
@@ -74,12 +74,12 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
         Object.entries({ model, prompt, resolution: quality, duration: String(duration), aspect_ratio: ratio }).forEach(([key, value]) => body.append(key, value));
         for (const [role, files] of [["reference_images", media.images], ["reference_videos", media.videos], ["reference_audios", media.audios]] as const) {
             for (const file of files) {
-                if (!(file instanceof File)) throw new Error("智赢参考素材必须提交本地文件，不能把公开链接当作素材 ID。");
+                if (!(file instanceof File)) throw new Error("该模型的参考素材须使用本地文件，请重新选择素材。");
                 body.append(role, file, file.name);
             }
         }
         if (media.videos.length && !probedVideoModels.has(info.id)) {
-            if (!Number.isFinite(media.referenceVideoDurationTotal) || !(media.referenceVideoDurationTotal! > 0)) throw new Error("该智赢模型需要参考视频的实际总时长，请重新读取视频素材后再提交。");
+            if (!Number.isFinite(media.referenceVideoDurationTotal) || !(media.referenceVideoDurationTotal! > 0)) throw new Error("该模型需要参考视频的实际总时长，请重新读取视频素材后再提交。");
             body.append("reference_video_duration_total", String(media.referenceVideoDurationTotal));
         }
         return { body };
@@ -168,7 +168,7 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
         if (media.videos.length) body.videos = media.videos;
         if (info.id === "veo-3.1") body.generate_audio = config.videoGenerateAudio !== "false";
     } else {
-        throw new Error("该模型未配置已验证的协议桥请求方式。");
+        throw new Error("该模型暂未适配，请刷新模型列表或选择其他模型。");
     }
     return { body, contentType: "application/json" };
 }

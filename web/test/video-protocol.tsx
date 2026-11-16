@@ -1,4 +1,5 @@
-import { defaultConfig, useConfigStore } from '@/stores/use-config-store';
+import { defaultConfig, modelOptionLabel, useConfigStore } from '@/stores/use-config-store';
+import { videoDisplayText } from '@/lib/video-display-text';
 import { initializeDesktopTransport } from '@/services/api/desktop-transport';
 import { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } from '@/services/api/video';
 import { uploadImage } from '@/services/image-storage';
@@ -22,6 +23,11 @@ const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], ap
 useConfigStore.setState({ config });
 const check = (value: unknown, message: string) => { if (!value) throw Error(message); };
 Object.assign(window, { videoTest: async () => {
+    check(videoDisplayText('智赢：HTTP 422，88API 不支持 1080p；https://api.zhiyingai.org/v1/videos?id=1') === '视频服务：HTTP 422，视频服务 不支持 1080p；视频服务', 'supplier details hidden while actionable error remains');
+    check(videoDisplayText('grok-imagine-video-1.5 · 1080p · 5s') === 'grok-imagine-video-1.5 · 1080p · 5s', 'model version and generation settings remain intact');
+    const namedChannelConfig = { ...config, channels: [{ ...config.channels[0], name: '88API', models: [{ name: 'grok-imagine-video-1.5', capability: 'video' as const }] }] };
+    check(modelOptionLabel(namedChannelConfig, 'default::grok-imagine-video-1.5') === 'grok-imagine-video-1.5', 'video model label omits supplier channel suffix');
+    check(namedChannelConfig.channels[0].name === '88API' && namedChannelConfig.channels[0].models[0].name === 'grok-imagine-video-1.5', 'display formatting must not mutate routing or exact model ID');
     const canvas = document.createElement('canvas'); canvas.width = 3; canvas.height = 2;
     canvas.getContext('2d')!.fillRect(0, 0, 2, 1);
     const stored = await uploadImage(canvas.toDataURL('image/png'));
