@@ -28,6 +28,13 @@ Object.assign(window, { videoTest: async () => {
     const namedChannelConfig = { ...config, channels: [{ ...config.channels[0], name: '88API', models: [{ name: 'grok-imagine-video-1.5', capability: 'video' as const }] }] };
     check(modelOptionLabel(namedChannelConfig, 'default::grok-imagine-video-1.5') === 'grok-imagine-video-1.5', 'video model label omits supplier channel suffix');
     check(namedChannelConfig.channels[0].name === '88API' && namedChannelConfig.channels[0].models[0].name === 'grok-imagine-video-1.5', 'display formatting must not mutate routing or exact model ID');
+    const aborted = new DOMException('Aborted', 'AbortError');
+    Object.assign(window.oneYesDesktop!, { videoTasks: { call: async (operation: string) => operation === 'prepare' ? 'fixture-cancelled' : undefined } });
+    let cancellation: unknown;
+    try { await createVideoGenerationTask(config, 'cancelled fixture', [], { onPrepared: async () => { throw aborted; } }); }
+    catch (error) { cancellation = error; }
+    finally { delete window.oneYesDesktop!.videoTasks; }
+    check(cancellation === aborted, 'message formatting must preserve cancellation identity and AbortError classification');
     const canvas = document.createElement('canvas'); canvas.width = 3; canvas.height = 2;
     canvas.getContext('2d')!.fillRect(0, 0, 2, 1);
     const stored = await uploadImage(canvas.toDataURL('image/png'));

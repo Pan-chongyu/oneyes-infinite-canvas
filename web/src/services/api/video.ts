@@ -121,7 +121,12 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         return { ...task, nativeJobKey: key };
     } catch (error) {
         await api.call('submissionError', { key, reason: error instanceof Error ? error.message : '视频提交未完成' });
-        throw error instanceof Error ? new Error(videoDisplayText(error.message), { cause: error }) : error;
+        if (error instanceof Error && videoDisplayText(error.message) !== error.message) {
+            const displayError = new Error(videoDisplayText(error.message), { cause: error });
+            displayError.name = error.name;
+            throw displayError;
+        }
+        throw error;
     }
 }
 
