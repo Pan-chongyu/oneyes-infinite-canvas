@@ -1,5 +1,4 @@
 import type { AiConfig } from '@/stores/use-config-store';
-import { videoResolutionOptionsForModel } from './video-capabilities';
 import { VIDEO_SECONDS_MIN } from './media-size';
 import { getVideoModelInfo } from './video-model-info';
 
@@ -8,7 +7,7 @@ export type VideoModelDefaults = Pick<AiConfig, 'vquality' | 'size' | 'videoSeco
 /** Applied on explicit selection only; never a fallback for a rejected paid request. */
 export function minimumVideoModelDefaults(config: AiConfig, model: string): VideoModelDefaults {
     const info = getVideoModelInfo(config, model);
-    const resolutions = info?.resolutions || videoResolutionOptionsForModel(model).map(item => item.value);
+    const resolutions = info?.resolutions || [/^minimax-h/i.test(model.split('::').at(-1) || '') ? '768' : '480'];
     const rank = (value: string) => parseFloat(value) * (/k$/i.test(value) ? 1000 : 1);
     const durations = info?.duration.values?.filter(value => value > 0);
     return {
