@@ -22,6 +22,29 @@ const { CONFIG_STORE_KEY, defaultConfig, guessCapability, GROK_VIDEO_CHANNEL_ID,
 const { normalizeProxySettings, proxySettings, testProxyConnection } = await import("@/services/api/local-proxy");
 const { shouldOpenSetup, getVerifiedSetupIds } = await import("./oneyes-setup");
 
+test('explicit video selection applies its defaults while edits, reselect and restoration preserve parameters', async () => {
+    const original = useConfigStore.getState().config;
+    try {
+        useConfigStore.getState().replaceConfig({ ...defaultConfig, vquality: '1080', videoSeconds: '20' });
+        useConfigStore.getState().updateConfig('videoModel', 'default::wan3.0-video');
+        assert.equal(useConfigStore.getState().config.vquality, '480');
+        assert.equal(useConfigStore.getState().config.videoSeconds, '2');
+        const custom = { vquality: '720', videoSeconds: '9', size: '9:16', videoMode: 'reference', videoGenerateAudio: 'true', videoWatermark: 'true' };
+        useConfigStore.getState().updateConfig('videoModelDefaults', { 'default::wan3.0-video': custom });
+        assert.equal(useConfigStore.getState().config.vquality, '480', 'saving preferences cannot alter an existing selection');
+        useConfigStore.getState().updateConfig('videoModel', 'default::veo-3.1');
+        assert.equal(useConfigStore.getState().config.videoSeconds, '4');
+        useConfigStore.getState().updateConfig('videoModel', 'default::wan3.0-video');
+        for (const [key, value] of Object.entries(custom)) assert.equal(useConfigStore.getState().config[key as keyof typeof custom], value);
+        useConfigStore.getState().updateConfig('vquality', '1080');
+        useConfigStore.getState().updateConfig('videoModel', 'default::wan3.0-video');
+        assert.equal(useConfigStore.getState().config.vquality, '1080');
+        await useConfigStore.persist.rehydrate();
+        assert.equal(useConfigStore.getState().config.vquality, '1080');
+        assert.deepEqual(useConfigStore.getState().config.videoModelDefaults['default::wan3.0-video'], custom);
+    } finally { useConfigStore.getState().replaceConfig(original); }
+});
+
 test("proxy settings validate protocols and separate URL credentials before saving", () => {
     const settings = proxySettings(defaultConfig);
     const normalized = normalizeProxySettings({ ...settings, upstreamProxyUrl: "socks5h://user:p%40ss%3A%23@127.0.0.1:1080" });

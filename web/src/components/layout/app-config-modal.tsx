@@ -5,8 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ModelPicker } from "@/components/model-picker";
-import { videoResolutionOptionsForModel } from "@/lib/video-capabilities";
-import { getVideoModelInfo, tierLabel } from "@/lib/video-model-info";
+import { ConfigVideoDefaults } from './config-video-defaults';
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
@@ -18,7 +17,7 @@ import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
+import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions } from "@/lib/media-size";
 import { configureModelDefaults, useConfigStore, type AiConfig, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
@@ -63,7 +62,6 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
-    const videoInfo = getVideoModelInfo(config, config.videoModel || config.model);
     const accountBusy = useOneYesAccountStore(state => state.busy);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -196,6 +194,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         </Form.Item>
                                     ))}
                                 </div>
+                                <ConfigVideoDefaults />
                                 <div className="mb-2 text-sm font-semibold">{t("config.preferences.generation")}</div>
                                 <div className="grid gap-4 md:grid-cols-4">
                                     <Form.Item label={t("config.preferences.canvasImageCount")} extra={t("config.preferences.canvasImageCountDescription")} className="mb-4">
@@ -210,9 +209,6 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                     </Form.Item>
                                     <Form.Item label={t("config.preferences.imageResolution")} className="mb-4">
                                         <Select value={inferMediaScale(config.size)} options={imageResolutionOptions} onChange={(scale) => updateConfig("size", computeMediaSize(scale, inferMediaRatio(config.size)))} />
-                                    </Form.Item>
-                                    <Form.Item label={t("config.preferences.videoResolution")} className="mb-4">
-                                        <Select value={videoInfo ? parseVideoResolution(config.vquality).toLowerCase() : parseVideoResolution(config.vquality)} options={videoInfo ? videoInfo.resolutions.map(value => ({ value, label: tierLabel(value) })) : videoResolutionOptionsForModel(config.videoModel || config.model)} onChange={(value) => updateConfig("vquality", value)} />
                                     </Form.Item>
                                     <Form.Item label={t("config.preferences.audioVoice")} className="mb-4">
                                         <Select value={config.audioVoice} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />

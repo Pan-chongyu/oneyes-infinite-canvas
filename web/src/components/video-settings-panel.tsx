@@ -25,16 +25,18 @@ type VideoSettingsPanelProps = {
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
+    showModelDetails?: boolean;
+    validateReferences?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, model, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, model, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, showModelDetails = true, validateReferences = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
     const selectedModel = model || config.model || config.videoModel;
     const info = getVideoModelInfo(config, selectedModel);
     const nativeGrok = info?.id.startsWith("grok-imagine-video") && selectedModel.split("::").pop() === info.id;
     const controlsInfo = nativeGrok ? undefined : info;
-    const configError = nativeGrok ? undefined : videoModelConfigError(config, selectedModel, inputs);
+    const configError = nativeGrok ? undefined : videoModelConfigError(config, selectedModel, validateReferences ? inputs : undefined);
     const referenceLimited = !controlsInfo && usesGrokVideoReferences({ ...config, model: selectedModel }, inputs);
     const miniMaxModel = isMiniMaxVideoModel(selectedModel);
     const resolutionOptions = controlsInfo ? controlsInfo.resolutions.map((value) => ({ value, label: videoResolutionLabel(value) })) : videoResolutionOptionsForModel(selectedModel);
@@ -63,7 +65,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
-                {info ? (
+                {info && showModelDetails ? (
                     <div className="space-y-1 text-xs leading-relaxed" aria-label="当前视频模型">
                         <div className="font-medium break-words">{info.id}</div>
                         <div style={{ color: theme.node.muted }}>{info.summary}</div>
@@ -152,7 +154,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
                         </div>
                     </SettingGroup>
                 ) : null}
-                {info ? (
+                {info && showModelDetails ? (
                     <div className="space-y-3 border-t pt-3 text-xs leading-relaxed" style={{ borderColor: theme.node.stroke }}>
                         <SettingGroup title="价格与计费" color={theme.node.muted}>
                             <ul className="space-y-1">{info.priceLines.map((line) => <li key={line} className="break-words">{line}</li>)}</ul>
@@ -254,6 +256,7 @@ function SecondsInput({ value, min, max, preserveInvalid, theme, onCommit }: { v
         <label className="flex h-9 w-[68px] shrink-0 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text }}>
             <input
                 type="number"
+                aria-label="视频时长（秒）"
                 min={min}
                 max={max}
                 className="min-w-0 flex-1 bg-transparent px-2 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"

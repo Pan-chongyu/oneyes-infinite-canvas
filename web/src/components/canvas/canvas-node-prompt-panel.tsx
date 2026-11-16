@@ -4,6 +4,7 @@ import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { ModelPicker } from "@/components/model-picker";
+import { videoModelNodePatch } from '@/lib/video-model-defaults';
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -112,7 +113,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                         </>
                     ) : mode === "video" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
+                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, model !== config.model ? videoModelNodePatch(config, model) : { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
                             <CanvasVideoSettingsPopover config={config} inputs={videoInputs} buttonClassName="!h-10 !max-w-[220px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                         </>
                     ) : mode === "audio" ? (

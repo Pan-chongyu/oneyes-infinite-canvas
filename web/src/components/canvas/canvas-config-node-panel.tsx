@@ -14,6 +14,7 @@ import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { VideoReferenceSummary } from "@/lib/video-capabilities";
 import { DEFAULT_VIDEO_FRAME_COUNT } from "@/services/director-video";
+import { videoModelNodePatch } from '@/lib/video-model-defaults';
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
@@ -47,7 +48,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInpu
                         size="small"
                         className="canvas-config-mode !rounded-md !p-0.5"
                         value={mode}
-                        onChange={(value) => onConfigChange(node.id, { generationMode: value as CanvasGenerationMode })}
+                        onChange={(value) => onConfigChange(node.id, { generationMode: value as CanvasGenerationMode, ...(value === 'video' ? videoModelNodePatch(globalConfig, resolveModelForCapability(globalConfig, node.metadata?.model, 'video')) : {}) })}
                         options={[
                             {
                                 value: "image",
@@ -102,7 +103,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInpu
             </div>
 
             <div className="mb-2 grid min-w-0 cursor-default grid-cols-[minmax(0,1fr)_148px] items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
-                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
+                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, mode === 'video' && model !== config.model ? videoModelNodePatch(globalConfig, model) : { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
                 {mode === "video" ? (
                     <CanvasVideoSettingsPopover config={config} inputs={videoInputs} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                 ) : mode === "image" ? (

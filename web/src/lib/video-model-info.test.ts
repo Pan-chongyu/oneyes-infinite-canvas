@@ -3,11 +3,35 @@ import assert from "node:assert/strict";
 import { videoModelCatalog } from "./video-model-catalog";
 import { getVideoModelInfo, videoModelConfigError, videoModelOptionName, videoModelOptions } from "./video-model-info";
 import type { AiConfig } from "@/stores/use-config-store";
+import { minimumVideoModelDefaults, videoModelDefaults, videoModelDefaultsKey, videoModelNodePatch } from './video-model-defaults';
 
 const config = {
     baseUrl: "https://api.oneyes.ai", channels: [{ id: "oneyes-minimax", name: "Video", baseUrl: "https://api.oneyes.ai", models: [] }],
     model: "oneyes-minimax::wan3.0-video", videoModel: "oneyes-minimax::wan3.0-video", vquality: "720", size: "16:9", videoSeconds: "5", videoMode: "reference", videoGenerateAudio: "true",
 } as unknown as AiConfig;
+
+test('every audited video model starts with its lowest supported resolution and shortest explicit duration', () => {
+    for (const info of videoModelCatalog) {
+        const model = `oneyes-minimax::${info.id.startsWith('grok-') ? info.aliases[0] : info.id}`;
+        const defaults = minimumVideoModelDefaults(config, model);
+        assert.equal(videoModelConfigError({ ...config, ...defaults, model }), undefined, info.id);
+        assert.equal(defaults.videoSeconds, String(info.duration.values?.filter(value => value > 0).sort((a, b) => a - b)[0] ?? Math.max(1, info.duration.min)), info.id);
+        const rank = (value: string) => parseFloat(value) * (/k$/i.test(value) ? 1000 : 1);
+        assert.equal(rank(defaults.vquality), Math.min(...info.resolutions.map(rank)), info.id);
+        assert.equal(defaults.videoGenerateAudio, info.audio === 'required' ? 'true' : 'false');
+    }
+});
+
+test('per-model defaults share exact aliases, stay isolated, and map atomically to node metadata', () => {
+    const model = 'oneyes-minimax::wan3.0-video';
+    const custom = { ...minimumVideoModelDefaults(config, model), vquality: '1080', videoSeconds: '12', size: '9:16' };
+    const saved = { ...config, videoModelDefaults: { [videoModelDefaultsKey(config, model)]: custom } };
+    const before = JSON.stringify(saved);
+    assert.deepEqual(videoModelDefaults(saved, `oneyes-minimax::${videoModelCatalog[0].aliases[0]}`), custom);
+    assert.equal(videoModelDefaults(saved, 'oneyes-minimax::veo-3.1').videoSeconds, '4');
+    assert.deepEqual(videoModelNodePatch(saved, model), { model, size: '9:16', vquality: '1080', seconds: '12', videoMode: custom.videoMode, generateAudio: custom.videoGenerateAudio, watermark: custom.videoWatermark });
+    assert.equal(JSON.stringify(saved), before);
+});
 
 test("all 23 models have valid priced options and accept their published client defaults", () => {
     assert.equal(videoModelCatalog.length, 23);

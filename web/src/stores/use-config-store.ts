@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { videoModelOptionName } from "@/lib/video-model-info";
 import { videoDisplayText } from "@/lib/video-display-text";
+import { videoModelDefaults, type VideoModelDefaults } from '@/lib/video-model-defaults';
 import { referenceFileMaxBytes, type ReferenceFileMaxBytes } from '@/lib/video-material-policy';
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -52,6 +53,7 @@ export type AiConfig = {
     videoGenerateAudio: string;
     videoWatermark: string;
     videoMode: string;
+    videoModelDefaults: Record<string, VideoModelDefaults>;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -130,6 +132,7 @@ export const defaultConfig: AiConfig = {
     videoGenerateAudio: "true",
     videoWatermark: "false",
     videoMode: "frames",
+    videoModelDefaults: {},
     systemPrompt: "",
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
@@ -262,7 +265,7 @@ export const useConfigStore = create<ConfigStore>()(
             shouldPromptContinue: false,
             updateConfig: (key, value) =>
                 set((state) => ({
-                    config: normalizeOneYesConfig({ ...state.config, [key]: value }, state.config),
+                    config: normalizeOneYesConfig({ ...state.config, ...(key === 'videoModel' && value !== state.config.videoModel ? videoModelDefaults(state.config, String(value)) : {}), [key]: value }, state.config),
                 })),
             importChannelCredentials: (input) => {
                 // Credentials imported manually do not claim account ownership.

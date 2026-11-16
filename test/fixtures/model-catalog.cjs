@@ -151,6 +151,10 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: target.x, y: target.y });
             await wait('!document.querySelector("[role=listbox]")');
             assert.equal((await js('modelNodeTest.state()')).metadata.model, target.model);
+            const selectedMetadata = (await js('modelNodeTest.state()')).metadata;
+            assert.ok(['480', '720'].includes(selectedMetadata.vquality));
+            assert.ok(Number(selectedMetadata.seconds) >= 1 && Number(selectedMetadata.seconds) <= 5, 'explicit model selection must apply its minimum duration atomically');
+            assert.ok(['frames', 'reference'].includes(selectedMetadata.videoMode));
             assert.deepEqual(await js('modelNodeTest.events()'), { drag: 0, background: 0, viewport: 0 }, 'model list interaction must not drag or zoom the canvas');
         }
         console.log('NATIVE_CONFIG_MODEL_LIST_ZOOM_EDGES_OVERLAP_AND_POINTER_SELECTION_OK');
@@ -202,6 +206,27 @@ app.whenReady().then(async () => {
         await toggle(true);
         await wait('Array.from(document.querySelectorAll("[contenteditable=true] img")).every(image=>image.src===mentionTest.state().image)');
         console.log('NATIVE_MENTION_IMAGE_PREFERENCE_RESTORE_REFRESH_PREVIEW_CARET_AND_EXISTING_BEHAVIOR_OK');
+        const preferredModel = await js('modelTest.state().config.videoModel');
+        const preferenceKey = 'oneyes-minimax::sd-2.5-fullblood-line2';
+        await wait('Boolean(document.querySelector("[data-testid=video-model-defaults] input[type=number]"))');
+        const selectionBeforePreference = await js('({model:modelTest.state().config.videoModel,seconds:modelTest.state().config.videoSeconds})');
+        await js('(()=>{const input=document.querySelector("[data-testid=video-model-defaults] input[type=number]");input.focus();input.select()})()');
+        await win.webContents.insertText('11');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+        await wait(`modelTest.state().config.videoModelDefaults[${JSON.stringify(preferenceKey)}]?.videoSeconds === '11'`);
+        assert.deepEqual(await js('({model:modelTest.state().config.videoModel,seconds:modelTest.state().config.videoSeconds})'), selectionBeforePreference, 'editing preferences must not alter the current video selection');
+        await js('modelTest.restore()');
+        assert.equal(JSON.parse(stored).state.config.videoModelDefaults[preferenceKey].videoSeconds, '11');
+        assert.equal((await js(`modelTest.state().config.videoModelDefaults[${JSON.stringify(preferenceKey)}]`)).videoSeconds, '11');
+        await js(`modelTest.selectVideo('oneyes-minimax::grok-imagine-video');modelTest.selectVideo(${JSON.stringify(preferredModel)})`);
+        assert.equal(await js('modelTest.state().config.videoSeconds'), '11', 'selection must apply the saved model preference');
+        await js('Array.from(document.querySelectorAll("[data-testid=video-model-defaults] button")).find(button=>button.textContent.includes("恢复最低配置")).click()');
+        await wait(`!modelTest.state().config.videoModelDefaults[${JSON.stringify(preferenceKey)}]`);
+        assert.equal(await js('modelTest.state().config.videoSeconds'), '11', 'reset preference must not modify an existing selection');
+        await js(`modelTest.selectVideo('oneyes-minimax::grok-imagine-video');modelTest.selectVideo(${JSON.stringify(preferredModel)})`);
+        assert.equal(await js('modelTest.state().config.videoSeconds'), '5', 'reset preference takes effect on the next explicit selection');
+        console.log('NATIVE_VIDEO_MODEL_PREFERENCES_AUTOSAVE_REHYDRATE_SWITCH_AND_RESET_OK');
         await js('showClipboardCanvas()');
         await wait('window.clipboardTest && document.querySelector("[data-node-id=first]")');
         const original = await js('clipboardTest.state()');
