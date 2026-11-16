@@ -147,7 +147,7 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
 }
 
 export function isGenerationCanceled(error: unknown) {
-    return error instanceof Error && (error.message === i18n.t("common.requestCanceled") || error.name === "AbortError");
+    return error instanceof Error && (error.message === i18n.t("common.requestCanceled") || ["AbortError", "CanceledError"].includes(error.name));
 }
 
 export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {

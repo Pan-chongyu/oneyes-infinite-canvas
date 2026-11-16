@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { videoDisplayText } from "@/lib/video-display-text";
+import { videoErrorText } from "@/lib/video-display-text";
 import { formatBytes } from "@/lib/image-utils";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { previewUrlFor, subscribeImagePreviews, getImagePreviewRevision } from "@/services/image-storage";
@@ -467,7 +467,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot && props.node.type === CanvasNodeType.Image) return <ImageNodeContent {...props} />;
     if (props.node.type === CanvasNodeType.Text && props.node.metadata?.texts?.length && (props.node.metadata.status !== "error" || props.node.metadata.texts.some((text) => text.content))) return <TextContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} message={props.node.type === CanvasNodeType.Video && props.node.metadata.loadingMessage ? videoDisplayText(props.node.metadata.loadingMessage) : props.node.metadata.loadingMessage} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} message={props.node.type === CanvasNodeType.Video && props.node.metadata.loadingMessage ? '正在生成视频，任务记录已保留，可稍后继续取回。' : props.node.metadata.loadingMessage} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
@@ -523,7 +523,7 @@ function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "
     const { t } = useTranslation();
     return (
         <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
-            <div className="text-xs leading-5 text-red-300">{node.type === CanvasNodeType.Video ? videoDisplayText(node.metadata?.errorDetails || t("canvas.node.failed")) : node.metadata?.errorDetails || t("canvas.node.failed")}</div>
+            <div className="text-xs leading-5 text-red-300">{node.type === CanvasNodeType.Video ? videoErrorText(node.metadata?.errorDetails || t("canvas.node.failed")) : node.metadata?.errorDetails || t("canvas.node.failed")}</div>
             <button
                 type="button"
                 className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"

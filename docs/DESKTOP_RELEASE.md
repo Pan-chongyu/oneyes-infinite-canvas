@@ -87,3 +87,5 @@ MP4 导出保持项目精确尺寸，可保存文件并回填为原画布的视�
 提供六种平台／芯片、12 个完整安装包和固定公钥签名 OTA，适用目标另提供增量包。Windows 选择 Windows-x64／Windows-arm64 Setup.exe；macOS Apple Silicon 选 macOS-arm64，Intel 选 macOS-x64（DMG 首装、ZIP 用于 OTA）；Linux 提供 x64／arm64 的 AppImage、DEB、RPM，分别使用独立 OTA 目标。macOS 当前为 ad-hoc 自签名，未经 Apple 公证。
 
 本版验证独立受限窗口、真实上游编辑命令、原素材导入、AI 草稿审阅与撤销重做、真实 WebGPU／WebCodecs MP4 的原尺寸及音轨、成片回填和跨进程恢复。不调用真实付费模型；无可用 WebGPU 的 CI 明确标注渲染未验证。
+
+视频模型切换默认采用最低支持参数，可在偏好设置按模型自动保存默认配置；已有手动设置与恢复不重设。视频错误使用统一安全提示，发布须同时验收原生显示与详情复制，不能以 UI 脱敏宣称服务端原文已清理。

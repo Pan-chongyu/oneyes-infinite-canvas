@@ -114,6 +114,8 @@ app.whenReady().then(async () => {
         assert.equal(busyRequests[0].type, busyRequests[1].type); assert.deepEqual(busyRequests[0].bytes, busyRequests[1].bytes);
         assert.match(busyRequests[0].type, /multipart\/form-data; boundary=/); assert.ok(!busyRequests[0].bytes.includes(Buffer.from('data:image/')));
         assert.equal((await manager.list())[0].taskId, 'busy-one-task'); await manager.close();
+        assert.equal(await win.webContents.executeJavaScript('videoErrorDisplayTest()'), 'VIDEO_ERROR_DISPLAY_OK');
+        console.log('VIDEO_ERROR_DISPLAY_OK: native node, recovery, retry toast and ordinary copied JSON hide private service details');
         console.log('GROK_VIDEO_NATIVE_OK: JSON, Seedance booleans, id/request_id, frames, references, audio, edit, Worker MIME, 202/done, authenticated content, no duplicate POST');
         console.log('VIDEO_BUSY_NATIVE_OK: Fetch binary multipart, unchanged boundary/bytes, durable idempotency, one accepted task');
         app.exit(0);

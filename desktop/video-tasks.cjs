@@ -5,6 +5,7 @@ const { createReadStream } = require('node:fs');
 const { Readable } = require('node:stream');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const { videoErrorText, videoSiteRequestId } = require('./video-errors.mjs');
 
 const fingerprint = value => createHash('sha256').update(value).digest('hex');
 const site = value => {
@@ -15,7 +16,7 @@ const site = value => {
 const sameSite = (a, b) => site(a) === site(b) || /^https:\/\/(?:api\.)?oneyes\.ai(?:\/v1)?$/.test(site(a)) && /^https:\/\/(?:api\.)?oneyes\.ai(?:\/v1)?$/.test(site(b));
 const api = base => /\/v1$/.test(base) ? base : base + '/v1';
 const terminal = new Set(['failed', 'missing', 'expired', 'unknown', 'not_submitted', 'confirmation']);
-const message = value => typeof value === 'string' ? value : value?.message || value?.error?.message || value?.msg || '';
+const message = value => videoErrorText(value);
 function unwrap(value) {
     if (value?.code !== undefined) {
         if (![0, '0'].includes(value.code)) throw Error(message(value) || '站点返回视频错误');
@@ -62,10 +63,10 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         await mkdir(files, { recursive: true, mode: 0o700 });
     })();
     ready.catch(error => report('load', error));
-    const view = () => jobs.map(job => ({ ...job, parameters: { ...job.parameters } }));
+    const view = () => jobs.map(job => ({ ...job, reason: job.reason ? videoErrorText(job.reason, { state: job.state }) : undefined, parameters: { ...job.parameters } }));
     async function save() { await vault.write(JSON.stringify({ version: 1, jobs })); changed(view()); }
     const get = key => { const job = jobs.find(item => item.key === key); if (!job) throw Error('视频任务不存在'); return job; };
-    async function patch(job, values) { await serial(async () => { Object.assign(job, values, { updatedAt: Date.now() }); await save(); }); }
+    async function patch(job, values) { await serial(async () => { Object.assign(job, values, { updatedAt: Date.now() }); if (job.reason) job.reason = videoErrorText(job.reason, { state: job.state }); await save(); }); }
     const resultPath = (job, temporary = false) => join(files, job.key + (temporary ? '.part' : '.video'));
     async function credential(job) {
         const available = await credentials();
@@ -77,7 +78,8 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         if (!response.ok) {
             const retry = response.headers.get('retry-after');
             const retryAt = retry ? (/^\d+(?:\.\d+)?$/.test(retry) ? Date.now() + Number(retry) * 1000 : Date.parse(retry)) : undefined;
-            await response.body?.cancel(); throw Object.assign(Error(`查询视频失败（HTTP ${response.status}）`), { status: response.status, phase: 'query', retryAt });
+            const data = await response.json().catch(() => undefined);
+            throw Object.assign(Error(videoErrorText(data, { status: response.status, stage: 'poll', requestId: videoSiteRequestId(url, response.headers) })), { status: response.status, phase: 'query', retryAt });
         }
         return unwrap(await response.json());
     }
@@ -101,7 +103,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         }
         const path = '/videos/' + encodeURIComponent(job.taskId), headers = { Authorization: 'Bearer ' + current.apiKey };
         const data = await readJson(api(base) + path, headers, signal);
-        if (['failed', 'cancelled', 'canceled', 'expired'].includes(data.status)) return { error: message(data.error) || `上游任务已${data.status === 'expired' ? '过期' : '结束失败'}，不会重新生成`, state: data.status === 'expired' ? 'expired' : 'failed' };
+        if (['failed', 'cancelled', 'canceled', 'expired'].includes(data.status)) return { error: videoErrorText(data.error, { state: data.status === 'expired' ? 'expired' : 'failed' }), state: data.status === 'expired' ? 'expired' : 'failed' };
         if (data.video?.respect_moderation === false) return { error: '素材未通过上游审核，不会自动重新生成或绕过审核', state: 'failed' };
         const source = [data.video?.url, data.video_url, data.result_url, data.url, data.content?.video_url, data.content?.url].find(value => typeof value === 'string' && /^(?:https?:\/\/|\/v1\/videos\/)/.test(value));
         if (!source && !['completed', 'done', 'succeeded', 'success'].includes(data.status)) return null;
@@ -160,7 +162,8 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const source = await resultSource(job, current, controller.signal);
             if (!source) { await patch(job, { state: 'pending' }); return; }
             if (source.error) { await patch(job, { state: source.state, reason: source.error }); return; }
-            await download(job, source, controller.signal);
+            try { await download(job, source, controller.signal); }
+            catch (error) { error.phase ||= 'download'; throw error; }
         } catch (error) {
             if (closed) return;
             const state = error.phase === 'query' && [404, 410].includes(error.status) ? (error.status === 404 ? 'missing' : 'expired')
@@ -168,10 +171,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
                 : error.phase === 'query' && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status) ? 'failed'
                 : ['ENOSPC', 'EACCES', 'EPERM', 'EIO', 'EROFS'].includes(error.code) ? 'save_error'
                 : error.phase === 'download' ? 'download_error' : 'waiting';
-            const reason = state === 'missing' ? '上游找不到原任务（404），请核对提交账号和站点任务保留期；任务记录已保留，不会重新生成'
-                : state === 'expired' ? '上游任务已过期（410），请联系站点确认保留期；不会重新生成'
-                : state === 'credentials' ? '原任务凭据失效，请重新登录或恢复原 API Key 后重试'
-                : state === 'save_error' ? '视频保存失败，请检查磁盘空间和目录权限后重试；原任务已保留' : error.message || '网络不可用，等待恢复后继续查询原任务';
+            const reason = videoErrorText(error, { state, stage: error.phase === 'download' ? 'download' : 'poll' });
             report(state, error);
             await patch(job, { state, reason, retryAt: Number.isFinite(error.retryAt) ? error.retryAt : undefined, ...(state === 'credentials' ? { authRejected: true } : {}) }).catch(error => { changed(view()); report('save', error); });
         } finally { active.delete(job.key); finish(); }
@@ -231,7 +231,9 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             if (response.ok && typeof id === 'string' && id) {
                 await patch(job, { taskId: id, state: 'pending' }); void run(job); return;
             }
-            await patch(job, { state: response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status) ? 'failed' : 'unknown', reason: message(data) || '未取得可靠任务 ID，请先核对官网任务和用量；不会自动重新提交' });
+            const uncertain = (data?.error?.code || data?.code) === 'creation_outcome_unknown';
+            const state = !uncertain && response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status) ? 'failed' : 'unknown';
+            await patch(job, { state, reason: videoErrorText(data, { state, status: response.status, requestId: videoSiteRequestId(job.site, response.headers) }) });
         },
         async submissionError(key, reason) {
             await ready; const job = get(key);

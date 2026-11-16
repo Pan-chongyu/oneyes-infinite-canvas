@@ -1,5 +1,12 @@
+import { App, ConfigProvider } from 'antd';
+import { MemoryRouter } from 'react-router-dom';
+import { CanvasNode } from '@/components/canvas/canvas-node';
+import { CanvasNodeInfoModal } from '@/components/canvas/canvas-node-hover-toolbar';
+import { VideoRecovery } from '@/components/layout/video-recovery';
+import { useVideoRecoveryStore, applyVideoRecovery, type VideoRecoveryJob } from '@/services/video-recovery';
+import { CanvasNodeType, type CanvasNodeData } from '@/types/canvas';
 import { defaultConfig, modelOptionLabel, useConfigStore } from '@/stores/use-config-store';
-import { videoDisplayText } from '@/lib/video-display-text';
+import { videoDisplayText, videoErrorText } from '@/lib/video-display-text';
 import { initializeDesktopTransport } from '@/services/api/desktop-transport';
 import { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } from '@/services/api/video';
 import { uploadImage } from '@/services/image-storage';
@@ -22,6 +29,43 @@ initializeDesktopTransport();
 const config = { ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: 'fixture-key' }], model: 'default::grok-imagine-video', size: '1:1', vquality: '480', videoSeconds: '5', proxyEnabled: true, proxyMode: 'upstream' as const };
 useConfigStore.setState({ config });
 const check = (value: unknown, message: string) => { if (!value) throw Error(message); };
+Object.assign(window, { videoErrorDisplayTest: async () => {
+    const raw = '智赢 88API VendorOther https://private.invalid/x?token=secret 192.0.2.8 account-private Bearer sk-private remaining balance 987654';
+    const forbidden = /智赢|88API|VendorOther|private.invalid|192\.0\.2|account-private|Bearer|sk-private|987654/;
+    const node: CanvasNodeData = { id: 'safe-video', type: CanvasNodeType.Video, title: '视频', position: { x: 0, y: 0 }, width: 320, height: 200, metadata: { status: 'error', errorDetails: raw, videoTaskId: 'upstream-private-task', loadingMessage: raw } };
+    const job: VideoRecoveryJob = { key: '12345678-1234-1234-1234-123456789abc', taskId: 'upstream-private-task', model: config.model, site: 'https://private.invalid', channelId: 'private-channel', accountId: 123456, provider: 'openai', createdAt: Date.now(), state: 'failed', reason: raw, parameters: { vquality: '480', videoSeconds: '5', size: '16:9' } };
+    check(!forbidden.test(applyVideoRecovery({ ...node, metadata: {} }, job).metadata!.errorDetails!), 'recovered node metadata is safe before persistence');
+    const root = createRoot(document.getElementById('root')!);
+    const settled = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const previous = window.oneYesDesktop!.videoTasks;
+    let calls = 0;
+    Object.assign(window.oneYesDesktop!, { videoTasks: { subscribe: () => () => {}, call: async () => { calls++; throw Error(raw); } } });
+    useVideoRecoveryStore.setState({ jobs: [job], open: true });
+    const noop = () => {};
+    try {
+        flushSync(() => root.render(<ConfigProvider><App><MemoryRouter>
+            <CanvasNode data={node} scale={1} isSelected={false} isRelated={false} isFocusRelated={false} isConnectionTarget={false} isConnecting={false} showPanel={false} showImageInfo={false}
+                onMouseDown={noop} onResizeStart={noop} onResize={noop} onResizeEnd={noop} onHoverStart={noop} onHoverEnd={noop} onConnectStart={noop} onContentChange={noop} onTitleChange={noop} onContextMenu={noop} />
+            <VideoRecovery />
+            <CanvasNodeInfoModal node={node} open onClose={noop} />
+        </MemoryRouter></App></ConfigProvider>));
+        await settled();
+        check(!forbidden.test(document.body.innerText), 'node, native recovery errors and notification text contain no private data');
+        const retry = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('重试查询'))!;
+        flushSync(() => retry.click()); await settled();
+        check(calls >= 2 && !forbidden.test(document.body.innerText), 'recovery retry toast never echoes IPC errors');
+        const json = [...document.querySelectorAll<HTMLElement>('.ant-segmented-item-label')].find(item => item.textContent === 'JSON')!;
+        flushSync(() => json.click()); await settled();
+        const copied = document.querySelector('pre')!.textContent!;
+        check(!forbidden.test(copied) && !copied.includes('upstream-private-task'), 'ordinary JSON selection/copy contains safe details only');
+        check(copied.includes(videoErrorText(raw)), 'details retain the actionable fixed message');
+        return 'VIDEO_ERROR_DISPLAY_OK';
+    } finally {
+        flushSync(() => root.unmount());
+        if (previous) window.oneYesDesktop!.videoTasks = previous; else delete window.oneYesDesktop!.videoTasks;
+        useVideoRecoveryStore.setState({ jobs: [], open: false, error: undefined });
+    }
+} });
 Object.assign(window, { videoTest: async () => {
     check(videoDisplayText('智赢：HTTP 422，88API 不支持 1080p；https://api.zhiyingai.org/v1/videos?id=1') === '视频服务：HTTP 422，视频服务 不支持 1080p；视频服务', 'supplier details hidden while actionable error remains');
     check(videoDisplayText('grok-imagine-video-1.5 · 1080p · 5s') === 'grok-imagine-video-1.5 · 1080p · 5s', 'model version and generation settings remain intact');
@@ -34,7 +78,7 @@ Object.assign(window, { videoTest: async () => {
     try { await createVideoGenerationTask(config, 'cancelled fixture', [], { onPrepared: async () => { throw aborted; } }); }
     catch (error) { cancellation = error; }
     finally { delete window.oneYesDesktop!.videoTasks; }
-    check(cancellation === aborted, 'message formatting must preserve cancellation identity and AbortError classification');
+    check(cancellation instanceof Error && cancellation.cause === aborted && cancellation.name === 'AbortError' && cancellation.message === videoErrorText(aborted), 'safe formatting must preserve cancellation cause and AbortError classification');
     const canvas = document.createElement('canvas'); canvas.width = 3; canvas.height = 2;
     canvas.getContext('2d')!.fillRect(0, 0, 2, 1);
     const stored = await uploadImage(canvas.toDataURL('image/png'));

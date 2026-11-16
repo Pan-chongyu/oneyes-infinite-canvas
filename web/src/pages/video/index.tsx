@@ -21,7 +21,7 @@ import { createVideoGenerationTask, isVideoTaskFailed, waitForVideoGenerationTas
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { videoDisplayText } from "@/lib/video-display-text";
+import { videoErrorText } from "@/lib/video-display-text";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
@@ -197,7 +197,7 @@ export default function VideoPage() {
             await saveLog(log, false);
             void pollGenerationLog(log, snapshot.config, agentTaskId);
         } catch (error) {
-            const errorMessage = videoDisplayText(error instanceof Error ? error.message : t("workbench.generationFailed"));
+            const errorMessage = videoErrorText(error instanceof Error ? error.message : t("workbench.generationFailed"));
             setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: performance.now() - batchStartedAt, status: "failed", error: errorMessage }));
@@ -348,7 +348,7 @@ export default function VideoPage() {
             message.success(t("videoWorkbench.generated"));
         } catch (error) {
             if (controller.signal.aborted) return;
-            const errorMessage = videoDisplayText(error instanceof Error ? error.message : t("workbench.generationFailed"));
+            const errorMessage = videoErrorText(error instanceof Error ? error.message : t("workbench.generationFailed"));
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "failed", durationMs: Date.now() - log.createdAt, error: errorMessage, ...(isVideoTaskFailed(error) ? { task: undefined } : {}) });
@@ -580,7 +580,7 @@ function FailedVideoCard({ error, onRetry }: { error: string; onRetry: () => voi
             <div className="flex aspect-video flex-col items-center justify-center gap-3 p-5 text-center">
                 <div className="text-sm font-medium text-red-600 dark:text-red-300">{t("workbench.failed")}</div>
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
-                    {videoDisplayText(error)}
+                    {videoErrorText(error)}
                 </Typography.Paragraph>
             </div>
             <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
@@ -705,7 +705,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         status: log.status || "success",
         task: log.task,
         video,
-        error: log.error ? videoDisplayText(log.error) : undefined,
+        error: log.error ? videoErrorText(log.error) : undefined,
     };
 }
 

@@ -1,4 +1,16 @@
-/** Keep supplier details in diagnostics, not in user-facing video messages. */
+import { videoErrorText } from '../../../desktop/video-errors.mjs';
+export { videoErrorText };
+
+/** Preserve cancellation and the original cause used by GET-only recovery. */
+export function videoUserError(error: unknown, context?: Parameters<typeof videoErrorText>[1]): Error {
+    const text = videoErrorText(error, context);
+    if (error instanceof Error && error.message === text) return error;
+    const safe = new Error(text, { cause: error });
+    if (error instanceof Error) safe.name = error.name;
+    return safe;
+}
+
+/** Model labels only. Errors must use videoErrorText's fixed whitelist. */
 export function videoDisplayText(value: string): string {
     return value
         .replace(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:88api\.ai|zhiyingai\.org)(?:[^\s<>"'，。；）)]*)/gi, '视频服务')

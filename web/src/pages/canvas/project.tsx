@@ -1,3 +1,4 @@
+import { videoErrorText, videoUserError } from '@/lib/video-display-text';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
@@ -378,25 +379,27 @@ function InfiniteCanvasPage() {
 
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
-            const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios, target: { projectId, nodeId }, onPrepared: async key => {
-                flushSync(() => setNodes(previous => {
-                    const next = previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoJobKey: key, videoTaskId: undefined } } : item);
-                    nodesRef.current = next; return next;
-                }));
-                if (!nodesRef.current.some(item => item.id === nodeId)) throw Error('视频节点已删除，已停止提交');
-                updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current }); await flushCanvasStorage();
-            } });
-            if (task.provider !== "plugin") {
-                flushSync(() => setNodes((prev) => {
-                    const next = prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, ...extra, prompt, videoJobKey: task.nativeJobKey, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" as const : "openai" as const, model: config.model, size: config.size, seconds: config.videoSeconds, vquality: config.vquality, generateAudio: config.videoGenerateAudio, watermark: config.videoWatermark, videoMode: config.videoMode } } : item));
-                    nodesRef.current = next;
-                    return next;
-                }));
-                updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
-                await flushCanvasStorage();
-            }
-            const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal }));
-            setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
+            try {
+                const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios, target: { projectId, nodeId }, onPrepared: async key => {
+                    flushSync(() => setNodes(previous => {
+                        const next = previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoJobKey: key, videoTaskId: undefined } } : item);
+                        nodesRef.current = next; return next;
+                    }));
+                    if (!nodesRef.current.some(item => item.id === nodeId)) throw Error('视频节点已删除，已停止提交');
+                    updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current }); await flushCanvasStorage();
+                } });
+                if (task.provider !== "plugin") {
+                    flushSync(() => setNodes((prev) => {
+                        const next = prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, ...extra, prompt, videoJobKey: task.nativeJobKey, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" as const : "openai" as const, model: config.model, size: config.size, seconds: config.videoSeconds, vquality: config.vquality, generateAudio: config.videoGenerateAudio, watermark: config.videoWatermark, videoMode: config.videoMode } } : item));
+                        nodesRef.current = next;
+                        return next;
+                    }));
+                    updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
+                    await flushCanvasStorage();
+                }
+                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal }));
+                setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
+            } catch (error) { throw videoUserError(error); }
         },
         [projectId, updateProject],
     );

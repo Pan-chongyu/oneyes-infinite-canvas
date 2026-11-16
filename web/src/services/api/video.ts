@@ -9,14 +9,15 @@ import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/medi
 import { isGrokVideoModel, isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, normalizeVideoResolutionForModel } from "@/lib/video-capabilities";
 import { getVideoModelInfo, videoModelConfigError } from "@/lib/video-model-info";
 import type { VideoModelInfo } from "@/lib/video-model-catalog";
-import { videoDisplayText } from "@/lib/video-display-text";
+import { videoErrorText, videoUserError } from "@/lib/video-display-text";
+import { videoSiteRequestId } from '../../../../desktop/video-errors.mjs';
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { prepareReferenceFiles } from "./image-references";
 import { buildVideoBridgeRequest, encodeVideoBridgeRequest, usesVideoBridgeRequest, videoBridgeMediaUrl } from "./video-bridge-request";
-import { submitVideoBridge, videoBridgeErrorCode } from './video-bridge-submit';
+import { submitVideoBridge } from './video-bridge-submit';
 import { fetchModelCatalogEntries } from './model-catalog';
 import { isOneYes } from './image-stream';
 import type { ReferenceImage } from "@/types/image";
@@ -60,6 +61,11 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 }
 
 export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
+    try { return await waitForVideoTask(config, task, options); }
+    catch (error) { throw videoUserError(error, { stage: 'poll' }); }
+}
+
+async function waitForVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
     const api = window.oneYesDesktop?.videoTasks;
     if (api && task.provider !== 'plugin') {
         const key = task.nativeJobKey || await adoptVideoTask(config, task);
@@ -68,7 +74,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
             const job = (await api.call('list')).find(item => item.key === key);
             if (!job) throw Error('原视频恢复记录不存在，请检查本机数据目录；不会重新生成');
             if (job.state === 'saved' && job.result) return { saved: job.result };
-            if (['failed', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(videoDisplayText(job.reason || '请从“视频任务”继续恢复原任务'));
+            if (['failed', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(videoErrorText(job.reason, { state: job.state }));
             await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
         }
     }
@@ -99,6 +105,11 @@ function videoTaskFailed(message: string) {
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    try { return await prepareVideoGenerationTask(config, prompt, references, options); }
+    catch (error) { throw videoUserError(error); }
+}
+
+async function prepareVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = config.model || config.videoModel;
     const channel = resolveModelChannel(config, selectedModel);
     const parameterError = videoModelConfigError(config, selectedModel);
@@ -120,12 +131,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         const task = await createVideoTask(config, prompt, references, { ...options, nativeJobKey: key });
         return { ...task, nativeJobKey: key };
     } catch (error) {
-        await api.call('submissionError', { key, reason: error instanceof Error ? error.message : '视频提交未完成' });
-        if (error instanceof Error && videoDisplayText(error.message) !== error.message) {
-            const displayError = new Error(videoDisplayText(error.message), { cause: error });
-            displayError.name = error.name;
-            throw displayError;
-        }
+        await api.call('submissionError', { key, reason: videoErrorText(error) });
         throw error;
     }
 }
@@ -173,6 +179,11 @@ function uniqueVideoReferences<T extends { id: string }>(items: T[], identity: (
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    try { return await queryVideoGenerationTask(config, task, options); }
+    catch (error) { throw videoUserError(error, { stage: 'poll' }); }
+}
+
+async function queryVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     if (task.provider === "plugin") {
         const result = pluginVideoResults.get(task.id);
         return result ? { status: "completed", result } : { status: "failed", error: apiText("pluginVideoExpired") };
@@ -276,7 +287,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     } catch (error) {
 
         reportError("video", "submit", error, "video-openai");
-        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
+        throw await readAxiosError(error, apiText("videoTaskCreateFailed"));
     }
 }
 
@@ -314,7 +325,7 @@ async function createBridgeVideoTask(config: AiConfig, model: string, prompt: st
         return { id, provider: "openai", model };
     } catch (error) {
         reportError("video", "submit", error, "video-bridge");
-        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
+        throw await readAxiosError(error, apiText("videoTaskCreateFailed"));
     }
 }
 
@@ -354,7 +365,7 @@ async function createGrokVideoTask(config: AiConfig, model: string, prompt: stri
     } catch (error) {
 
         reportError("video", "submit", error, "video-grok");
-        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
+        throw await readAxiosError(error, apiText("videoTaskCreateFailed"));
     }
 }
 
@@ -366,15 +377,14 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         if (response.status === 202 && !response.data) return { status: "pending" };
         const video = unwrapVideoResponse(response.data);
         if (["failed", "cancelled", "expired"].includes(video.status || "")) {
-            const message = readApiErrorMessage(video.error);
-            return { status: "failed", error: /^task not found[.!]?$/i.test(message.trim()) ? apiText("videoTaskMissing") : message || apiText(video.status === "expired" ? "videoTaskExpired" : "videoGenerationFailed") };
+            return { status: "failed", error: videoErrorText(video.error, { state: video.status === 'expired' ? 'expired' : 'failed', requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
         }
-        if (video.video?.respect_moderation === false) return { status: "failed", error: apiText("videoModerationRejected") };
+        if (video.video?.respect_moderation === false) return { status: "failed", error: videoErrorText({ code: 'content_policy' }) };
         const url = videoResultUrl(video);
         // Sub2API returns an authenticated relay URL. Rebuild it from the fixed
         // account endpoint; never attach the API key to an upstream media URL.
         const contentPath = `${taskPath}/content`;
-        if (url && !isVideoContentRelay(url, config.baseUrl, contentPath)) return { status: "completed", result: await videoResultFromUrl(url, options) };
+        if (url && !isVideoContentRelay(url, config.baseUrl, contentPath)) { stage = 'download'; return { status: "completed", result: await videoResultFromUrl(url, options) }; }
         if (url || video.status === "completed") {
             stage = "download";
             const content = await axios.get<Blob>(aiApiUrl(config, contentPath), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: 0 });
@@ -386,7 +396,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     } catch (error) {
 
         reportError("video", stage, error, stage === "download" ? "video-content" : "video-openai");
-        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")), { cause: error });
+        throw await readAxiosError(error, apiText("videoTaskQueryFailed"), stage);
     }
 }
 
@@ -433,7 +443,7 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
     } catch (error) {
 
         reportError("video", "submit", error, "video-gemini");
-        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")), { cause: error });
+        throw await readAxiosError(error, apiText("videoTaskCreateFailed"));
     }
 }
 
@@ -449,7 +459,7 @@ async function pollGeminiVideoTask(config: AiConfig, task: VideoGenerationTask, 
     } catch (error) {
 
         reportError("video", "poll", error, "video-gemini");
-        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")), { cause: error });
+        throw await readAxiosError(error, apiText("videoTaskQueryFailed"), 'poll');
     }
 }
 
@@ -556,79 +566,28 @@ function isVideoContentRelay(value: string, baseUrl: string, path: string) {
 }
 
 function readApiErrorMessage(value: unknown): string {
-    if (!value) return "";
-    if (typeof value === "string") {
-        try {
-            const parsed = JSON.parse(value);
-            const inner = readApiErrorMessage(parsed) || value;
-            if (inner === value && typeof parsed === "object" && Object.keys(parsed).length === 0) return "";
-            return videoDisplayText(inner);
-        } catch {
-            if (/<[a-z][\s\S]*>/i.test(value)) return apiText("htmlError", { preview: `${videoDisplayText(value).slice(0, 80)}...` });
-            return videoDisplayText(value);
-        }
-    }
-    if (Array.isArray(value)) return value.map(readApiErrorMessage).filter(Boolean).join("；");
-    if (typeof value !== "object") return "";
-    const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown; loc?: unknown };
-    if (Array.isArray(payload.loc) && typeof payload.msg === "string") {
-        const field = payload.loc.filter(part => (typeof part === "string" || typeof part === "number") && !["body", "query", "path"].includes(String(part))).join(".");
-        return videoDisplayText(field ? `${field}：${payload.msg}` : payload.msg);
-    }
-    // error may be a string or an object containing a message.
-    const errorMsg =
-        typeof payload.error === "string"
-            ? payload.error
-            : (payload.error as { message?: unknown })?.message;
-    return (
-        readApiErrorMessage(payload.msg) ||
-        readApiErrorMessage(payload.message) ||
-        readApiErrorMessage(errorMsg) ||
-        readApiErrorMessage(payload.detail) ||
-        ""
-    );
+    return videoErrorText(value);
 }
 
-function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isCancel(error)) return apiText("requestCanceled");
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; message?: string; code?: number | string }>(error)) {
-        if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
-        const responseData = error.response?.data;
-        const message = readApiErrorMessage(responseData);
-        const code = videoBridgeErrorCode(responseData);
-        if (code === 'model_not_allowed' || /model[_ ]not[_ ]allowed|模型.*(?:未获准|无权限|未允许)/i.test(message)) return '当前 API Key 无权调用该模型，请刷新模型列表并检查官网 Key 分组权限；不会自动换 Key、分组或放宽模型权限。';
-        if (error.response?.status === 413 && code === 'inline_text_too_large') return '内联文本或 Base64 素材超过 32 MiB，请使用二进制文件 part 或受支持的预上传素材；未自动重新生成，不会降低画质。';
-        if (error.response?.status === 413 && code === 'bridge_request_too_large') return '视频请求正文超过 128 MiB（含封装开销），请减少素材或使用受支持的预上传入口；模型单文件与 CDN 限制独立生效，未自动重发或更改站点地址。';
-        if (error.response?.status === 413) return "当前模型或访问入口拒绝了素材大小。完整请求上限不代表模型单文件或 CDN 额度，请检查素材与站点限制；未自动重发，不会降低画质或更改接口地址。";
-        if (/moderation|content.?policy|可识别人物|真人|审核/i.test(message)) return "参考素材未通过内容审核，请调整素材后手动提交；不会自动重试或绕过审核。";
-        if (/task[_ ]not[_ ]found/i.test(message)) return apiText("videoTaskMissing");
-        if (/Duplicate or conflicting Wan|Conflicting.*frame/i.test(message)) return "参考图片字段冲突，请检查首尾帧与参考素材模式，移除重复来源后重试。";
-        if (/1080p.*not supported.*reference-to-video/is.test(message)) return apiText("grokVideoReferenceResolution");
-        if (error.response?.status === 415 || /(?:status|HTTP)\s*415\b/i.test(message)) return apiText("videoUnsupportedMedia");
-        if (error.response?.status === 422) return `${apiText("videoInvalidParameters")}${message ? `：${message}` : ""}`;
-        if (error.response?.status === 404) return `${apiText("videoNotFound")}${message ? `：${message}` : ""}`;
-        return message || statusMessage(error.response?.status, fallback);
-    }
-    if (error instanceof DOMException && error.name === "AbortError") return apiText("requestCanceled");
-    return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;
-}
-
-function statusMessage(status: number | undefined, fallback: string) {
-    if (status === 401 || status === 403) return apiText("authenticationFailed");
-    if (status === 429) return apiText("rateLimited");
-    return status ? `${fallback}（${status}）` : fallback;
+async function readAxiosError(error: unknown, _fallback: string, stage?: string) {
+    if (axios.isCancel(error) || error instanceof Error && ['AbortError', 'CanceledError'].includes(error.name)) return videoUserError(error);
+    const response = axios.isAxiosError(error) ? error.response : undefined;
+    let data = response?.data;
+    if (data instanceof Blob && /json|text\/|html/i.test(data.type)) data = await data.text();
+    const safe = new Error(videoErrorText(response ? { response: { ...response, data } } : error, { stage, requestId: response ? videoSiteRequestId(response.config.url || '', response.headers) : undefined }), { cause: error });
+    if (error instanceof Error) safe.name = error.name;
+    return safe;
 }
 
 async function assertVideoBlob(blob: Blob) {
-    if (!blob.type.includes("json")) return;
-    let payload: { code?: number; msg?: string; error?: { message?: string } };
+    if (!/json|text\/|html/i.test(blob.type)) return;
+    let payload: unknown;
     try {
-        payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string } };
+        payload = JSON.parse(await blob.text());
     } catch {
-        return;
+        throw Error(videoErrorText(undefined, { stage: 'download' }));
     }
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(readApiErrorMessage(payload) || apiText("videoDownloadFailed"));
-    if (payload.error?.message) throw new Error(readApiErrorMessage(payload.error.message) || payload.error.message);
+    throw Error(videoErrorText(payload, { stage: 'download' }));
 }
 
 function isPublicMediaUrl(value: string) {

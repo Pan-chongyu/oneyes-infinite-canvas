@@ -4,7 +4,7 @@ import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { videoDisplayText } from "@/lib/video-display-text";
+import { videoErrorText } from "@/lib/video-display-text";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -240,7 +240,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     const json = useMemo(() => {
         if (!node) return "";
         return JSON.stringify(
-            node,
+            node.type === CanvasNodeType.Video ? { ...node, metadata: { ...node.metadata, videoTaskId: undefined, loadingMessage: undefined, errorDetails: node.metadata?.errorDetails ? videoErrorText(node.metadata.errorDetails) : undefined } } : node,
             (key, value) => {
                 if (key === "content" && typeof value === "string" && value.startsWith("data:image/")) {
                     return "[base64 image]";
@@ -284,11 +284,11 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             <InfoRow label={t("canvas.nodeToolbar.status")} value={node.metadata?.status || "idle"} />
                             {batchCount > 1 ? <InfoRow label={t("canvas.nodeToolbar.imageGroup")} value={t("canvas.configNode.images", { count: batchCount })} /> : null}
                             {node.metadata?.prompt ? <InfoRow label={t("canvas.configNode.prompt")} value={node.metadata.prompt} /> : null}
-                            {node.metadata?.videoTaskId ? <InfoRow label={t("canvas.nodeToolbar.videoTaskId")} value={node.metadata.videoTaskId} /> : null}
+                            {node.metadata?.videoJobKey ? <InfoRow label="本机记录编号" value={node.metadata.videoJobKey} /> : null}
                             {imageBytes ? <InfoRow label={t("canvas.nodeToolbar.imageSize")} value={formatBytes(imageBytes)} /> : null}
                             {node.metadata?.errorDetails ? (
                                 <div className="rounded-lg border p-3 text-red-400" style={{ borderColor: theme.node.stroke }}>
-                                    {node.type === CanvasNodeType.Video ? videoDisplayText(node.metadata.errorDetails) : node.metadata.errorDetails}
+                                    {node.type === CanvasNodeType.Video ? videoErrorText(node.metadata.errorDetails) : node.metadata.errorDetails}
                                 </div>
                             ) : null}
                         </div>

@@ -238,10 +238,10 @@ test('422 validation arrays identify rejected fields and 404 explains model/grou
     window.oneYesDesktop = { ...desktop(), diagnostics: { report: async input => { reports.push(input); }, recover: async () => {} } };
     try {
         for (const [status, data, pattern] of [
-            [422, { detail: [{ loc: ['body', 'resolution'], msg: 'unsupported resolution', input: 'private-reference' }, { loc: ['body', 'duration'], msg: 'invalid duration' }] }, /422.*resolution：unsupported resolution；duration：invalid duration/],
-            [422, { error: { message: 'invalid aspect ratio' } }, /422.*invalid aspect ratio/],
+            [422, { detail: [{ loc: ['body', 'resolution'], msg: 'unsupported resolution', input: 'private-reference' }, { loc: ['body', 'duration'], msg: 'invalid duration' }] }, /时长.*保留/],
+            [422, { error: { message: 'invalid aspect ratio' } }, /分辨率.*比例/],
             [422, {}, /422.*参数已保留/],
-            [404, { detail: 'Not Found' }, /404.*Key.*分组.*官网.*Not Found/],
+            [404, { detail: 'Not Found' }, /404.*Key.*分组.*官网/],
         ] as const) {
             axios.defaults.adapter = async request => {
                 posts++;
@@ -289,4 +289,40 @@ test('bridge 413 errors distinguish inline text, total envelope and CDN limits w
         }
         assert.equal(posts, 3); assert.equal(selected.baseUrl, config.baseUrl); assert.equal(selected.vquality, '720');
     } finally { axios.defaults.adapter = original; }
+});
+
+test('submit, terminal status and JSON/HTML download errors never expose private service details or replay a create', async () => {
+    const privateText = 'VendorOther https://private.invalid/account Bearer sk-private balance=987654';
+    const forbidden = /VendorOther|private.invalid|Bearer|sk-private|987654|充值/;
+    const task = { id: 'safe-task', provider: 'openai' as const, model: config.model };
+    let posts = 0;
+    try {
+        for (const code of ['INSUFFICIENT_BALANCE', 'creation_outcome_unknown', 'media_too_large', 'video_generation_failed']) {
+            axios.defaults.adapter = async request => { posts++; throw new AxiosError('raw ' + privateText, 'ERR_BAD_RESPONSE', request, undefined, { config: request, status: 409, statusText: '', headers: { 'x-request-id': '12345678-1234-1234-1234-123456789abc' }, data: { error: { code, message: privateText } } }); };
+            await assert.rejects(createVideoGenerationTask(config, 'safe'), error => { assert.doesNotMatch((error as Error).message, forbidden); assert.match((error as Error).message, /本站请求编号/); return true; });
+        }
+        assert.equal(posts, 4);
+        adapter(() => ({ data: { status: 'failed', error: { message: privateText } } }));
+        const state = await pollVideoGenerationTask(config, task);
+        assert.equal(state.status, 'failed'); if (state.status === 'failed') assert.doesNotMatch(state.error, forbidden);
+        for (const blob of [new Blob([JSON.stringify({ error: { message: privateText } })], { type: 'application/json' }), new Blob(['<html>' + privateText + '</html>'], { type: 'text/html' })]) {
+            adapter(request => request.url?.endsWith('/content') ? { data: blob } : { data: { status: 'completed' } });
+            await assert.rejects(pollVideoGenerationTask(config, task), error => { assert.doesNotMatch((error as Error).message, forbidden); return true; });
+        }
+    } finally { axios.defaults.adapter = original; }
+});
+
+test('custom cancellation bodies stay private while the original name and cause stop generation', async () => {
+    const { videoUserError, videoErrorText } = await import('@/lib/video-display-text');
+    const { isGenerationCanceled } = await import('@/lib/canvas/canvas-generation-helpers');
+    for (const name of ['AbortError', 'CanceledError']) {
+        const raw = Object.assign(Error('VendorOther https://private.invalid Bearer sk-private balance=987654'), { name });
+        const safe = videoUserError(raw);
+        assert.equal(safe.name, name); assert.equal(safe.cause, raw); assert.equal(safe.message, videoErrorText(raw));
+        assert.doesNotMatch(safe.message, /private|VendorOther|Bearer|987654/); assert.equal(isGenerationCanceled(safe), true);
+        try {
+            axios.defaults.adapter = async () => { throw raw; };
+            await assert.rejects(createVideoGenerationTask(config, 'cancel'), error => (error as Error).name === name && !/private|987654/.test((error as Error).message));
+        } finally { axios.defaults.adapter = original; }
+    }
 });
