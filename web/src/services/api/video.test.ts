@@ -73,7 +73,7 @@ test('indefinite video waiting still stops on cancellation or authentication fai
 });
 
 test('browser polling and media GET respect Retry-After without recreating the task', async t => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-17T00:00:00Z') });
     const task = { id: 'opaque/receipt?value', provider: 'openai' as const, model: config.model };
     const controller = new AbortController(); let queries = 0, downloads = 0;
     try {
