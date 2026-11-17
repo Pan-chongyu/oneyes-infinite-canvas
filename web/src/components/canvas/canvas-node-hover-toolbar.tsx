@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { autoUpdate, computePosition, flip, hide, offset, shift } from '@floating-ui/dom';
 import { App, Modal, Segmented, Tooltip } from "antd";
 import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Sparkles, Trash2, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -9,14 +10,13 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
-    viewport: ViewportTransform;
     onKeep: (nodeId: string) => void;
     onLeave: () => void;
     onInfo: (node: CanvasNodeData) => void;
@@ -55,7 +55,6 @@ type ToolbarTool = {
 
 export function CanvasNodeHoverToolbar({
     node,
-    viewport,
     onKeep,
     onLeave,
     onInfo,
@@ -89,15 +88,32 @@ export function CanvasNodeHoverToolbar({
     const { message } = App.useApp();
     const { t } = useTranslation();
     const copyText = useCopyText();
+    const theme = canvasThemes[useThemeStore(state => state.theme)];
     const toolbarRef = useRef<HTMLDivElement>(null);
-    const [toolbarWidth, setToolbarWidth] = useState(0);
-    useEffect(() => {
+    const [position, setPosition] = useState<{ id: string; x: number; y: number; hidden: boolean }>();
+    useLayoutEffect(() => {
         const element = toolbarRef.current;
-        if (!element) return;
-        const observer = new ResizeObserver(() => setToolbarWidth(element.getBoundingClientRect().width));
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, [node?.id]);
+        const boundary = element?.offsetParent;
+        const reference = node && boundary?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`);
+        if (!node || !element || !reference || !(boundary instanceof HTMLElement)) return;
+        let cancelled = false;
+        const update = () => {
+            const topBar = boundary.querySelector('[data-canvas-top-bar]');
+            const padding = { top: topBar ? topBar.getBoundingClientRect().bottom - boundary.getBoundingClientRect().top + 12 : 12, right: 12, bottom: 12, left: 12 };
+            void computePosition(reference, element, { placement: 'top', middleware: [
+                offset(({ placement, rects }) => placement === 'top' ? 8 + 28 * rects.reference.width / node.width : 14),
+                flip({ boundary, padding, fallbackPlacements: ['bottom', 'right', 'left'] }),
+                shift({ boundary, padding }),
+                hide({ boundary }),
+            ] }).then(({ x, y, middlewareData }) => {
+                if (cancelled) return;
+                const hidden = Boolean(middlewareData.hide?.referenceHidden);
+                setPosition(previous => previous?.id === node.id && previous.x === x && previous.y === y && previous.hidden === hidden ? previous : { id: node.id, x, y, hidden });
+            });
+        };
+        const stop = autoUpdate(reference, element, update, { animationFrame: true });
+        return () => { cancelled = true; stop(); };
+    }, [node?.id, node?.width]);
 
     useEffect(() => {
         try {
@@ -119,8 +135,6 @@ export function CanvasNodeHoverToolbar({
     if (!node) return null;
 
     const activeNode = node;
-    const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 14;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
@@ -201,9 +215,9 @@ export function CanvasNodeHoverToolbar({
         <>
             <div
                 ref={toolbarRef}
-                className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-x-auto overflow-y-hidden rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                className="absolute z-[70] flex h-12 items-center overflow-x-auto overflow-y-hidden rounded-[18px] border text-[15px] shadow-lg"
                 data-node-toolbar={node.id}
-                style={{ left: `clamp(${toolbarWidth / 2 + 12}px, ${left}px, calc(100% - ${toolbarWidth / 2 + 12}px))`, top, maxWidth: "calc(100% - 24px)" }}
+                style={{ left: position?.x ?? 0, top: position?.y ?? 0, visibility: position?.id !== node.id || position.hidden ? 'hidden' : undefined, maxWidth: "calc(100% - 24px)", background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
                     if (!imageToolSettingsOpen) onLeave();
@@ -305,11 +319,12 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
 }
 
 function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false }: ToolbarTool & { showLabel: boolean }) {
+    const theme = canvasThemes[useThemeStore(state => state.theme)];
     const hasText = showLabel && Boolean(label);
     return (
-        <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff" styles={{ root: { color: "#242529", boxShadow: "0 8px 24px rgba(15,23,42,.16)", fontSize: 13, fontWeight: 500 } }}>
-            <button type="button" className={`group relative flex h-full shrink-0 items-center whitespace-nowrap px-1.5 ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title}>
-                <span className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[#f0f0f1] ${active ? "bg-[#eeeeef]" : ""}`}>
+        <Tooltip title={title} placement="top" mouseEnterDelay={0.2}>
+            <button type="button" className={`group relative flex h-full shrink-0 items-center whitespace-nowrap px-1.5 ${danger ? "text-destructive" : ""}`} onClick={onClick} aria-label={title}>
+                <span style={{ '--tool-hover': theme.toolbar.itemHover, background: active ? theme.toolbar.activeBg : undefined } as CSSProperties} className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[var(--tool-hover)]`}>
                     {icon}
                     {hasText ? <span>{label}</span> : null}
                 </span>

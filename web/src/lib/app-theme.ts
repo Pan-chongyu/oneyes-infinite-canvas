@@ -49,6 +49,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
         components: {
             Button: {
                 primaryShadow: "none",
+                dangerColor: neutral.light.primaryText,
             },
             Dropdown: {
                 colorBgElevated: color.elevatedBg,

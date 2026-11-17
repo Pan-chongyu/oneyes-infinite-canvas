@@ -13,6 +13,7 @@ import { getAntThemeConfig } from "@/lib/app-theme";
 import { defaultConfig, GROK_VIDEO_CHANNEL_ID, resolveModelRequestConfig, useConfigStore } from "@/stores/use-config-store";
 import { useModelCatalogStore } from "@/stores/use-model-catalog-store";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
+import { CanvasNodeHoverToolbar } from "@/components/canvas/canvas-node-hover-toolbar";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -100,19 +101,26 @@ function MentionPreferences() {
 
 function ConfigCanvas() {
     const container = useRef<HTMLDivElement>(null), events = useRef({ drag: 0, background: 0, viewport: 0 });
+    const actions = useRef<string[]>([]);
     const [frame, setFrame] = useState({ scale: 1, x: 40, y: 40 });
+    const [toolbar, setToolbar] = useState(false);
+    const [mounted, setMounted] = useState(true);
     const [node, setNode] = useState<CanvasNodeData>({ id: "config", type: CanvasNodeType.Config, title: "生成配置", position: { x: 0, y: 0 }, width: 600, height: 250, metadata: { generationMode: "video", model: `${GROK_VIDEO_CHANNEL_ID}::grok-imagine-video` } });
     Object.assign(window, { modelNodeTest: {
         state: () => node,
         events: () => events.current,
+        toolbar: (scale: number, x: number, y: number, dark: boolean, running = false, copy = false) => flushSync(() => { setToolbar(true); setFrame({ scale, x, y }); setNode(previous => ({ ...previous, id: copy ? 'config-copy' : 'config', metadata: { ...previous.metadata, status: running ? 'loading' : 'idle' } })); useThemeStore.getState().setTheme(dark ? 'dark' : 'light'); }),
+        actions: () => actions.current,
+        mount: (visible: boolean) => flushSync(() => setMounted(visible)),
         configure: (scale: number, x: number, y: number, dark: boolean) => flushSync(() => { setFrame({ scale, x, y }); setNode(previous => ({ ...previous, metadata: { ...previous.metadata, model: "default::sd-2.5-fullblood" } })); useThemeStore.getState().setTheme(dark ? "dark" : "light"); events.current = { drag: 0, background: 0, viewport: 0 }; }),
     } });
     const props = { scale: frame.scale, isSelected: true, isRelated: false, isFocusRelated: false, isConnectionTarget: false, isConnecting: false, showPanel: false, showImageInfo: false,
         onMouseDown: (event: React.MouseEvent) => { event.stopPropagation(); events.current.drag++; }, onHoverStart: () => {}, onHoverEnd: () => {}, onConnectStart: () => {}, onResizeStart: () => {}, onResize: () => {}, onResizeEnd: () => {}, onContentChange: () => {}, onTitleChange: () => {}, onContextMenu: () => {} };
-    return <main style={{ height: "100vh" }}><InfiniteCanvas containerRef={container} viewport={{ x: frame.x, y: frame.y, k: frame.scale }} tool="select" onViewportChange={() => { events.current.viewport++; }} onCanvasMouseDown={() => { events.current.background++; }}>
-        <CanvasNode {...props} data={node} renderNodeContent={current => <CanvasConfigNodePanel node={current} isRunning={false} inputSummary={{ textCount: 0, imageCount: 0, videoCount: 0, audioCount: 0 }} videoInputs={{ imageCount: 0, videoCount: 0, audioCount: 0 }} onConfigChange={(_id, patch) => setNode(previous => ({ ...previous, metadata: { ...previous.metadata, ...patch } }))} onGenerate={() => {}} onStop={() => {}} onComposerToggle={() => {}} />} />
+    const noop = () => {};
+    return <main className="relative" style={{ height: "100vh" }}>{toolbar ? <div data-canvas-top-bar className="pointer-events-none absolute inset-x-0 top-0 h-16" /> : null}<InfiniteCanvas containerRef={container} viewport={{ x: frame.x, y: frame.y, k: frame.scale }} tool="select" onViewportChange={() => { events.current.viewport++; }} onCanvasMouseDown={() => { events.current.background++; }}>
+        {mounted ? <CanvasNode {...props} data={node} renderNodeContent={current => <CanvasConfigNodePanel node={current} isRunning={current.metadata?.status === 'loading'} inputSummary={{ textCount: 0, imageCount: 0, videoCount: 0, audioCount: 0 }} videoInputs={{ imageCount: 0, videoCount: 0, audioCount: 0 }} onConfigChange={(_id, patch) => setNode(previous => ({ ...previous, metadata: { ...previous.metadata, ...patch } }))} onGenerate={() => {}} onStop={() => { actions.current.push('stop'); setNode(previous => ({ ...previous, metadata: { ...previous.metadata, status: 'idle' } })); }} onComposerToggle={() => {}} />} /> : null}
         <CanvasNode {...props} data={{ id: "overlap", type: CanvasNodeType.Text, title: "相邻节点", position: { x: 0, y: 245 }, width: 600, height: 120, metadata: { content: "下拉菜单应在相邻节点之上" } }} />
-    </InfiniteCanvas></main>;
+    </InfiniteCanvas>{toolbar ? <CanvasNodeHoverToolbar node={mounted ? node : null} onKeep={noop} onLeave={noop} onInfo={() => actions.current.push('info')} onDecreaseFont={noop} onIncreaseFont={noop} onToggleDialog={() => actions.current.push('config')} onGenerateImage={noop} onUpload={noop} onDownload={noop} onSaveAsset={noop} onMaskEdit={noop} onCrop={noop} onSplit={noop} onUpscale={noop} onSuperResolve={noop} onAngle={noop} onViewImage={noop} onReversePrompt={noop} onRetry={noop} onToggleFreeResize={noop} onDelete={() => actions.current.push('delete')} /> : null}</main>;
 }
 function Providers() {
     const theme = useThemeStore(state => state.theme);

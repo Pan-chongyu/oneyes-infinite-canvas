@@ -188,6 +188,43 @@ app.whenReady().then(async () => {
             assert.deepEqual(await js('modelNodeTest.events()'), { drag: 0, background: 0, viewport: 0 }, 'model list interaction must not drag or zoom the canvas');
         }
         console.log('NATIVE_CONFIG_MODEL_LIST_ZOOM_EDGES_OVERLAP_AND_POINTER_SELECTION_OK');
+        const toolbarLayout = `(()=>{const toolbar=document.querySelector('[data-node-toolbar]'),node=document.querySelector('[data-node-id="'+modelNodeTest.state().id+'"]');if(!toolbar||!node)return null;const t=toolbar.getBoundingClientRect(),n=node.getBoundingClientRect(),b=toolbar.offsetParent.getBoundingClientRect(),s=getComputedStyle(toolbar);return {visible:s.visibility==='visible',separate:t.bottom<=n.top-1||t.top>=n.bottom+1||t.right<=n.left-1||t.left>=n.right+1,inside:t.left>=b.left+11&&t.right<=b.right-11&&t.top>=b.top+75&&t.bottom<=b.bottom-11,background:s.backgroundColor,color:s.color,toolbar:t.toJSON(),node:n.toJSON()}})()`;
+        for (const [scale, x, y, dark, copy] of [[1,60,180,true,false],[1,60,50,true,true],[0.65,-20,70,false,false],[1,-280,440,false,true],[0.55,620,540,true,false]]) {
+            await js(`modelNodeTest.toolbar(${scale},${x},${y},${dark},true,${copy})`);
+            await wait(`(()=>{const r=${toolbarLayout};return r?.visible&&r.separate&&r.inside})()`);
+            const layout = await js(toolbarLayout);
+            assert.equal(layout.background, dark ? 'rgba(31, 29, 26, 0.96)' : 'rgba(251, 250, 247, 0.96)');
+            assert.equal(layout.color, dark ? 'rgb(245, 245, 244)' : 'rgb(41, 37, 36)');
+            await wait(`getComputedStyle(document.querySelector('[data-node-id="'+modelNodeTest.state().id+'"] .ant-btn-dangerous')).color==='rgb(255, 255, 255)'`);
+            const target = await js(`(()=>{const b=[...document.querySelectorAll('[data-node-toolbar] button')].find(b=>b.textContent.includes('生成配置')),r=b.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),visible:b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}})()`);
+            assert.equal(target.visible, true);
+            const before = (await js('modelNodeTest.actions()')).length;
+            win.webContents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y });
+            win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: target.x, y: target.y });
+            win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: target.x, y: target.y });
+            await wait(`modelNodeTest.actions().length===${before+1}`);
+            assert.equal((await js('modelNodeTest.actions()')).at(-1), 'config');
+        }
+        // Follow real transformed geometry rather than stale model coordinates.
+        await js(`modelNodeTest.toolbar(0.65,60,180,true,true,true);document.querySelector('main').style.marginLeft='160px';document.querySelector('main').style.width='calc(100% - 160px)'`);
+        await wait(`(()=>{const r=${toolbarLayout};return r?.visible&&r.separate&&r.inside})()`);
+        const previousToolbar = await js(toolbarLayout);
+        await js(`document.querySelector('[data-node-id=config-copy]').style.transform='translate(180px,220px)'`);
+        await wait(`(()=>{const r=${toolbarLayout};return r?.visible&&r.separate&&r.inside&&Math.abs(r.toolbar.top-${previousToolbar.toolbar.top})>30})()`);
+        const stopPoint = await js(`(()=>{const b=document.querySelector('[data-node-id=config-copy] .ant-btn-dangerous'),r=b.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),visible:b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}})()`);
+        assert.equal(stopPoint.visible, true);
+        win.webContents.sendInputEvent({ type: 'mouseMove', x: stopPoint.x, y: stopPoint.y });
+        win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: stopPoint.x, y: stopPoint.y });
+        win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: stopPoint.x, y: stopPoint.y });
+        await wait('modelNodeTest.actions().at(-1)==="stop" && modelNodeTest.state().metadata.status==="idle"');
+        if (process.env.ONEYES_MODEL_SCREENSHOTS) await writeFile(join(process.env.ONEYES_MODEL_SCREENSHOTS, 'config-toolbar-dark.png'), (await win.capturePage()).toPNG());
+        await js(`modelNodeTest.toolbar(1,0,-1500,true)`);
+        await wait('getComputedStyle(document.querySelector("[data-node-toolbar]")).visibility==="hidden"');
+        await js('modelNodeTest.mount(false)');
+        assert.equal(await js('Boolean(document.querySelector("[data-node-toolbar]"))'), false);
+        await js('modelNodeTest.toolbar(1,0,180,true);modelNodeTest.mount(true)');
+        await wait(`(()=>{const r=${toolbarLayout};return r?.visible&&r.separate&&r.inside})()`);
+        console.log('NATIVE_CONFIG_TOOLBAR_ACTUAL_GEOMETRY_ZOOM_COPY_EDGES_SIDEBAR_THEME_STOP_AND_CLICK_OK');
         console.log('NATIVE_MODEL_CATALOG_AUTO_SYNC_CACHE_DEFAULTS_ERRORS_AND_DRAFTS_OK');
         await js('showMentionPreferences()');
         await wait('window.mentionTest && document.getElementById("auto-refresh-mention-images")');
