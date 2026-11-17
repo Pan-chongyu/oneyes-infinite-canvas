@@ -7,6 +7,7 @@ import { mkdtemp, readFile, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { videoRetryAt } from '../desktop/video-retry-after.mjs';
 const { createVault } = createRequire(import.meta.url)('../desktop/vault.cjs');
 const { createVideoTasks } = createRequire(import.meta.url)('../desktop/video-tasks.cjs');
 
@@ -33,7 +34,9 @@ async function fixture(t, provider = 'openai') {
             state.queries++; assert.equal(req.headers.authorization, 'Bearer fixture-key');
             if (state.mode === 'offline') { res.writeHead(503).end(); return; }
             if (state.mode === 'retry-after') { res.writeHead(429, { 'Retry-After': '1' }).end(); return; }
+            if (state.mode === 'pending-retry-after') { res.writeHead(202, { 'Retry-After': '1' }).end(); return; }
             if (state.mode === 'missing') { res.writeHead(404).end(); return; }
+            if (['failed', 'cancelled', 'canceled', 'expired'].includes(state.mode)) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ status: state.mode })); return; }
             if (state.mode === 'moderated') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ status: 'done', video: { respect_moderation: false } })); return; }
             const data = state.mode === 'pending' ? { status: 'processing' } : { status: 'completed', url: state.mode === 'expired-url' && state.badUrl ? `${base}/external/expired` : `${base}/external/fresh` };
             res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); return;
@@ -41,6 +44,8 @@ async function fixture(t, provider = 'openai') {
         state.downloads++; state.downloadStarted = true;
         if (provider === 'gemini') assert.equal(req.headers['x-goog-api-key'], 'fixture-key');
         assert.equal(req.headers.authorization, undefined, 'storage never receives an API key');
+        assert.equal(req.headers.cookie, undefined, 'storage never receives a site session');
+        if (state.mode === 'download-retry-after') { res.writeHead(503, { 'Retry-After': '1' }).end(); return; }
         if (req.url === '/external/expired') { state.badUrl = false; res.writeHead(403).end(); return; }
         const start = Number(req.headers.range?.match(/^bytes=(\d+)-$/)?.[1] || 0);
         if (start) { state.ranges++; assert.equal(req.headers['if-range'], '"fixture-video"'); }
@@ -146,6 +151,39 @@ test('server Retry-After is retained across a cold start before querying the sam
     f.state.mode = 'completed'; const queries = f.state.queries, restored = f.worker();
     await restored.until(item => item.loaded); assert.equal(f.state.queries, queries); await f.saved(restored);
 });
+
+test('Retry-After parses seconds and HTTP dates without accepting invalid or negative delays', () => {
+    const now = Date.parse('2026-11-17T00:00:00Z');
+    assert.equal(videoRetryAt(' 2.5 ', now), now + 2500);
+    assert.equal(videoRetryAt('Tue, 17 Nov 2026 00:01:00 GMT', now), now + 60000);
+    assert.equal(videoRetryAt('Mon, 16 Nov 2026 00:00:00 GMT', now), now);
+    for (const value of [undefined, null, '', 'bad', '-1', 'Infinity']) assert.equal(videoRetryAt(value, now), undefined);
+});
+
+for (const [mode, state] of [['pending-retry-after', 'pending'], ['download-retry-after', 'download_error']]) {
+    test(`${mode} retains the server wait across a cold start and resumes GET-only`, async t => {
+        const f = await fixture(t); f.state.mode = mode;
+        const first = f.worker('submit'), job = await first.until(item => item.jobs?.some(job => job.state === state && job.retryAt > Date.now()));
+        const original = job.jobs.find(job => job.retryAt); await first.kill();
+        const queries = f.state.queries, downloads = f.state.downloads;
+        f.state.mode = 'completed'; const restored = f.worker(); await restored.until(item => item.loaded);
+        assert.equal(f.state.queries, queries); assert.equal(f.state.downloads, downloads);
+        const saved = await f.saved(restored); assert.equal(saved.key, original.key); assert.equal(saved.idempotencyKey, original.idempotencyKey);
+    });
+}
+
+for (const status of ['cancelled', 'canceled', 'failed', 'expired']) {
+    test(`server ${status} is terminal and stays distinct after a cold start`, async t => {
+        const f = await fixture(t); f.state.mode = status;
+        const state = status === 'canceled' ? 'cancelled' : status;
+        const first = f.worker('submit'), job = await first.waitState(state); await first.kill();
+        if (state === 'cancelled') assert.match(job.reason, /服务端已取消原视频任务/);
+        const queries = f.state.queries; f.state.mode = 'completed';
+        const restored = f.worker(); const loaded = await restored.until(item => item.loaded);
+        assert.equal(loaded.jobs[0].state, state); assert.equal(loaded.jobs[0].taskId, job.taskId);
+        assert.equal(f.state.queries, queries); assert.equal(f.state.downloads, 0); assert.equal(f.state.posts, 1);
+    });
+}
 
 test('concurrent attempts to submit the same local receipt permit exactly one POST', async t => {
     const f = await fixture(t), manager = createVideoTasks({ directory: f.directory, vault: createVault(f.directory, 'video-tasks'), fetcher: fetch, probe: async () => ({}), credentials: async () => [], interval: 10000 });

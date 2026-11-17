@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { videoRetryAt } from '../../../../desktop/video-retry-after.mjs';
 
 export function videoBridgeErrorCode(value: unknown): string | undefined {
     if (!value || typeof value !== 'object') return;
@@ -24,9 +25,7 @@ export async function submitVideoBridge<T>(url: string, body: Blob, headers: Rec
         try { return await axios.post<T>(url, body, { headers, signal, timeout: 0 }); }
         catch (error) {
             if (signal?.aborted || !axios.isAxiosError(error) || error.response?.status !== 429 || videoBridgeErrorCode(error.response.data) !== 'large_material_busy' || !headers['Idempotency-Key']) throw error;
-            const retry = String(error.response.headers['retry-after'] ?? '5');
-            const milliseconds = /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
-            await wait(Number.isFinite(milliseconds) && milliseconds >= 0 ? milliseconds : 5000, signal);
+            await wait(Math.max(0, (videoRetryAt(error.response.headers['retry-after']) ?? Date.now() + 5000) - Date.now()), signal);
         }
     }
 }

@@ -11,6 +11,7 @@ import { getVideoModelInfo, videoModelConfigError } from "@/lib/video-model-info
 import type { VideoModelInfo } from "@/lib/video-model-catalog";
 import { videoErrorText, videoUserError } from "@/lib/video-display-text";
 import { videoSiteRequestId } from '../../../../desktop/video-errors.mjs';
+import { videoRetryAt } from '../../../../desktop/video-retry-after.mjs';
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -40,7 +41,7 @@ type GeminiVideoOperation = {
     error?: { message?: string };
     response?: { generateVideoResponse?: { generatedSamples?: Array<{ video?: { uri?: string } }> } };
 };
-export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+export type VideoGenerationTaskState = { status: "pending"; retryAt?: number } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -74,23 +75,26 @@ async function waitForVideoTask(config: AiConfig, task: VideoGenerationTask, opt
             const job = (await api.call('list')).find(item => item.key === key);
             if (!job) throw Error('原视频恢复记录不存在，请检查本机数据目录；不会重新生成');
             if (job.state === 'saved' && job.result) return { saved: job.result };
-            if (['failed', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(videoErrorText(job.reason, { state: job.state }));
+            if (['failed', 'cancelled', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(videoErrorText(job.reason, { state: job.state }));
             await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
         }
     }
     for (;;) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        let retryAt: number | undefined;
         try {
             const state = await pollVideoGenerationTask(config, task, options);
             if (state.status === "completed") return state.result;
             if (state.status === "failed") throw videoTaskFailed(state.error);
+            if (state.status === 'pending') retryAt = state.retryAt;
         } catch (error) {
             // Retry only queries/downloads for this receipt, never the paid POST.
             const cause = error instanceof Error && error.cause ? error.cause : error;
             const retryable = axios.isAxiosError(cause) && (cause.response ? cause.response.status === 408 || cause.response.status === 429 || cause.response.status >= 500 : ["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"].includes(cause.code || ""));
             if (options?.signal?.aborted || !retryable) throw error;
+            retryAt = videoRetryAt(cause.response?.headers['retry-after']);
         }
-        await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
+        await delay(Math.max(MEDIA_POLL_INTERVAL_MS, (retryAt ?? 0) - Date.now()), options?.signal);
     }
 }
 
@@ -374,10 +378,11 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     try {
         const taskPath = `/videos/${encodeURIComponent(task.id)}`;
         const response = await axios.get<ApiVideoResponse>(aiApiUrl(config, taskPath), { headers: aiHeaders(config), signal: options?.signal, timeout: 0 });
-        if (response.status === 202 && !response.data) return { status: "pending" };
+        const retryAt = videoRetryAt(response.headers['retry-after']);
+        if (response.status === 202 && !response.data) return { status: "pending", retryAt };
         const video = unwrapVideoResponse(response.data);
-        if (["failed", "cancelled", "expired"].includes(video.status || "")) {
-            return { status: "failed", error: videoErrorText(video, { state: video.status === 'expired' ? 'expired' : 'failed', requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
+        if (["failed", "cancelled", "canceled", "expired"].includes(video.status || "")) {
+            return { status: "failed", error: videoErrorText(video, { state: video.status, requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
         }
         if (video.video?.respect_moderation === false) return { status: "failed", error: videoErrorText(video.error ? video : { code: 'content_policy' }, { requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
         const url = videoResultUrl(video);
@@ -392,7 +397,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
             return { status: "completed", result: { blob: content.data } };
         }
         if (video.status === "done") return { status: "failed", error: apiText("noPlayableVideo") };
-        return { status: "pending" };
+        return { status: "pending", retryAt };
     } catch (error) {
 
         reportError("video", stage, error, stage === "download" ? "video-content" : "video-openai");
@@ -453,7 +458,7 @@ async function pollGeminiVideoTask(config: AiConfig, task: VideoGenerationTask, 
         const response = await axios.get<ApiEnvelope<GeminiVideoOperation>>(url, { headers: geminiVideoHeaders(config), signal: options?.signal, timeout: 0 });
         const state = unwrapEnvelope(response.data, apiText("videoTaskQueryFailed"));
         if (state.error) return { status: "failed", error: videoErrorText(state, { requestId: videoSiteRequestId(url, response.headers) }) };
-        if (!state.done) return { status: "pending" };
+        if (!state.done) return { status: "pending", retryAt: videoRetryAt(response.headers['retry-after']) };
         const uri = state.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
         if (!uri) return { status: "failed", error: apiText("noPlayableVideo") };
         const mediaUrl = uri.includes("key=") ? uri : `${uri}${uri.includes("?") ? "&" : "?"}key=${config.apiKey}`;

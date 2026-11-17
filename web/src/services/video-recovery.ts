@@ -37,7 +37,7 @@ export function applyVideoRecovery(node: CanvasNodeData, job: VideoRecoveryJob):
         model: job.model, videoRecoveryState: job.state, errorDetails: reason };
     if (job.state === 'saved' && job.result) return { ...node, metadata: { ...metadata, status: 'success', content: job.result.url,
         naturalWidth: job.result.width, naturalHeight: job.result.height, storageKey: job.result.storageKey, bytes: job.result.bytes, mimeType: job.result.mimeType, durationMs: job.result.durationMs } };
-    const error = ['failed', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error', 'download_error'].includes(job.state);
+    const error = ['failed', 'cancelled', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error', 'download_error'].includes(job.state);
     if (node.metadata?.videoRecoveryState === job.state && node.metadata?.errorDetails === reason && node.metadata?.videoJobKey === job.key) return node;
     return { ...node, metadata: { ...metadata, status: error ? 'error' : 'loading' } };
 }

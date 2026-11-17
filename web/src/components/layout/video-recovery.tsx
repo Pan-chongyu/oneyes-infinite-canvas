@@ -12,7 +12,7 @@ import { videoDisplayText, videoErrorText } from '@/lib/video-display-text';
 const labels: Record<string, string> = { prepared: '准备提交', submitting: '正在提交', unknown: '提交待核实', confirmation: '待确认原账号',
     throttled: '大素材排队中', not_submitted: '未提交生成',
     pending: '正在生成', querying: '查询原任务', downloading: '正在下载', saving: '验证并保存', saved: '已保存',
-    credentials: '等待恢复凭据', waiting: '等待网络恢复', save_error: '保存失败', download_error: '等待重新取回', failed: '任务失败', missing: '任务暂不可用', expired: '任务已过期' };
+    credentials: '等待恢复凭据', waiting: '等待网络恢复', save_error: '保存失败', download_error: '等待重新取回', failed: '任务失败', cancelled: '任务已取消', missing: '任务暂不可用', expired: '任务已过期' };
 
 export function VideoRecovery() {
     const api = window.oneYesDesktop?.videoTasks;

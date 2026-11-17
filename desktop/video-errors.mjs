@@ -34,6 +34,7 @@ export const videoErrorMessages = {
     not_submitted: '素材排队等待已中断，尚未提交生成；原请求记录已保留，不会自动重新提交。',
     throttled: '素材处理繁忙，尚未提交生成，正在按服务器要求等待。',
     cancelled: '已取消本次等待；已提交的任务保留在视频任务中。',
+    task_cancelled: '服务端已取消原视频任务，已停止等待并保留记录；不会自动重新生成。',
     node_deleted: '视频节点已删除，已停止提交。',
 };
 
@@ -64,6 +65,7 @@ export function videoErrorText(value, context = {}) {
     let kind = 'unknown';
     if (error.name === 'AbortError' || error.name === 'CanceledError') kind = 'cancelled';
     else if (code === 'creation_outcome_unknown' || context.state === 'unknown' || /未取得可靠(?:任务|回执)|no video task|no task id|(?:creation|submission) outcome is unknown|task id could not be confirmed|video was submitted but (?:its response could not be verified|.*receipt could not be saved)|提交结果(?:不确定|尚未确认)/i.test(text)) kind = 'creation_outcome_unknown';
+    else if (context.state === 'cancelled' || context.state === 'canceled') kind = 'task_cancelled';
     // Only classify the current public error's explicit rejection semantics.
     // Internal diagnostics and generic gateway errors provide no such evidence.
     else if (/参考(?:图片|图像).{0,12}(?:真人|可识别人物).{0,20}(?:未通过(?:上游)?(?:内容)?审核|审核(?:未通过|拒绝))/.test(text)) kind = 'reference_person_policy';
@@ -103,7 +105,7 @@ export function videoErrorText(value, context = {}) {
     // site billing ownership, even when a service uses INSUFFICIENT_BALANCE.
     // A stored safe string must never override uncertain submission or cancel.
     // No submission/billing promise is inferred from wording or HTTP status.
-    const message = kind === 'creation_outcome_unknown' || kind === 'cancelled' ? videoErrorMessages[kind] : canonical || videoErrorMessages[kind];
+    const message = ['creation_outcome_unknown', 'cancelled', 'task_cancelled'].includes(kind) ? videoErrorMessages[kind] : canonical || videoErrorMessages[kind];
     const id = context.requestId ?? existing?.[2];
     return message + (typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id) ? '\n本站请求编号：' + id : '');
 }

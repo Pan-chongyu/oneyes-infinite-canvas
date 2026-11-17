@@ -72,6 +72,44 @@ test('indefinite video waiting still stops on cancellation or authentication fai
     } finally { axios.defaults.adapter = original; t.mock.timers.reset(); }
 });
 
+test('browser polling and media GET respect Retry-After without recreating the task', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const task = { id: 'opaque/receipt?value', provider: 'openai' as const, model: config.model };
+    const controller = new AbortController(); let queries = 0, downloads = 0;
+    try {
+        axios.defaults.adapter = async request => {
+            assert.equal(request.method, 'get'); assert.equal(request.timeout, 0);
+            if (request.url?.includes('storage.example')) {
+                downloads++; assert.equal(request.headers?.Authorization, undefined); assert.equal(request.headers?.Cookie, undefined);
+                if (downloads === 1) throw new AxiosError('busy', 'ERR_BAD_RESPONSE', request, undefined, { config: request, status: 503, statusText: '', headers: { 'retry-after': '9' }, data: {} });
+                return { config: request, status: 200, statusText: '', headers: {}, data: new Blob(['original'], { type: 'video/mp4' }) };
+            }
+            assert.ok(request.url?.endsWith('/videos/opaque%2Freceipt%3Fvalue'));
+            queries++;
+            if (queries === 1) return { config: request, status: 202, statusText: '', headers: { 'retry-after': '7' }, data: '' };
+            return { config: request, status: 200, statusText: '', headers: {}, data: { status: 'completed', url: 'https://storage.example/video' } };
+        };
+        const waiting = waitForVideoGenerationTask(config, task, { signal: controller.signal });
+        await turn(); assert.equal(queries, 1);
+        t.mock.timers.tick(6999); await turn(); assert.equal(queries, 1);
+        t.mock.timers.tick(1); await turn(); assert.equal(queries, 2); assert.equal(downloads, 1);
+        t.mock.timers.tick(8999); await turn(); assert.equal(queries, 2);
+        t.mock.timers.tick(1); await turn(); assert.equal((await waiting).blob?.size, 8);
+        assert.equal(queries, 3); assert.equal(downloads, 2);
+    } finally { controller.abort(); axios.defaults.adapter = original; t.mock.timers.reset(); }
+});
+
+test('both server cancellation spellings stop waiting and use a distinct safe message', async () => {
+    try {
+        for (const status of ['cancelled', 'canceled']) {
+            let calls = 0;
+            adapter(request => { calls++; assert.equal(request.method, 'get'); return { data: { status, error: { message: 'private provider balance secret' } } }; });
+            await assert.rejects(waitForVideoGenerationTask(config, { id: 'original', provider: 'openai', model: config.model }), /服务端已取消原视频任务/);
+            assert.equal(calls, 1);
+        }
+    } finally { axios.defaults.adapter = original; }
+});
+
 test('Grok video uses canonical JSON and request_id, while other models retain multipart', async () => {
     try {
         const calls: AxiosRequestConfig[] = [];
@@ -209,7 +247,7 @@ test('Grok done downloads the authenticated relay from the account endpoint; ext
 test('expired, moderated and done-without-content tasks stop without resubmitting; 415 errors are actionable', async () => {
     try {
         const task = { id: 'grok-task', provider: 'openai' as const, model: config.model };
-        for (const data of [{ status: 'expired' }, { status: 'failed', error: { message: 'upstream failed' } }, { status: 'done', video: { respect_moderation: false } }, { status: 'done' }]) {
+        for (const data of [{ status: 'expired' }, { status: 'cancelled' }, { status: 'canceled' }, { status: 'failed', error: { message: 'upstream failed' } }, { status: 'done', video: { respect_moderation: false } }, { status: 'done' }]) {
             let calls = 0;
             adapter(request => { calls++; assert.equal(request.method, 'get'); return { data }; });
             await assert.rejects(waitForVideoGenerationTask(config, task));

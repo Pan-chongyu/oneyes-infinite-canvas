@@ -168,6 +168,7 @@ app.whenReady().then(async () => {
             ['unknown', { code: 'creation_outcome_unknown', message: person + ' 任务未提交，不扣费' }, videoErrorMessages.creation_outcome_unknown],
             ['failed', { type: 'upstream_error', message: 'Upstream gateway error', upstream_error_message: person }, videoErrorMessages.unknown],
             ['failed', { code: 'content_policy', message: 'Content policy violation ' + privateText }, videoErrorMessages.content_policy],
+            ['cancelled', { message: privateText }, videoErrorMessages.task_cancelled],
         ]) {
             const before = videoOperations.length;
             recoveryJob = { key: 'moderation-job', model: 'default::grok-imagine-video', site: 'https://oneyes.ai', channelId: 'default', provider: 'openai', state, reason: videoErrorText({ error }, { state, requestId }), createdAt: Date.now(), parameters: { size: '16:9', vquality: '1080', videoSeconds: '5' }, target: { projectId: await js('videoWorkflowTest.projectId'), nodeId: 'moderation-video' } };

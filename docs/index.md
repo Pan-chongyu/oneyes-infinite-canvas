@@ -14,6 +14,7 @@
 
 - [视频节点：反推提示词与生成配置](VIDEO_WORKFLOW.zh-CN.md)
 - [视频模型请求与冷启动恢复](VIDEO_BRIDGE.zh-CN.md)
+- [统一视频桥接核对与服务器依赖](VIDEO_BRIDGE_AUDIT.zh-CN.md)
 - [3D 导演台：布景、调姿、分镜和生图](DIRECTOR.zh-CN.md)
 - [局域网共同创作（仓库说明）](COLLABORATION.zh-CN.md)
 
