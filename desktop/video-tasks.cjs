@@ -81,7 +81,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const data = await response.json().catch(() => undefined);
             throw Object.assign(Error(videoErrorText(data, { status: response.status, stage: 'poll', requestId: videoSiteRequestId(url, response.headers) })), { status: response.status, phase: 'query', retryAt });
         }
-        return unwrap(await response.json());
+        return { data: unwrap(await response.json()), requestId: videoSiteRequestId(url, response.headers) };
     }
     async function resultSource(job, current, signal) {
         const base = job.site;
@@ -89,8 +89,8 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const root = /\/v1(?:beta)?$/.test(base) ? base : base + '/v1beta';
             // Operation names are paths below this exact site, never full URLs.
             if (!/^(?:[A-Za-z0-9._~-]+\/)*operations\/[A-Za-z0-9._~-]+$/.test(job.taskId) || job.taskId.split('/').some(part => part === '.' || part === '..')) throw Error('Gemini 任务回执路径无效');
-            const data = await readJson(root + '/' + job.taskId, { 'x-goog-api-key': current.apiKey }, signal);
-            if (data.error) return { error: message(data.error), state: 'failed' };
+            const { data, requestId } = await readJson(root + '/' + job.taskId, { 'x-goog-api-key': current.apiKey }, signal);
+            if (data.error) return { error: videoErrorText(data, { requestId }), state: 'failed' };
             if (!data.done) return null;
             const uri = data.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
             if (!uri) throw Error('原任务已结束，但上游尚未提供视频下载入口，请重试查询');
@@ -102,9 +102,9 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             return { url: url.href, headers: trusted ? { 'x-goog-api-key': current.apiKey } : {} };
         }
         const path = '/videos/' + encodeURIComponent(job.taskId), headers = { Authorization: 'Bearer ' + current.apiKey };
-        const data = await readJson(api(base) + path, headers, signal);
-        if (['failed', 'cancelled', 'canceled', 'expired'].includes(data.status)) return { error: videoErrorText(data.error, { state: data.status === 'expired' ? 'expired' : 'failed' }), state: data.status === 'expired' ? 'expired' : 'failed' };
-        if (data.video?.respect_moderation === false) return { error: '素材未通过上游审核，不会自动重新生成或绕过审核', state: 'failed' };
+        const { data, requestId } = await readJson(api(base) + path, headers, signal);
+        if (['failed', 'cancelled', 'canceled', 'expired'].includes(data.status)) return { error: videoErrorText(data, { state: data.status === 'expired' ? 'expired' : 'failed', requestId }), state: data.status === 'expired' ? 'expired' : 'failed' };
+        if (data.video?.respect_moderation === false) return { error: videoErrorText(data.error ? data : { code: 'content_policy' }, { requestId }), state: 'failed' };
         const source = [data.video?.url, data.video_url, data.result_url, data.url, data.content?.video_url, data.content?.url].find(value => typeof value === 'string' && /^(?:https?:\/\/|\/v1\/videos\/)/.test(value));
         if (!source && !['completed', 'done', 'succeeded', 'success'].includes(data.status)) return null;
         const relay = api(base) + path + '/content';
@@ -231,7 +231,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             if (response.ok && typeof id === 'string' && id) {
                 await patch(job, { taskId: id, state: 'pending' }); void run(job); return;
             }
-            const uncertain = (data?.error?.code || data?.code) === 'creation_outcome_unknown';
+            const uncertain = String(data?.error?.code ?? data?.code ?? data?.error?.type ?? '').toLowerCase() === 'creation_outcome_unknown';
             const state = !uncertain && response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status) ? 'failed' : 'unknown';
             await patch(job, { state, reason: videoErrorText(data, { state, status: response.status, requestId: videoSiteRequestId(job.site, response.headers) }) });
         },

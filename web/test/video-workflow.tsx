@@ -11,7 +11,7 @@ import { flushCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-s
 import { useThemeStore } from "@/stores/use-theme-store";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { VideoRecovery } from '@/components/layout/video-recovery';
-import { useVideoRecoveryStore } from '@/services/video-recovery';
+import { refreshVideoRecovery, useVideoRecoveryStore } from '@/services/video-recovery';
 import { createCanvasNode, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { createVideoNodeWorkflow } from "@/lib/canvas/video-node-workflow";
 import { buildNodeGenerationContext, buildNodeResponseMessages, prepareNodeTextContext } from "@/components/canvas/canvas-node-generation";
@@ -48,6 +48,13 @@ window.fetch = async (input, options) => {
 };
 Object.assign(window, { videoWorkflowTest: {
     state, flush: flushCanvasStorage, calls: () => calls, errors: () => errors, mode: (value: string) => { mode = value; },
+    projectId, refreshRecovery: refreshVideoRecovery,
+    seedErrorTask: async () => {
+        const node = createCanvasNode(CanvasNodeType.Video, { x: 300, y: 300 }, { content: '', status: 'loading', prompt: '隔离审核回归', model: 'default::grok-imagine-video', videoJobKey: 'moderation-job', vquality: '1080', seconds: '5', size: '16:9' });
+        node.id = 'moderation-video';
+        useCanvasStore.getState().updateProject(projectId!, { nodes: [...state().nodes.filter(item => item.id !== node.id), node] });
+        await flushCanvasStorage();
+    },
     seedRetiredTask: async () => {
         const node = createCanvasNode(CanvasNodeType.Video, { x: 300, y: 300 }, { content: '', status: 'error', errorDetails: '暂时无法查询视频进度，原任务已保留。', model: 'old-channel::seedance-2.0', videoTaskId: 'original-task', videoTaskProvider: 'openai', vquality: '720', seconds: '5', size: '16:9' });
         node.id = 'retired-video';

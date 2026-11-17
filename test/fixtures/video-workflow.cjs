@@ -7,6 +7,7 @@ const { promisify } = require('node:util');
 const { execFile } = require('node:child_process');
 const { route } = require('../../desktop/protocol.cjs');
 const { createMediaTools } = require('../../desktop/media-tools.cjs');
+const { videoErrorText, videoErrorMessages } = require('../../desktop/video-errors.mjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 app.on('window-all-closed', () => {});
 const profile = process.env.CANVAS_VIDEO_WORKFLOW_TEST_PROFILE;
@@ -157,6 +158,40 @@ app.whenReady().then(async () => {
         }
         assert.deepEqual(await js('videoWorkflowTest.errors()'), []);
         console.log('NATIVE_UNKNOWN_SUBMITTING_PREPARED_AND_NOT_SUBMITTED_OVERLAY_TOOLBAR_AND_GENERATE_PANEL_ZERO_PREPARE_OR_POST_OK');
+        await win.loadURL('oneyes-canvas://app/');
+        await wait('Boolean(window.videoWorkflowTest && document.querySelector("[data-node-id=source-video]"))');
+        const requestId = '12345678-1234-1234-1234-123456789abc';
+        const privateText = '上游 智赢 88API VendorOther https://private.invalid Bearer sk-private balance=987654';
+        const person = '参考图片可能包含真人或可识别人物，未通过上游内容审核。请更换参考图片后重试。';
+        for (const [state, error, expected] of [
+            ['failed', { type: 'upstream_error', message: person + ' ' + privateText }, videoErrorMessages.reference_person_policy],
+            ['unknown', { code: 'creation_outcome_unknown', message: person + ' 任务未提交，不扣费' }, videoErrorMessages.creation_outcome_unknown],
+            ['failed', { type: 'upstream_error', message: 'Upstream gateway error', upstream_error_message: person }, videoErrorMessages.unknown],
+            ['failed', { code: 'content_policy', message: 'Content policy violation ' + privateText }, videoErrorMessages.content_policy],
+        ]) {
+            const before = videoOperations.length;
+            recoveryJob = { key: 'moderation-job', model: 'default::grok-imagine-video', site: 'https://oneyes.ai', channelId: 'default', provider: 'openai', state, reason: videoErrorText({ error }, { state, requestId }), createdAt: Date.now(), parameters: { size: '16:9', vquality: '1080', videoSeconds: '5' }, target: { projectId: await js('videoWorkflowTest.projectId'), nodeId: 'moderation-video' } };
+            await js('videoWorkflowTest.seedErrorTask()');
+            await win.loadURL('oneyes-canvas://app/');
+            await wait('Boolean(window.videoWorkflowTest && document.querySelector("[data-node-id=moderation-video]"))');
+            await js('videoWorkflowTest.refreshRecovery()');
+            const text = expected + '\n本站请求编号：' + requestId;
+            await wait(`document.querySelector('[data-node-id=moderation-video] [role=alert]')?.textContent===${JSON.stringify(text)}`);
+            await js('videoWorkflowTest.flush()');
+            await win.loadURL('oneyes-canvas://app/');
+            await wait(`document.querySelector('[data-node-id=moderation-video] [role=alert]')?.textContent===${JSON.stringify(text)}`);
+            for (const dark of [false, true]) {
+                await js(`videoWorkflowTest.theme(${dark})`);
+                const body = await js(`(()=>{const root=document.querySelector('[data-node-id=moderation-video]'),alert=root.querySelector('[role=alert]'),a=alert.getBoundingClientRect(),r=root.getBoundingClientRect();return {text:alert.textContent,color:getComputedStyle(alert).color,visible:a.width>0&&a.height>0&&a.top>=r.top&&a.bottom<=r.bottom}})()`);
+                assert.equal(body.text, text); assert.equal(body.visible, true); assert.equal(body.color, dark ? 'rgb(245, 245, 244)' : 'rgb(41, 37, 36)');
+                assert.doesNotMatch(body.text, /上游|智赢|88API|VendorOther|https?:|Bearer|sk-private|987654|不扣费|任务未提交/);
+            }
+            const metadata = await js('videoWorkflowTest.state().nodes.find(n=>n.id==="moderation-video").metadata');
+            assert.equal(metadata.errorDetails, text); assert.equal(metadata.vquality, '1080'); assert.equal(metadata.seconds, '5'); assert.equal(metadata.videoJobKey, 'moderation-job');
+            assert.ok(videoOperations.slice(before).every(operation => operation === 'list')); assert.equal(recoveries.length, 1); assert.equal(modelReads.length, 0);
+            assert.deepEqual(await js('videoWorkflowTest.calls()'), []); assert.deepEqual(external, []); assert.deepEqual(await js('videoWorkflowTest.errors()'), []);
+        }
+        console.log('NATIVE_VIDEO_NODE_SPECIFIC_MODERATION_UNKNOWN_GENERIC_AND_PRIVATE_ERRORS_IPC_PERSISTENCE_REOPEN_BOTH_THEMES_ZERO_POST_OK');
         if (process.env.CANVAS_VIDEO_WORKFLOW_SCREENSHOT) { win.showInactive(); win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 500)); await writeFile(join(tmpdir(), 'oneyes-video-workflow.png'), (await win.capturePage()).toPNG()); }
         console.log('VIDEO_WORKFLOW_OK', { frames: 3, originalSize: '192x128', mockedModelRequests: 4, nativeSampling: true, restart: true, manualRetry: true, cancel: true });
     } catch (error) { console.error('VIDEO_WORKFLOW_FAILED', error); console.error(await js('({body:document.body.innerText.slice(-1400),errors:window.videoWorkflowTest?.errors()})')); throw error; }

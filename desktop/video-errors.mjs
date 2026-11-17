@@ -4,6 +4,7 @@ export const videoErrorMessages = {
     service_unavailable: '视频服务暂时不可用，请稍后重试或切换模型。',
     creation_outcome_unknown: '提交结果尚未确认，已保留恢复记录，请勿重复生成。',
     content_policy: '参考素材未通过内容审核，请更换素材或调整提示词后重新提交。',
+    reference_person_policy: '参考图片可能包含真人或可识别人物，未通过内容审核。请更换参考图片后重试。',
     duration_invalid: '当前模型不支持所选时长，请按参数面板中该模型允许的时长调整；原设置已保留。',
     resolution_invalid: '当前模型不支持所选分辨率或画面比例，请调整参数面板中的设置；原分辨率已保留。',
     reference_1080: '当前参考模式不支持 1080p，请主动选择支持的配置；已保留所选分辨率。',
@@ -54,7 +55,7 @@ export function videoErrorText(value, context = {}) {
     const detail = Array.isArray(data.detail) ? data.detail : [];
     const texts = [typeof payload === 'string' ? payload : '', data.message, data.msg, typeof data.error === 'string' ? data.error : data.error?.message, typeof data.detail === 'string' ? data.detail : '', ...detail.map(item => item?.msg)].filter(item => typeof item === 'string' && item.trim());
     const text = texts.join(' ');
-    const code = String(data.error?.code ?? data.code ?? '').toLowerCase();
+    const code = String(data.error?.code ?? data.code ?? data.error?.type ?? '').toLowerCase();
     const status = context.status ?? response?.status ?? error.status;
     // An already generated message may cross IPC, storage or a display boundary.
     // Match the complete message and a strictly validated site ID, never a prefix.
@@ -63,6 +64,10 @@ export function videoErrorText(value, context = {}) {
     let kind = 'unknown';
     if (error.name === 'AbortError' || error.name === 'CanceledError') kind = 'cancelled';
     else if (code === 'creation_outcome_unknown' || context.state === 'unknown' || /未取得可靠(?:任务|回执)|no video task|no task id|(?:creation|submission) outcome is unknown|task id could not be confirmed|video was submitted but (?:its response could not be verified|.*receipt could not be saved)|提交结果(?:不确定|尚未确认)/i.test(text)) kind = 'creation_outcome_unknown';
+    // Only classify the current public error's explicit rejection semantics.
+    // Internal diagnostics and generic gateway errors provide no such evidence.
+    else if (/参考(?:图片|图像).{0,12}(?:真人|可识别人物).{0,20}(?:未通过(?:上游)?(?:内容)?审核|审核(?:未通过|拒绝))/.test(text)) kind = 'reference_person_policy';
+    else if (code === 'content_policy') kind = 'content_policy';
     else if (/quota|balance|credit|insufficient|余额|积分|额度|欠费/i.test(code + ' ' + text)) kind = 'service_unavailable';
     else if (context.state === 'confirmation') kind = 'confirmation';
     else if (context.state === 'not_submitted') kind = 'not_submitted';
@@ -96,7 +101,9 @@ export function videoErrorText(value, context = {}) {
     else if (context.stage === 'poll' && (!status || status === 408 || status === 429 || status >= 500) || context.state === 'waiting') kind = 'waiting';
     // No balance-specific UI is inferred here: these responses are not proof of
     // site billing ownership, even when a service uses INSUFFICIENT_BALANCE.
-    const message = canonical || videoErrorMessages[kind];
+    // A stored safe string must never override uncertain submission or cancel.
+    // No submission/billing promise is inferred from wording or HTTP status.
+    const message = kind === 'creation_outcome_unknown' || kind === 'cancelled' ? videoErrorMessages[kind] : canonical || videoErrorMessages[kind];
     const id = context.requestId ?? existing?.[2];
     return message + (typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id) ? '\n本站请求编号：' + id : '');
 }

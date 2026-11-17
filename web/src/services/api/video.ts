@@ -377,9 +377,9 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         if (response.status === 202 && !response.data) return { status: "pending" };
         const video = unwrapVideoResponse(response.data);
         if (["failed", "cancelled", "expired"].includes(video.status || "")) {
-            return { status: "failed", error: videoErrorText(video.error, { state: video.status === 'expired' ? 'expired' : 'failed', requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
+            return { status: "failed", error: videoErrorText(video, { state: video.status === 'expired' ? 'expired' : 'failed', requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
         }
-        if (video.video?.respect_moderation === false) return { status: "failed", error: videoErrorText({ code: 'content_policy' }) };
+        if (video.video?.respect_moderation === false) return { status: "failed", error: videoErrorText(video.error ? video : { code: 'content_policy' }, { requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
         const url = videoResultUrl(video);
         // Sub2API returns an authenticated relay URL. Rebuild it from the fixed
         // account endpoint; never attach the API key to an upstream media URL.
@@ -449,13 +449,15 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
 
 async function pollGeminiVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
-        const state = unwrapEnvelope((await axios.get<ApiEnvelope<GeminiVideoOperation>>(geminiOperationUrl(config, task.id), { headers: geminiVideoHeaders(config), signal: options?.signal, timeout: 0 })).data, apiText("videoTaskQueryFailed"));
-        if (state.error) return { status: "failed", error: readApiErrorMessage(state.error.message) || apiText("videoGenerationFailed") };
+        const url = geminiOperationUrl(config, task.id);
+        const response = await axios.get<ApiEnvelope<GeminiVideoOperation>>(url, { headers: geminiVideoHeaders(config), signal: options?.signal, timeout: 0 });
+        const state = unwrapEnvelope(response.data, apiText("videoTaskQueryFailed"));
+        if (state.error) return { status: "failed", error: videoErrorText(state, { requestId: videoSiteRequestId(url, response.headers) }) };
         if (!state.done) return { status: "pending" };
         const uri = state.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
         if (!uri) return { status: "failed", error: apiText("noPlayableVideo") };
-        const url = uri.includes("key=") ? uri : `${uri}${uri.includes("?") ? "&" : "?"}key=${config.apiKey}`;
-        return { status: "completed", result: await videoResultFromUrl(url, options) };
+        const mediaUrl = uri.includes("key=") ? uri : `${uri}${uri.includes("?") ? "&" : "?"}key=${config.apiKey}`;
+        return { status: "completed", result: await videoResultFromUrl(mediaUrl, options) };
     } catch (error) {
 
         reportError("video", "poll", error, "video-gemini");

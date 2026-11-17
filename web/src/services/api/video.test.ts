@@ -366,3 +366,29 @@ test('custom cancellation bodies stay private while the original name and cause 
         } finally { axios.defaults.adapter = original; }
     }
 });
+
+test('specific rejection, generic gateway and unknown create/poll errors keep safe distinctions without resubmission', async () => {
+    const { videoErrorMessages: messages } = await import('../../../../desktop/video-errors.mjs');
+    const privateText = '智赢 88API VendorOther https://private.invalid Bearer sk-private balance=987654';
+    const rejection = '参考图片可能包含真人或可识别人物，未通过上游内容审核。请更换参考图片后重试。 ' + privateText;
+    const id = '12345678-1234-1234-1234-123456789abc';
+    const before = structuredClone(config);
+    let posts = 0, gets = 0, status = 'failed';
+    try {
+        for (const [error, expected] of [
+            [{ type: 'upstream_error', message: rejection }, messages.reference_person_policy],
+            [{ code: 'content_policy', message: 'Content policy violation' }, messages.content_policy],
+            [{ type: 'upstream_error', message: 'Upstream gateway error' }, messages.unknown],
+            [{ type: 'creation_outcome_unknown', message: rejection + ' 任务未提交，不扣费' }, messages.creation_outcome_unknown],
+        ] as const) {
+            axios.defaults.adapter = async request => {
+                if (request.method === 'post') { posts++; throw new AxiosError('opaque', 'ERR_BAD_RESPONSE', request, undefined, { config: request, status: 500, statusText: '', headers: { 'x-request-id': id }, data: { error } }); }
+                gets++; assert.equal(request.method, 'get'); assert.match(request.url!, /\/videos\/original-task$/); assert.equal(request.params, undefined);
+                return { config: request, status: 200, statusText: '', headers: { 'x-request-id': id }, data: { status, error, video: { respect_moderation: false } } };
+            };
+            await assert.rejects(createVideoGenerationTask(config, 'mock'), err => (err as Error).message === expected + '\n本站请求编号：' + id);
+            for (status of ['failed', 'completed']) assert.deepEqual(await pollVideoGenerationTask(config, { id: 'original-task', provider: 'openai', model: config.model }), { status: 'failed', error: expected + '\n本站请求编号：' + id });
+        }
+        assert.equal(posts, 4); assert.equal(gets, 8); assert.deepEqual(config, before);
+    } finally { axios.defaults.adapter = original; }
+});
