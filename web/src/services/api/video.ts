@@ -342,22 +342,12 @@ async function createBridgeVideoTask(config: AiConfig, model: string, prompt: st
             : await Promise.all(audioFiles!.map(readFileAsDataUrl));
     const grok = info.id.startsWith("grok-");
     const images = grok ? [] : await prepareReferenceFiles(references, options?.signal, info.id === "veo-3.1" ? "png" : undefined);
-    const grokImages: string[] = [];
-    if (grok) for (const image of references) {
-        const source = image.url || image.dataUrl;
-        if (!image.storageKey && /^https:\/\//i.test(source)) grokImages.push(videoBridgeMediaUrl(source, '图片'));
-        else {
-            const [file] = await prepareReferenceFiles([image], options?.signal);
-            images.push(file);
-            grokImages.push(await readFileAsDataUrl(file));
-        }
-    }
     const referenceVideoDurationTotal = videos.every(video => Number.isFinite(video.durationMs) && video.durationMs! > 0)
         ? videos.reduce((total, video) => total + video.durationMs! / 1000, 0)
         : undefined;
     const request = await encodeVideoBridgeRequest(buildVideoBridgeRequest(info, config, modelOptionName(model), prompt, {
         images,
-        imageDataUrls: grok ? grokImages : info.provider === "zhiying" || info.id.startsWith('wan3.0-video') || /^(veo-|gemini-omni-)/.test(info.id) ? [] : await Promise.all(images.map(readFileAsDataUrl)),
+        imageDataUrls: grok ? references.map(image => videoBridgeMediaUrl(image.url || image.dataUrl, "图片")) : info.provider === "zhiying" || info.id.startsWith('wan3.0-video') || /^(veo-|gemini-omni-)/.test(info.id) ? [] : await Promise.all(images.map(readFileAsDataUrl)),
         videos: videoInputs,
         audios: audioInputs,
         audioFiles,

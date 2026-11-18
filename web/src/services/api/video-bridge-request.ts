@@ -105,9 +105,7 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
     const images = media.imageDataUrls;
     if (info.id.startsWith("grok-")) {
         body.aspect_ratio = ratio;
-        // The authenticated OneYes bridge uploads normalized local images to
-        // trusted media storage before creating Grok's HTTPS-only request.
-        const urls = images.map(image => /^data:image\/(?:webp|png);base64,/i.test(image) ? image : videoBridgeMediaUrl(image, "图片"));
+        const urls = images.map(image => videoBridgeMediaUrl(image, "图片"));
         if (mode === "reference") { if (urls.length) body.reference_images = urls; }
         else { if (urls[0]) body.image = urls[0]; if (urls[1]) body.last_frame = urls[1]; }
     } else if (info.id.startsWith("kling-")) {

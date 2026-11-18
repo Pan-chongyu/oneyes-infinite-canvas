@@ -245,7 +245,7 @@ Object.assign(window, { videoBusyTest: async () => {
     check(task.id === 'busy-one-task', 'busy retry must create exactly one upstream task'); return task.nativeJobKey;
 } });
 
-Object.assign(window, { videoGrokLocalTest: async () => {
+Object.assign(window, { videoGrokUploadBoundaryTest: async () => {
     const canvas = document.createElement('canvas'); canvas.width = 17; canvas.height = 11;
     canvas.getContext('2d')!.fillRect(0, 0, 17, 11);
     const stored = await uploadImage(canvas.toDataURL('image/png'));
@@ -254,8 +254,10 @@ Object.assign(window, { videoGrokLocalTest: async () => {
     let count = 0;
     for (const info of videoModelCatalog.filter(info => info.id.startsWith('grok-'))) for (const id of [info.id, ...info.aliases]) for (const videoMode of ['frames', 'reference']) {
         const selected = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model: 'oneyes-minimax::' + id, size: '16:9', vquality: '720', videoMode };
-        const task = await createVideoGenerationTask(selected, 'Grok local image', videoMode === 'frames' ? [image] : [remote, image]);
-        check(task.id && task.model === selected.model, 'local images preserve exact model and public receipt'); count++;
+        let rejected = false;
+        try { await createVideoGenerationTask(selected, 'Grok local image', videoMode === 'frames' ? [image] : [remote, image]); }
+        catch (error) { rejected = error instanceof Error && error.message === '参考素材尚未上传完成或无法读取，请重新选择或上传素材后再提交。'; }
+        check(rejected, 'local Grok references require deployed trusted upload before paid submission'); count++;
     }
     return count;
 } });

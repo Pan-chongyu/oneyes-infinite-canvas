@@ -136,28 +136,9 @@ app.whenReady().then(async () => {
             assert.equal((await fileTypeFromBuffer(Buffer.from(await image.arrayBuffer()))).mime, 'image/webp');
         }
         const localStart = posts.length;
-        assert.equal(await run('videoGrokLocalTest()'), 8);
-        const grokLocal = posts.slice(localStart);
-        assert.equal(grokLocal.length, 8);
-        for (const item of grokLocal) {
-            assert.equal(item.path, '/v1/videos'); assert.equal(item.type, 'application/json');
-            const input = item.body.reference_images || [item.body.image];
-            if (item.body.reference_images) assert.equal(input[0], 'https://cdn.example.com/first.png', 'mixed references keep their order without fetching public images');
-            const local = input.at(-1);
-            assert.match(local, /^data:image\/webp;base64,/);
-            const bytes = Buffer.from(local.split(',')[1], 'base64');
-            assert.equal((await fileTypeFromBuffer(bytes)).mime, 'image/webp');
-            const dimensions = await run(`fetch(${JSON.stringify(local)}).then(response => response.blob()).then(createImageBitmap).then(image => [image.width,image.height])`);
-            assert.deepEqual(dimensions, [17, 11]);
-            if (process.env.ONEYES_BRIDGE_TEST_DIRECTORY) {
-                const { pathToFileURL } = require('node:url');
-                const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, '88api-request.mjs')).href)).default;
-                const plan = adapter.mediaUploadPlan(adapter.normalizeCreateBody({ requestBuffer: Buffer.from(JSON.stringify(item.body)) }, item.type));
-                assert.equal(plan.entries.length, 1, 'normalized local pixels enter the authenticated bridge upload plan');
-                assert.deepEqual(plan.entries[0].file.bytes, bytes);
-            }
-        }
-        console.log('GROK_LOCAL_NATIVE_OK: exact canonical/alias routing, lossless Worker pixels, mixed public URL order and trusted upload plan');
+        assert.equal(await run('videoGrokUploadBoundaryTest()'), 8);
+        assert.equal(posts.length, localStart, 'local Grok references cannot reach paid POST before trusted upload is deployed');
+        console.log('GROK_UPLOAD_BOUNDARY_OK: unsupported local references retain the existing public HTTPS boundary without POST');
         const key = await run('videoBusyTest()');
         assert.equal(busyRequests.length, 2); assert.equal(busyRequests[0].key, key); assert.equal(busyRequests[1].key, key);
         assert.equal(busyRequests[0].type, busyRequests[1].type); assert.deepEqual(busyRequests[0].bytes, busyRequests[1].bytes);

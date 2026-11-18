@@ -110,16 +110,13 @@ test("reference videos are never disguised as inline files or credential-bearing
     assert.equal(videoBridgeMediaUrl("https://cdn.example/clip.mp4?signature=fixture", "视频"), "https://cdn.example/clip.mp4?signature=fixture");
 });
 
-test('Grok bridge accepts normalized local images alongside public URLs without accepting local videos or audio', () => {
+test('Grok bridge retains its public image boundary until trusted local upload is deployed', () => {
     for (const id of ['grok-imagine-video', 'grok-imagine-video-1.5']) {
-        const model = info(id), inline = 'data:image/webp;base64,UklGRg==';
+        const model = info(id);
         for (const requestId of [model.id, ...model.aliases]) {
-            const frame = buildVideoBridgeRequest(model, config(id), requestId, 'fixture', { ...empty(), imageDataUrls: [inline] });
-            assert.equal((frame.body as Record<string, unknown>).image, inline);
-            const mixed = buildVideoBridgeRequest(model, { ...config(id), videoMode: 'reference' }, requestId, 'fixture', { ...empty(), images: [image], imageDataUrls: ['https://cdn.example.com/first.png', inline] });
-            assert.deepEqual((mixed.body as Record<string, unknown>).reference_images, ['https://cdn.example.com/first.png', inline]);
-            assert.throws(() => buildVideoBridgeRequest(model, { ...config(id), videoMode: 'reference' }, requestId, 'fixture', { ...empty(), images: [image], imageDataUrls: Array(15).fill(inline) }), /最多支持 14.*图片/);
-            for (const value of ['data:video/mp4;base64,AAAA', 'file:///local.png', 'blob:local-image', 'http://cdn.example/ref.png', 'https://user:secret@cdn.example/ref.png']) assert.throws(() => buildVideoBridgeRequest(model, config(id), requestId, 'fixture', { ...empty(), imageDataUrls: [value] }), /公开 HTTPS/);
+            const frame = buildVideoBridgeRequest(model, config(id), requestId, 'fixture', { ...empty(), imageDataUrls: ['https://cdn.example.com/first.png'] });
+            assert.equal((frame.body as Record<string, unknown>).image, 'https://cdn.example.com/first.png');
+            for (const value of ['data:image/webp;base64,UklGRg==', 'data:video/mp4;base64,AAAA', 'file:///local.png', 'blob:local-image', 'http://cdn.example/ref.png', 'https://user:secret@cdn.example/ref.png']) assert.throws(() => buildVideoBridgeRequest(model, config(id), requestId, 'fixture', { ...empty(), imageDataUrls: [value] }), /公开 HTTPS/);
         }
     }
 });
