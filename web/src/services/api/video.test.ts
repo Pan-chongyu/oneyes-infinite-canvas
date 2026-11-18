@@ -182,6 +182,42 @@ test('Grok video uses canonical JSON and request_id, while other models retain m
     } finally { axios.defaults.adapter = original; }
 });
 
+test('OneYes Video routes exact bare and priced Grok IDs through create/query/content while foreign native stays native', async () => {
+    const calls: AxiosRequestConfig[] = [];
+    try {
+        adapter(request => {
+            calls.push(request);
+            return { data: request.method === 'post' ? { request_id: 'public-bridge-task' } : request.url?.endsWith('/content') ? new Blob(['video'], { type: 'video/mp4' }) : { status: 'done', video: { url: '/v1/videos/public-bridge-task/content' } } };
+        });
+        for (const info of videoModelCatalog.filter(model => model.id.startsWith('grok-'))) for (const id of [info.id, ...info.aliases]) {
+            const model = 'oneyes-minimax::' + id;
+            const selected = { ...config, model, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], videoMode: 'frames', size: '16:9', vquality: '720' };
+            const before = JSON.stringify(selected), count = calls.length;
+            const references = [{ id: 'public-ref', name: 'reference.png', type: 'image/png', dataUrl: 'https://cdn.example.com/ref.png', url: 'https://cdn.example.com/ref.png' }];
+            const task = await createVideoGenerationTask(selected, 'offline fixture', references);
+            assert.equal(task.id, 'public-bridge-task'); assert.equal(task.model, model);
+            assert.equal(calls[count].url, 'https://oneyes.ai/v1/videos');
+            assert.deepEqual(JSON.parse(await (calls[count].data as Blob).text()), { model: id, prompt: 'offline fixture', resolution: '720p', duration: 5, aspect_ratio: '16:9', image: 'https://cdn.example.com/ref.png' });
+            assert.equal((await pollVideoGenerationTask(selected, task)).status, 'completed');
+            assert.equal(calls.length, count + 3);
+            assert.match(calls[count + 1].url!, /\/v1\/videos\/public-bridge-task$/);
+            assert.match(calls[count + 2].url!, /\/v1\/videos\/public-bridge-task\/content$/);
+            assert.equal(calls[count + 2].headers?.Authorization, 'Bearer fixture-key');
+            for (const media of [{ videos: [{ id: 'v', name: 'clip.mp4', type: 'video/mp4', url: 'https://cdn.example.com/clip.mp4' }] }, { audios: [{ id: 'a', name: 'sound.mp3', type: 'audio/mpeg', url: 'https://cdn.example.com/sound.mp3' }] }]) await assert.rejects(createVideoGenerationTask(selected, 'unsupported', references, media), /不支持参考视频、视频编辑或上传参考音频/);
+            assert.equal(calls.length, count + 3, 'unsupported media never sends a paid POST or /edits');
+            assert.equal(JSON.stringify(selected), before);
+        }
+        const native = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax', baseUrl: 'https://native.example' }], model: 'oneyes-minimax::grok-imagine-video' };
+        await createVideoGenerationTask(native, 'native fixture');
+        assert.match(calls.at(-1)!.url!, /^https:\/\/native\.example\/v1\/videos\/generations$/);
+        assert.equal(JSON.parse(calls.at(-1)!.data).model, 'grok-imagine-video');
+        const count = calls.length;
+        window.oneYesDesktop!.models.list = async () => ({ data: ['unrelated-model'] });
+        await assert.rejects(createVideoGenerationTask({ ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model: 'oneyes-minimax::grok-imagine-video' }, 'unauthorized'), /当前 API Key.*不包含/);
+        assert.equal(calls.length, count, 'catalog recognition never bypasses this Key exact admission');
+    } finally { axios.defaults.adapter = original; }
+});
+
 test('MiniMax H accepts only 768P, 1080P and 2K without submitting unsupported requests', async () => {
     const miniMax = { ...config, model: 'default::minimax-h3', vquality: '480' };
     assert.equal(isUnsupportedMiniMaxVideoResolution(miniMax), true);
@@ -199,6 +235,31 @@ test('MiniMax H accepts only 768P, 1080P and 2K without submitting unsupported r
             assert.equal(JSON.parse(await (calls.at(-1)!.data as Blob).text()).resolution, expected.toLowerCase());
         }
         assert.equal(posts, 3);
+    } finally { axios.defaults.adapter = original; }
+});
+
+test('wan3.0 old and corrected aliases reject 5–9 seconds before POST and preserve failed task GET recovery', async () => {
+    const info = videoModelCatalog.find(model => model.id === 'wan3.0')!;
+    let posts = 0, gets = 0;
+    try {
+        adapter(request => {
+            if (request.method === 'post') { posts++; return { data: { request_id: 'wan-original' } }; }
+            gets++; assert.match(request.url!, /\/videos\/original-five-seconds$/);
+            return { data: { status: 'failed', error: { code: 'unsupported_duration' } } };
+        });
+        for (const id of [info.id, ...info.aliases]) {
+            const selected = { ...config, model: 'default::' + id, size: '16:9', vquality: '720', videoMode: 'reference', videoSeconds: '5' };
+            const before = JSON.stringify(selected), count = posts;
+            for (const videoSeconds of ['5', '9']) await assert.rejects(createVideoGenerationTask({ ...selected, videoSeconds }, 'invalid'), /时长.*保留/);
+            assert.equal(posts, count);
+            const recovered = await pollVideoGenerationTask(selected, { id: 'original-five-seconds', provider: 'openai', model: selected.model });
+            assert.equal(recovered.status, 'failed');
+            assert.equal(posts, count, 'invalid old parameters never block original GET or cause a new POST');
+            await createVideoGenerationTask({ ...selected, videoSeconds: '10' }, 'valid');
+            assert.equal(posts, count + 1);
+            assert.equal(JSON.stringify(selected), before);
+        }
+        assert.equal(gets, 3);
     } finally { axios.defaults.adapter = original; }
 });
 

@@ -441,10 +441,10 @@
     },
     {
       "id": "wan3.0",
-      "request_id": "wan3.0 [5-30s 720p/1080p ¥0.319/秒]",
+      "request_id": "wan3.0 [10-30s 720p/1080p ¥0.319/秒]",
       "model_name": "wan3.0",
-      "model_info": "5-30s 720p/1080p ¥0.319/秒",
-      "display_name": "wan3.0 [5-30s 720p/1080p ¥0.319/秒]",
+      "model_info": "10-30s 720p/1080p ¥0.319/秒",
+      "display_name": "wan3.0 [10-30s 720p/1080p ¥0.319/秒]",
       "prices": [
         {
           "resolution": "720p",
@@ -458,7 +458,7 @@
         }
       ],
       "reference_video_multiplier": null,
-      "capabilities": "720p 5-30s；1080p 5-30s；最多10张参考图片；最多5段参考视频；最多5段参考音频。",
+      "capabilities": "720p 10-30s；1080p 10-30s；最多10张参考图片；最多5段参考视频；最多5段参考音频。",
       "price_description": "720p ¥0.319/秒；1080p ¥0.319/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
     },
     {

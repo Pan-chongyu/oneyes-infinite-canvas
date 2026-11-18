@@ -168,6 +168,16 @@ Object.assign(window, { videoSettingsTest: async () => {
         flushSync(() => change({ vquality: '1080', videoMode: 'reference' }, { imageCount: 0, audioCount: 0, videoCount: 0 }));
         await settled();
         check(current!.vquality === '1080' && !fullHd().disabled, 'text-only generation keeps full HD even with reference mode selected');
+        for (const id of ['grok-imagine-video', 'grok-imagine-video-1.5']) {
+            flushSync(() => change({ channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model: 'oneyes-minimax::' + id, vquality: '720', size: '16:9', videoSeconds: '5', videoMode: 'frames' }, { imageCount: 1, videoCount: 0, audioCount: 0 }));
+            await settled();
+            check(document.body.textContent?.includes('不支持参考视频、视频编辑或上传参考音频'), 'unified Grok exposes the actual supported media in settings');
+            check(!document.body.textContent?.includes('生成音频'), 'bridge Grok does not offer an unsupported audio switch');
+            if (id === 'grok-imagine-video') check(!fullHd(), 'Grok bridge never offers unsupported 1080p');
+            flushSync(() => change({}, { imageCount: 1, videoCount: 1, audioCount: 0 }));
+            await settled();
+            check(document.querySelector('[role="alert"]')?.textContent?.includes('不支持参考视频'), 'existing unsupported references remain visible with a fixed explanation');
+        }
         return 'GROK_VIDEO_SETTINGS_OK';
     } finally { flushSync(() => root.unmount()); }
 } });
@@ -200,6 +210,19 @@ Object.assign(window, { videoBridgeTest: async () => {
         const images = motion || info.id.includes('-discount') ? [image] : info.id === 'grok-imagine-video-1.5' ? [{ ...image, storageKey: undefined, dataUrl: 'https://cdn.example.com/image.png', url: 'https://cdn.example.com/image.png' }] : [];
         await createVideoGenerationTask(selected, 'offline bridge fixture', images, motion ? { videos: [{ id: 'motion', name: 'motion.mp4', url: 'https://cdn.example.com/motion.mp4', durationMs: 5000 }] } : undefined);
     }
+    // Exercise real identification and routing, not a direct builder call.
+    for (const info of videoModelCatalog.filter(info => info.id.startsWith('grok-'))) for (const id of [info.id, ...info.aliases]) {
+        const selected = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model: 'oneyes-minimax::' + id, size: '16:9', vquality: '720', videoMode: 'frames' };
+        const images = [{ ...image, storageKey: undefined, dataUrl: 'https://cdn.example.com/image.png', url: 'https://cdn.example.com/image.png' }];
+        const task = await createVideoGenerationTask(selected, 'Grok bridge route', images);
+        check(task.id && task.model === selected.model, 'unified Grok retains public receipt and exact requested ID');
+        check((await pollVideoGenerationTask(selected, task)).status === 'completed', 'unified Grok queries and downloads its original public task');
+        for (const media of [{ videos: [{ id: 'v', name: 'clip.mp4', url: 'https://cdn.example.com/clip.mp4' }] }, { audios: [{ id: 'a', name: 'audio.mp3', url: 'https://cdn.example.com/audio.mp3' }] }]) {
+            let rejected = false;
+            try { await createVideoGenerationTask(selected, 'unsupported', images, media); } catch (error) { rejected = /不支持参考视频、视频编辑或上传参考音频/.test(String(error)); }
+            check(rejected, 'bridge Grok must reject unsupported media before /edits or creation');
+        }
+    }
     // The same material coming from local, @ and a connection is submitted once.
     const wan = { ...config, model: 'default::wan3.0-video', size: '16:9', vquality: '1080', videoMode: 'reference' };
     await createVideoGenerationTask(wan, 'deduplicated references', [image, { ...image, id: 'mention' }, { ...image, id: 'connection' }]);
@@ -220,4 +243,19 @@ Object.assign(window, { videoBusyTest: async () => {
     } } });
     const task = await createVideoGenerationTask({ ...config, model: 'default::wan3.0-video', size: '16:9', vquality: '720', videoMode: 'reference' }, 'busy fixture', [image]);
     check(task.id === 'busy-one-task', 'busy retry must create exactly one upstream task'); return task.nativeJobKey;
+} });
+
+Object.assign(window, { videoGrokLocalTest: async () => {
+    const canvas = document.createElement('canvas'); canvas.width = 17; canvas.height = 11;
+    canvas.getContext('2d')!.fillRect(0, 0, 17, 11);
+    const stored = await uploadImage(canvas.toDataURL('image/png'));
+    const image: ReferenceImage = { id: 'grok-local', name: 'wrong-camera.jpg', type: 'image/jpeg', storageKey: stored.storageKey, dataUrl: stored.url };
+    const remote = { id: 'grok-public', name: 'public.png', type: 'image/png', dataUrl: 'https://cdn.example.com/first.png', url: 'https://cdn.example.com/first.png' };
+    let count = 0;
+    for (const info of videoModelCatalog.filter(info => info.id.startsWith('grok-'))) for (const id of [info.id, ...info.aliases]) for (const videoMode of ['frames', 'reference']) {
+        const selected = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model: 'oneyes-minimax::' + id, size: '16:9', vquality: '720', videoMode };
+        const task = await createVideoGenerationTask(selected, 'Grok local image', videoMode === 'frames' ? [image] : [remote, image]);
+        check(task.id && task.model === selected.model, 'local images preserve exact model and public receipt'); count++;
+    }
+    return count;
 } });

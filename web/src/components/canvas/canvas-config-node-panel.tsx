@@ -16,6 +16,7 @@ import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "@
 import type { VideoReferenceSummary } from "@/lib/video-capabilities";
 import { DEFAULT_VIDEO_FRAME_COUNT } from "@/services/director-video";
 import { videoModelNodePatch } from '@/lib/video-model-defaults';
+import { getVideoModelInfo } from '@/lib/video-model-info';
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
@@ -36,6 +37,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInpu
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = node.metadata?.generationMode || "image";
     const config = buildNodeConfig(globalConfig, node, mode);
+    const videoInfo = mode === 'video' ? getVideoModelInfo(config) : undefined;
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
@@ -96,8 +98,8 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInpu
             <div className="mb-2 flex flex-wrap gap-1.5">
                 <InputChip label={t("canvas.configNode.prompt")} value={t("canvas.configNode.items", { count: inputSummary.textCount })} style={chipStyle} />
                 <InputChip label={t("canvas.configNode.references")} value={t("canvas.configNode.images", { count: inputSummary.imageCount })} style={chipStyle} />
-                <InputChip label={t("canvas.configNode.videoReferences")} value={t("canvas.configNode.items", { count: inputSummary.videoCount })} style={chipStyle} />
-                <InputChip label={t("canvas.configNode.audioReferences")} value={t("canvas.configNode.items", { count: inputSummary.audioCount })} style={chipStyle} />
+                {videoInfo?.referenceLimits.videos !== 0 || inputSummary.videoCount > 0 ? <InputChip label={t("canvas.configNode.videoReferences")} value={t("canvas.configNode.items", { count: inputSummary.videoCount })} style={chipStyle} /> : null}
+                {videoInfo?.referenceLimits.audios !== 0 || inputSummary.audioCount > 0 ? <InputChip label={t("canvas.configNode.audioReferences")} value={t("canvas.configNode.items", { count: inputSummary.audioCount })} style={chipStyle} /> : null}
                 <button type="button" className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={onComposerToggle}>
                     <Settings2 className="size-3.5" />
                     {t("canvas.configNode.compose")}

@@ -56,16 +56,21 @@ app.whenReady().then(async () => {
             }
             if (target.pathname.endsWith('/cancel-wait')) return Response.json({ status: 'pending' });
             if (++polls === 1) return new Response(null, { status: 202 });
-            return Response.json({ status: 'done', video: { url: '/v1/videos/task-1/content', respect_moderation: true } });
+            return Response.json({ status: 'done', video: { url: target.pathname + '/content', respect_moderation: true } });
         }
         return net.fetch(process.argv[2].replace('/__agent-chat', '') + (url.pathname === '/' ? '/__agent-chat' : url.pathname));
     });
     const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    const run = async expression => {
+        const result = await win.webContents.executeJavaScript(`Promise.resolve().then(() => ${expression}).then(value => ({ value }), error => ({ error: { message: String(error), stack: error?.stack, cause: String(error?.cause) } }))`);
+        if (result.error) throw Error(expression + ': ' + JSON.stringify(result.error));
+        return result.value;
+    };
     try {
         await win.loadURL('oneyes-canvas://app/');
         const end = Date.now() + 20000;
         while (!await win.webContents.executeJavaScript('!!window.videoTest')) { if (Date.now() > end) throw Error('Video fixture did not load'); await new Promise(resolve => setTimeout(resolve, 25)); }
-        assert.equal((await win.webContents.executeJavaScript('videoTest()')).length, 12);
+        assert.equal((await run('videoTest()')).length, 12);
         assert.equal(posts.length, 12, 'invalid references and unsupported resolutions never submit a paid request');
         assert.deepEqual(posts[0].body, { model: 'grok-imagine-video', prompt: '服装模特', duration: 5, aspect_ratio: '1:1', resolution: '480p' });
         assert.equal(posts[0].path, '/v1/videos/generations');
@@ -94,14 +99,25 @@ app.whenReady().then(async () => {
             assert.ok(image.url.startsWith('data:image/webp;base64,'), 'video references must use the normalized actual MIME, not asset labels');
         }
         assert.deepEqual(gets, ['/v1/videos/task-1', '/v1/videos/task-1', '/v1/videos/task-1/content']);
-        assert.equal(await win.webContents.executeJavaScript('videoSettingsTest()'), 'GROK_VIDEO_SETTINGS_OK');
-        assert.equal(await win.webContents.executeJavaScript('videoWaitTest()'), 'VIDEO_LONG_WAIT_OK');
+        assert.equal(await run('videoSettingsTest()'), 'GROK_VIDEO_SETTINGS_OK');
+        assert.equal(await run('videoWaitTest()'), 'VIDEO_LONG_WAIT_OK');
         assert.equal(longPolls, 131, 'native waiting must survive the previous poll limit and transient gateway failure');
         assert.equal(posts.length, 12, 'settings changes never submit requests');
-        assert.equal(await win.webContents.executeJavaScript('videoBridgeTest()'), 'VIDEO_BRIDGE_NATIVE_OK');
+        assert.equal(await run('videoBridgeTest()'), 'VIDEO_BRIDGE_NATIVE_OK');
         const bridge = posts.slice(12);
-        assert.equal(bridge.length, 29);
+        assert.equal(bridge.length, 33);
         assert.ok(bridge.every(item => item.path === '/v1/videos'));
+        const grokRoutes = bridge.filter(item => item.body.prompt === 'Grok bridge route');
+        assert.equal(grokRoutes.length, 4);
+        for (const item of grokRoutes) {
+            assert.equal(item.type, 'application/json');
+            assert.equal(item.body.image, 'https://cdn.example.com/image.png');
+            assert.equal(item.body.duration, 5); assert.equal(item.body.resolution, '720p');
+            assert.equal(item.body.reference_audios, undefined); assert.equal(item.body.video, undefined);
+            const taskId = 'task-' + (posts.indexOf(item) + 1);
+            assert.ok(gets.includes('/v1/videos/' + taskId));
+            assert.ok(gets.includes('/v1/videos/' + taskId + '/content'));
+        }
         const omni = bridge.find(item => item.body.model === 'gemini-omni-flash-1.1').body;
         assert.equal(omni.duration, 3); assert.equal(omni.seconds, undefined); assert.equal(omni.resolution, '720p');
         const zhiying = bridge.find(item => item.body.model === 'sd-2.5-fullblood');
@@ -119,12 +135,35 @@ app.whenReady().then(async () => {
             assert.ok(image instanceof File); assert.equal(image.type, 'image/webp'); assert.match(image.name, /\.webp$/);
             assert.equal((await fileTypeFromBuffer(Buffer.from(await image.arrayBuffer()))).mime, 'image/webp');
         }
-        const key = await win.webContents.executeJavaScript('videoBusyTest()');
+        const localStart = posts.length;
+        assert.equal(await run('videoGrokLocalTest()'), 8);
+        const grokLocal = posts.slice(localStart);
+        assert.equal(grokLocal.length, 8);
+        for (const item of grokLocal) {
+            assert.equal(item.path, '/v1/videos'); assert.equal(item.type, 'application/json');
+            const input = item.body.reference_images || [item.body.image];
+            if (item.body.reference_images) assert.equal(input[0], 'https://cdn.example.com/first.png', 'mixed references keep their order without fetching public images');
+            const local = input.at(-1);
+            assert.match(local, /^data:image\/webp;base64,/);
+            const bytes = Buffer.from(local.split(',')[1], 'base64');
+            assert.equal((await fileTypeFromBuffer(bytes)).mime, 'image/webp');
+            const dimensions = await run(`fetch(${JSON.stringify(local)}).then(response => response.blob()).then(createImageBitmap).then(image => [image.width,image.height])`);
+            assert.deepEqual(dimensions, [17, 11]);
+            if (process.env.ONEYES_BRIDGE_TEST_DIRECTORY) {
+                const { pathToFileURL } = require('node:url');
+                const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, '88api-request.mjs')).href)).default;
+                const plan = adapter.mediaUploadPlan(adapter.normalizeCreateBody({ requestBuffer: Buffer.from(JSON.stringify(item.body)) }, item.type));
+                assert.equal(plan.entries.length, 1, 'normalized local pixels enter the authenticated bridge upload plan');
+                assert.deepEqual(plan.entries[0].file.bytes, bytes);
+            }
+        }
+        console.log('GROK_LOCAL_NATIVE_OK: exact canonical/alias routing, lossless Worker pixels, mixed public URL order and trusted upload plan');
+        const key = await run('videoBusyTest()');
         assert.equal(busyRequests.length, 2); assert.equal(busyRequests[0].key, key); assert.equal(busyRequests[1].key, key);
         assert.equal(busyRequests[0].type, busyRequests[1].type); assert.deepEqual(busyRequests[0].bytes, busyRequests[1].bytes);
         assert.match(busyRequests[0].type, /multipart\/form-data; boundary=/); assert.ok(!busyRequests[0].bytes.includes(Buffer.from('data:image/')));
         assert.equal((await manager.list())[0].taskId, 'busy-one-task'); await manager.close();
-        assert.equal(await win.webContents.executeJavaScript('videoErrorDisplayTest()'), 'VIDEO_ERROR_DISPLAY_OK');
+        assert.equal(await run('videoErrorDisplayTest()'), 'VIDEO_ERROR_DISPLAY_OK');
         console.log('VIDEO_ERROR_DISPLAY_OK: native node, recovery, retry toast and ordinary copied JSON hide private service details');
         console.log('GROK_VIDEO_NATIVE_OK: JSON, Seedance booleans, id/request_id, frames, references, audio, edit, Worker MIME, 202/done, authenticated content, no duplicate POST');
         console.log('VIDEO_BUSY_NATIVE_OK: Fetch binary multipart, unchanged boundary/bytes, durable idempotency, one accepted task');

@@ -22,9 +22,10 @@ export function getVideoModelInfo(config: AiConfig, value = config.model || conf
         const url = new URL(channel?.baseUrl || config.baseUrl);
         if (!["https:", "http:"].includes(url.protocol) || !["api.oneyes.ai", "oneyes.ai"].includes(url.hostname)) return undefined;
     } catch { return undefined; }
-    // Bare Grok IDs may address the native account pool. Only the audited,
-    // exact priced aliases identify the bridge until /models exposes routing.
-    const info = videoModelCatalog.find((entry) => entry.aliases.includes(model) || !entry.id.startsWith("grok-") && model === entry.id);
+    // Only OneYes' explicit Video channel uses the unified bridge for bare
+    // Grok IDs. Other native accounts and third-party endpoints stay native.
+    const unifiedVideo = channel?.id === "oneyes-minimax" || channel?.oneYes?.platform === "grok";
+    const info = videoModelCatalog.find((entry) => entry.aliases.includes(model) || model === entry.id && (!entry.id.startsWith("grok-") || unifiedVideo));
     if (!info) return;
     const limits = channel?.models.find(entry => entry.name === model)?.referenceFileMaxBytes;
     return limits === undefined ? info : { ...info, referenceFileMaxBytes: limits };
@@ -32,8 +33,8 @@ export function getVideoModelInfo(config: AiConfig, value = config.model || conf
 
 export function videoModelOptionName(config: AiConfig, value: string) {
     const name = value.includes('::') ? value.slice(value.indexOf('::') + 2) : value;
-    if (splitModelInformation(name).information) return name;
     const info = getVideoModelInfo(config, value);
+    if (splitModelInformation(name).information) return info?.id === 'wan3.0' ? name.replace(/\b5[-–]30(?=\s*(?:s|秒))/g, '10-30') : name;
     if (!info) return name;
     return `${info.id} [${info.summary}]`;
 }
@@ -75,9 +76,10 @@ export function modelPickerOptions(config: AiConfig, options: string[], current?
         const recommended = metadata?.recommended_request_id || oneYesEndpoint && displayCatalog.find(model => model.id === canonical)?.request_id;
         const preferred = choices.find(candidate => raw(candidate) === recommended) || choices.reduce((best, candidate) => modelInformationPriority(raw(candidate)) > modelInformationPriority(raw(best)) ? candidate : best);
         const value = preferred;
-        const label = videoDisplayText(metadata?.model_info ? `${metadata.model_name} [${metadata.model_info}]` : videoModelOptionName(config, preferred))
+        let label = videoDisplayText(metadata?.model_info ? `${metadata.model_name} [${metadata.model_info}]` : videoModelOptionName(config, preferred))
             .replace(/https?:\/\/[^\s\]】,，;；]+/gi, '')
             .replace(/(?:余额|剩余额度|balance|quota|credits?)\s*[:：=]?\s*[¥￥$]?\s*\d+(?:\.\d+)?\s*元?/gi, '').replace(/\s{2,}/g, ' ').trim();
+        if (getVideoModelInfo(config, preferred)?.id === 'wan3.0') label = label.replace(/\b5[-–]30(?=\s*(?:s|秒))/g, '10-30');
         return [{ value, label, ...splitModelInformation(label) }];
     });
 }
@@ -104,6 +106,7 @@ export function videoModelParametersError(info: VideoModelInfo, config: Pick<AiC
     if (!info.modes.includes(mode)) return "该模型仅支持参考模式，请在参数面板中主动切换；已保留原设置。";
     if (info.audio === "required" && config.videoGenerateAudio === "false") return "该模型固定生成音频，请在参数面板中开启生成音频。";
     if (!inputs) return undefined;
+    if (info.id.startsWith('grok-imagine-video') && (inputs.videoCount || inputs.audioCount)) return '该模型仅支持文字和参考图片生成，不支持参考视频、视频编辑或上传参考音频；请移除不支持的素材。';
     if (info.id === 'grok-imagine-video-1.5' && !inputs.imageCount) return 'Grok 1.5 需要至少一张参考图片，请先添加图片。';
     if (mode === "frames" && inputs.imageCount > 2) return "首尾帧最多两张图片；请主动选择参考素材模式，不会自动丢弃图片。";
     if (mode === "frames" && (inputs.videoCount || inputs.audioCount)) return "首尾帧不能混用参考视频或音频，请主动切换参考素材模式。";

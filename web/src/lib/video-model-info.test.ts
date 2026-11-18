@@ -108,6 +108,44 @@ test('discount capabilities match only audited exact IDs and keep reference-only
     assert.equal(getVideoModelInfo(config, 'oneyes-minimax::seedance-2.0-fast-discount [720p ¥99/条]'), undefined);
 });
 
+test('bare Grok and priced aliases share bridge capabilities only in the OneYes Video group', () => {
+    for (const info of videoModelCatalog.filter(model => model.id.startsWith('grok-'))) for (const id of [info.id, ...info.aliases]) {
+        const model = 'oneyes-minimax::' + id;
+        const selected = { ...config, model, videoMode: 'frames', vquality: '720' };
+        assert.equal(getVideoModelInfo(selected)?.id, info.id);
+        assert.equal(videoModelDefaultsKey(selected, model), 'oneyes-minimax::' + info.id);
+        assert.match(videoModelConfigError(selected, model, { imageCount: 1, videoCount: 1, audioCount: 0 })!, /不支持参考视频、视频编辑/);
+        assert.match(videoModelConfigError(selected, model, { imageCount: 1, videoCount: 0, audioCount: 1 })!, /上传参考音频/);
+        assert.equal(getVideoModelInfo({ ...selected, channels: [{ ...selected.channels[0], baseUrl: 'https://other.example' }] }), undefined);
+        assert.equal(getVideoModelInfo({ ...selected, channels: [{ ...selected.channels[0], models: [{ name: id, capability: 'video', script: 'return result' }] }] }), undefined);
+        const linked = { ...selected, model: 'linked::' + id, channels: [{ ...selected.channels[0], id: 'linked', oneYes: { platform: 'grok' as const, groupId: 1, groupName: 'Video', keyId: 1, accountId: 1 } }] };
+        assert.equal(getVideoModelInfo(linked)?.id, info.id);
+    }
+    const native = { ...config, channels: [{ ...config.channels[0], id: 'default' }] };
+    assert.equal(getVideoModelInfo(native, 'default::grok-imagine-video'), undefined);
+    assert.equal(getVideoModelInfo(native, 'default::grok-imagine-video-1.5'), undefined);
+});
+
+test('wan3.0 uses verified 10–30 seconds without modifying saved choices or the other Wan models', () => {
+    const info = videoModelCatalog.find(model => model.id === 'wan3.0')!;
+    for (const id of [info.id, ...info.aliases]) {
+        const model = 'oneyes-minimax::' + id, selected = { ...config, model, videoMode: 'reference' };
+        const before = JSON.stringify(selected);
+        assert.equal(getVideoModelInfo(selected)?.duration.min, 10);
+        assert.equal(minimumVideoModelDefaults(selected, model).videoSeconds, '10');
+        for (const videoSeconds of ['5', '9', '10.5', '31']) assert.match(videoModelConfigError({ ...selected, videoSeconds })!, /10–30.*秒/);
+        for (const videoSeconds of ['10', '30']) assert.equal(videoModelConfigError({ ...selected, videoSeconds }), undefined);
+        assert.doesNotMatch(videoModelOptionName(selected, model), /5-30/);
+        if (id !== info.id) assert.match(modelPickerOptions(selected, [model])[0].label, /10[-–]30/);
+        assert.equal(JSON.stringify(selected), before);
+    }
+    for (const id of ['wan3.0-video', 'wan3.0-video-prime']) {
+        const selected = { ...config, model: 'oneyes-minimax::' + id, videoSeconds: '2' };
+        assert.equal(videoModelConfigError(selected), undefined);
+        assert.equal(getVideoModelInfo(selected)?.duration.min, 2);
+    }
+});
+
 test('only complete terminal square brackets become metadata; ordinary names stay verbatim', () => {
     for (const [value, name, information] of [
         ['中文视频模型【1080p 5–15秒 ￥2/秒】', '中文视频模型', '1080p 5–15秒 ￥2/秒'],

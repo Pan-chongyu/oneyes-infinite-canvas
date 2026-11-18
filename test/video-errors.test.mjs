@@ -10,6 +10,14 @@ const privateText = '智赢 88API VendorOther https://private.invalid/clip?token
 const personRejection = '参考图片可能包含真人或可识别人物，未通过上游内容审核。请更换参考图片后重试。';
 const requestId = '12345678-1234-1234-1234-123456789abc';
 
+test('Grok local capability explanation survives sanitization without exposing service text', () => {
+    const text = messages.unsupported_reference_media;
+    assert.equal(videoErrorText(new Error(text)), text);
+    assert.equal(videoErrorText(JSON.parse(JSON.stringify(text))), text);
+    assert.equal(videoErrorText(text, { state: 'unknown' }), messages.creation_outcome_unknown);
+    assert.notEqual(videoErrorText(text + privateText), text, 'only the complete fixed local explanation can be echoed');
+});
+
 test('public bridge error codes select fixed Chinese across HTTP status, type, IPC and storage without leaking raw bodies', () => {
     const codes = ['reference_person_policy_rejected', 'content_policy_rejected', 'invalid_reference_format', 'media_too_large', 'unsupported_resolution', 'unsupported_duration', 'unsupported_aspect_ratio', 'invalid_reference_dimensions', 'reference_unavailable', 'reference_required', 'too_many_references', 'video_model_unavailable', 'prompt_too_long', 'video_service_busy', 'video_generation_timeout', 'video_status_unavailable', 'video_content_unavailable', 'video_task_expired', 'video_task_canceled', 'video_not_ready'];
     for (const code of codes) for (const status of [200, 400, 415, 422, 500]) {

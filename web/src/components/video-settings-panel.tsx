@@ -34,9 +34,8 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
     const { t } = useTranslation();
     const selectedModel = model || config.model || config.videoModel;
     const info = getVideoModelInfo(config, selectedModel);
-    const nativeGrok = info?.id.startsWith("grok-imagine-video") && selectedModel.split("::").pop() === info.id;
-    const controlsInfo = nativeGrok ? undefined : info;
-    const configError = nativeGrok ? undefined : videoModelConfigError(config, selectedModel, validateReferences ? inputs : undefined);
+    const controlsInfo = info;
+    const configError = videoModelConfigError(config, selectedModel, validateReferences ? inputs : undefined);
     const referenceLimited = !controlsInfo && usesGrokVideoReferences({ ...config, model: selectedModel }, inputs);
     const miniMaxModel = isMiniMaxVideoModel(selectedModel);
     const resolutionOptions = controlsInfo ? controlsInfo.resolutions.map((value) => ({ value, label: videoResolutionLabel(value) })) : videoResolutionOptionsForModel(selectedModel);
@@ -47,7 +46,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
     const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
     const ratios = controlsInfo ? controlsInfo.ratios.map((value) => ({ value, ...(parseAspectRatio(value) || { width: 0, height: 0 }) })) : videoRatioOptions;
     const modes = controlsInfo ? videoModeOptions.filter((item) => controlsInfo.modes.includes(item.value as "frames" | "reference")) : videoModeOptions;
-    const duration = nativeGrok ? { min: 1, max: 15 } : info?.duration || videoSecondsRange;
+    const duration = info?.duration || videoSecondsRange;
     const discreteSeconds = controlsInfo?.duration.values;
     const secondsValid = Number.isInteger(seconds) && seconds >= duration.min && seconds <= duration.max && (!discreteSeconds || discreteSeconds.includes(seconds));
     const applySize = (nextResolution: string, ratio: string) => {
@@ -72,6 +71,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
                     </div>
                 ) : null}
                 {info && configError ? <p role="alert" className="border-l-2 pl-3 text-xs font-medium leading-5" style={{ color: theme.node.text, borderColor: theme.node.text }}>{configError} 当前设置已保留，请主动选择支持的参数。</p> : null}
+                {info?.id.startsWith('grok-imagine-video') ? <p role="status" className="text-xs leading-5" style={{ color: theme.node.muted }}>支持文字和参考图片生成，不支持参考视频、视频编辑或上传参考音频。</p> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
                         {resolutionOptions.map((item) => (

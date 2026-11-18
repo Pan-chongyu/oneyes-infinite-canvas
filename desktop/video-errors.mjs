@@ -17,6 +17,7 @@ export const videoErrorMessages = {
     reference_upload_required: '参考素材尚未上传完成或无法读取，请重新选择或上传素材后再提交。',
     unsupported_media: '视频请求或素材格式不受支持（415），请更新客户端并重新选择受支持的素材格式。',
     invalid_reference_format: '参考素材格式不受支持，请更换为模型支持的图片、视频或音频格式。',
+    unsupported_reference_media: '该模型仅支持文字和参考图片生成，不支持参考视频、视频编辑或上传参考音频；请移除不支持的素材。',
     media_too_large: '当前模型或访问入口拒绝了素材大小，请检查模型单文件限制或减少素材；未自动重发，不会降低画质或更改接口地址。',
     inline_text_too_large: '内联文本或 Base64 素材超过 32 MiB，请使用二进制文件 part 或受支持的预上传素材；未自动重新生成，不会降低画质。',
     bridge_request_too_large: '视频请求正文超过 128 MiB（含封装开销），请减少素材或使用受支持的预上传入口；模型单文件与 CDN 限制独立生效，未自动重发或更改站点地址。',

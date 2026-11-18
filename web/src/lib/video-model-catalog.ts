@@ -273,7 +273,7 @@ export const videoModelCatalog: VideoModelInfo[] = [
             "1080p 仅限文生视频或单首帧；尾帧、关键帧、参考图片或预设音色最高 720p。",
             "参考图片最多 14 张、关键帧 4 个、预设音色 3 个；音色名称不是上传音频。",
             "可仅提供尾帧；关键帧时间须在时长内部，按 1/3 秒对齐且相隔至少 1/3 秒。",
-            "图片必须是公开 HTTPS URL；不接受内联 Base64 或直接文件上传。",
+            "支持本地图片或公开 HTTPS 图片；本地图片经 OneYes 安全上传后提交，不降低原图分辨率。",
             "本画布通用面板未提供关键帧时间轴或预设音色选择；不支持参考视频。"
         ]
     },
@@ -614,7 +614,7 @@ export const videoModelCatalog: VideoModelInfo[] = [
         "notes": [
             "首帧与普通参考图片模式互斥；参考图片最多 14 张。",
             "参考图片模式仅支持 1–10 秒；文生视频和首帧模式支持 1–15 秒。",
-            "图片必须是公开 HTTPS URL；不接受内联 Base64 或直接文件上传。",
+            "支持本地图片或公开 HTTPS 图片；本地图片经 OneYes 安全上传后提交，不降低原图分辨率。",
             "不支持尾帧、参考视频、上传参考音频、seed、negative_prompt 或音频开关。"
         ]
     },
@@ -750,16 +750,16 @@ export const videoModelCatalog: VideoModelInfo[] = [
     },
     {
         "id": "wan3.0",
-        "aliases": ["wan3.0 [5-30s 720p/1080p ¥0.319/秒]"],
+        "aliases": ["wan3.0 [10-30s 720p/1080p ¥0.319/秒]", "wan3.0 [5-30s 720p/1080p ¥0.319/秒]"],
         "promptMax": 5000,
         "provider": "zhiying",
-        "summary": "720p / 1080p · 5–30 秒 · ¥0.319/秒 起",
+        "summary": "720p / 1080p · 10–30 秒 · ¥0.319/秒 起",
         "resolutions": [
             "720",
             "1080"
         ],
         "duration": {
-            "min": 5,
+            "min": 10,
             "max": 30
         },
         "ratios": [
@@ -770,7 +770,7 @@ export const videoModelCatalog: VideoModelInfo[] = [
             "3:4"
         ],
         "defaultResolution": "720",
-        "defaultSeconds": 5,
+        "defaultSeconds": 10,
         "modes": [
             "reference"
         ],
@@ -785,6 +785,7 @@ export const videoModelCatalog: VideoModelInfo[] = [
         ],
         "notes": [
             "提示词最多 5000 字符。",
+            "实际生成支持 10–30 整数秒；旧别名中的 5–30 秒已更正，原有时长不会自动改写。",
             "该模型仅支持参考素材模式，不支持固定首尾帧或带时间戳的关键帧。",
             "支持上传本地参考素材，不直接接收远程素材链接。",
             "费用按实际积分用量结算，所列为已含 10% 加价的基础售价。",

@@ -189,10 +189,7 @@ async function createVideoTask(config: AiConfig, prompt: string, references: Ref
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
-    // A canonical Grok ID may route to an existing native pool with edit/audio
-    // capabilities beyond the 88API catalog. Keep that established path intact.
-    const nativeGrok = info?.id.startsWith("grok-imagine-video") && modelOptionName(selectedModel) === info.id;
-    const parameterError = nativeGrok ? undefined : videoModelConfigError(config, selectedModel, { imageCount: references.length, videoCount: options?.videos?.length || 0, audioCount: options?.audios?.length || 0 });
+    const parameterError = videoModelConfigError(config, selectedModel, { imageCount: references.length, videoCount: options?.videos?.length || 0, audioCount: options?.audios?.length || 0 });
     if (parameterError) throw new Error(parameterError);
     if (info && usesVideoBridgeRequest(info)) return createBridgeVideoTask(requestConfig, selectedModel, prompt, references, info, options);
     const channel = resolveModelChannel(config, selectedModel);
@@ -345,12 +342,22 @@ async function createBridgeVideoTask(config: AiConfig, model: string, prompt: st
             : await Promise.all(audioFiles!.map(readFileAsDataUrl));
     const grok = info.id.startsWith("grok-");
     const images = grok ? [] : await prepareReferenceFiles(references, options?.signal, info.id === "veo-3.1" ? "png" : undefined);
+    const grokImages: string[] = [];
+    if (grok) for (const image of references) {
+        const source = image.url || image.dataUrl;
+        if (!image.storageKey && /^https:\/\//i.test(source)) grokImages.push(videoBridgeMediaUrl(source, '图片'));
+        else {
+            const [file] = await prepareReferenceFiles([image], options?.signal);
+            images.push(file);
+            grokImages.push(await readFileAsDataUrl(file));
+        }
+    }
     const referenceVideoDurationTotal = videos.every(video => Number.isFinite(video.durationMs) && video.durationMs! > 0)
         ? videos.reduce((total, video) => total + video.durationMs! / 1000, 0)
         : undefined;
     const request = await encodeVideoBridgeRequest(buildVideoBridgeRequest(info, config, modelOptionName(model), prompt, {
         images,
-        imageDataUrls: grok ? references.map(image => videoBridgeMediaUrl(image.url || image.dataUrl, "图片")) : info.provider === "zhiying" || info.id.startsWith('wan3.0-video') || /^(veo-|gemini-omni-)/.test(info.id) ? [] : await Promise.all(images.map(readFileAsDataUrl)),
+        imageDataUrls: grok ? grokImages : info.provider === "zhiying" || info.id.startsWith('wan3.0-video') || /^(veo-|gemini-omni-)/.test(info.id) ? [] : await Promise.all(images.map(readFileAsDataUrl)),
         videos: videoInputs,
         audios: audioInputs,
         audioFiles,

@@ -54,7 +54,7 @@ export function videoBridgeMediaUrl(value: string | undefined, label: string) {
 }
 
 export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParameters, model: string, prompt: string, media: VideoBridgeMedia): VideoBridgeRequest {
-    const error = videoModelParametersError(info, config, { imageCount: media.images.length || media.imageDataUrls.length, videoCount: media.videos.length, audioCount: media.audios.length });
+    const error = videoModelParametersError(info, config, { imageCount: Math.max(media.images.length, media.imageDataUrls.length), videoCount: media.videos.length, audioCount: media.audios.length });
     if (error) throw Error(error);
     for (const [kind, files, label] of [['image', media.images, '图片'], ['video', media.videos, '视频'], ['audio', media.audioFiles || media.audios, '音频']] as const) {
         const limit = videoReferenceFileLimit(info, kind);
@@ -65,7 +65,7 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
     const duration = Number(config.videoSeconds);
     const ratio = inferVideoRatio(config.size || "auto");
     const mode = config.videoMode === "reference" ? "reference" : "frames";
-    const imageCount = media.images.length || media.imageDataUrls.length;
+    const imageCount = Math.max(media.images.length, media.imageDataUrls.length);
     if (info.provider !== 'zhiying' && mode === 'frames' && imageCount > 2) throw Error('首尾帧模式最多使用两张图片，请主动切换参考模式或调整素材。');
     if (info.provider !== 'zhiying' && mode === 'frames' && (media.videos.length || media.audios.length)) throw Error('首尾帧不能与参考视频或音频混用，请主动切换参考模式或调整素材。');
     if (info.promptMax && Array.from(prompt).length > info.promptMax) throw Error(`该模型提示词最多 ${info.promptMax} 字符，请缩短后提交。`);
@@ -105,7 +105,9 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
     const images = media.imageDataUrls;
     if (info.id.startsWith("grok-")) {
         body.aspect_ratio = ratio;
-        const urls = images.map(image => videoBridgeMediaUrl(image, "图片"));
+        // The authenticated OneYes bridge uploads normalized local images to
+        // trusted media storage before creating Grok's HTTPS-only request.
+        const urls = images.map(image => /^data:image\/(?:webp|png);base64,/i.test(image) ? image : videoBridgeMediaUrl(image, "图片"));
         if (mode === "reference") { if (urls.length) body.reference_images = urls; }
         else { if (urls[0]) body.image = urls[0]; if (urls[1]) body.last_frame = urls[1]; }
     } else if (info.id.startsWith("kling-")) {
