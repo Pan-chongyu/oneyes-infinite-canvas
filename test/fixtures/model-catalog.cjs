@@ -321,9 +321,10 @@ app.whenReady().then(async () => {
             const wheel = { x: Math.round(bounds.viewport.x + bounds.viewport.width / 2), y: Math.round(bounds.viewport.y + bounds.viewport.height / 2) };
             const beforeScroll = await js('document.querySelector("[data-radix-select-viewport]").scrollTop');
             if (await js('(()=>{const viewport=document.querySelector("[data-radix-select-viewport]");return viewport.scrollHeight>viewport.clientHeight+viewport.scrollTop})()')) {
+                await js('window.modelScrollDone=false;document.querySelector("[data-radix-select-viewport]").addEventListener("scrollend",()=>window.modelScrollDone=true,{once:true})');
                 win.webContents.sendInputEvent({ type: 'mouseMove', ...wheel });
                 win.webContents.sendInputEvent({ type: 'mouseWheel', deltaX: 0, deltaY: -120, ...wheel });
-                await wait(`document.querySelector("[data-radix-select-viewport]").scrollTop > ${beforeScroll}`);
+                await wait(`window.modelScrollDone && document.querySelector("[data-radix-select-viewport]").scrollTop > ${beforeScroll}`);
             }
             if (process.env.ONEYES_MODEL_SCREENSHOTS) {
                 await mkdir(process.env.ONEYES_MODEL_SCREENSHOTS, { recursive: true });
