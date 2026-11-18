@@ -68,9 +68,9 @@ test('per-model defaults share exact aliases, stay isolated, and map atomically 
     assert.equal(JSON.stringify(saved), before);
 });
 
-test("all 23 models have valid priced options and accept their published client defaults", () => {
-    assert.equal(videoModelCatalog.length, 23);
-    assert.equal(new Set(videoModelCatalog.map(item => item.id)).size, 23);
+test("all 28 models have valid priced options and accept their published client defaults", () => {
+    assert.equal(videoModelCatalog.length, 28);
+    assert.equal(new Set(videoModelCatalog.map(item => item.id)).size, 28);
     for (const info of videoModelCatalog) {
         const model = `oneyes-minimax::${info.id.startsWith("grok-") ? info.aliases[0] : info.id}`;
         const selected = { ...config, model, vquality: info.defaultResolution, size: info.ratios[0], videoSeconds: String(info.defaultSeconds), videoMode: info.modes[0] };
@@ -89,6 +89,23 @@ test("labels never change submitted IDs and collapse only a model's aliases in t
     assert.deepEqual(videoModelOptions(config, options), [alias, options[2]]);
     assert.match(videoModelOptionName(config, alias), /^wan3.0-video \[/);
     assert.equal(config.model, canonical);
+});
+
+test('discount capabilities match only audited exact IDs and keep reference-only parameters', () => {
+    for (const info of videoModelCatalog.filter(model => model.id.includes('-discount'))) {
+        for (const id of [info.id, ...info.aliases]) {
+            const model = 'oneyes-minimax::' + id;
+            const selected = { ...config, model, vquality: '720', videoSeconds: '4', size: '16:9', videoMode: 'reference' };
+            assert.equal(getVideoModelInfo(selected)?.id, info.id);
+            assert.equal(videoModelConfigError(selected, model, { imageCount: 9, videoCount: 0, audioCount: 0 }), undefined);
+            assert.match(videoModelConfigError(selected, model, { imageCount: 10, videoCount: 0, audioCount: 0 })!, /最多支持 9.*图片/);
+            assert.match(videoModelConfigError(selected, model, { imageCount: 1, videoCount: 1, audioCount: 0 })!, /最多支持 0.*视频/);
+            assert.match(videoModelConfigError({ ...selected, videoMode: 'frames' })!, /仅支持参考模式/);
+            assert.match(videoModelConfigError({ ...selected, vquality: '1080' })!, /720p.*保留原设置/);
+        }
+    }
+    assert.equal(getVideoModelInfo(config, 'oneyes-minimax::seedance-2.0-fast-discount-new'), undefined);
+    assert.equal(getVideoModelInfo(config, 'oneyes-minimax::seedance-2.0-fast-discount [720p ¥99/条]'), undefined);
 });
 
 test('only complete terminal square brackets become metadata; ordinary names stay verbatim', () => {

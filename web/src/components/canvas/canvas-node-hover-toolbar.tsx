@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { videoErrorText } from "@/lib/video-display-text";
+import { videoDiagnosticReport } from '../../../../desktop/video-diagnostics.mjs';
+import { refreshVideoRecovery, useVideoRecoveryStore } from '@/services/video-recovery';
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -255,12 +257,16 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const [view, setView] = useState<"info" | "json">("info");
+    const copyText = useCopyText();
+    const job = useVideoRecoveryStore(state => state.jobs.find(job => job.key === node?.metadata?.videoJobKey));
+    const diagnosticReport = () => videoDiagnosticReport(job || { diagnosticId: node?.metadata?.videoDiagnosticId, taskId: node?.metadata?.videoTaskId, model: node?.metadata?.model,
+        diagnostics: node?.metadata?.videoDiagnostics, createdAt: node?.metadata?.videoDiagnostics?.submit?.at, errorCode: node?.metadata?.videoErrorCode, reason: node?.metadata?.errorDetails, state: node?.metadata?.videoRecoveryState });
     const imageBytes = node?.type === CanvasNodeType.Image && node.metadata?.content ? getDataUrlByteSize(node.metadata.content) : 0;
     const batchCount = node?.type === CanvasNodeType.Image ? node.metadata?.images?.length || 0 : 0;
     const json = useMemo(() => {
         if (!node) return "";
         return JSON.stringify(
-            node.type === CanvasNodeType.Video ? { ...node, metadata: { ...node.metadata, videoTaskId: undefined, loadingMessage: undefined, errorDetails: node.metadata?.errorDetails ? videoErrorText(node.metadata.errorDetails) : undefined } } : node,
+            node.type === CanvasNodeType.Video ? { ...node, metadata: { ...node.metadata, videoTaskId: undefined, videoJobKey: undefined, videoDiagnostics: undefined, loadingMessage: undefined, errorDetails: node.metadata?.errorDetails ? videoErrorText(node.metadata.errorDetails) : undefined } } : node,
             (key, value) => {
                 if (key === "content" && typeof value === "string" && value.startsWith("data:image/")) {
                     return "[base64 image]";
@@ -274,6 +280,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     useEffect(() => {
         if (open) setView("info");
     }, [node?.id, open]);
+    useEffect(() => { if (open && node?.type === CanvasNodeType.Video) void refreshVideoRecovery().catch(() => {}); }, [open, node?.id, node?.type]);
 
     const title = (
         <div className="flex items-center justify-between gap-4 pr-12">
@@ -304,7 +311,8 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             <InfoRow label={t("canvas.nodeToolbar.status")} value={node.metadata?.status || "idle"} />
                             {batchCount > 1 ? <InfoRow label={t("canvas.nodeToolbar.imageGroup")} value={t("canvas.configNode.images", { count: batchCount })} /> : null}
                             {node.metadata?.prompt ? <InfoRow label={t("canvas.configNode.prompt")} value={node.metadata.prompt} /> : null}
-                            {node.metadata?.videoJobKey ? <InfoRow label="本机记录编号" value={node.metadata.videoJobKey} /> : null}
+                            {job?.diagnosticId || node.metadata?.videoDiagnosticId ? <InfoRow label="本机记录编号" value={job?.diagnosticId || node.metadata!.videoDiagnosticId!} /> : null}
+                            {node.type === CanvasNodeType.Video ? <button type="button" className="px-2 py-1.5 text-xs transition-colors hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline focus-visible:outline-2" onClick={() => copyText(diagnosticReport(), '诊断信息已复制')} aria-label="复制视频诊断信息">复制诊断信息</button> : null}
                             {imageBytes ? <InfoRow label={t("canvas.nodeToolbar.imageSize")} value={formatBytes(imageBytes)} /> : null}
                             {node.metadata?.errorDetails ? (
                                 <div className="rounded-lg border p-3 text-red-400" style={{ borderColor: theme.node.stroke }}>

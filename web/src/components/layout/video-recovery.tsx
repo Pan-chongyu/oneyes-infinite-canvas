@@ -65,7 +65,7 @@ export function VideoRecovery() {
             {!jobs.length ? <Empty description="暂无视频恢复任务" /> : [...jobs].reverse().map(job => <section key={job.key} className="border-b border-border py-3 last:border-0">
                 <div className="flex items-center justify-between gap-3"><span className="min-w-0 truncate text-sm font-medium" title={videoDisplayText(job.model.split('::').at(-1) || '')}>{videoDisplayText(job.model.split('::').at(-1) || '')}</span><Tag className="shrink-0">{labels[job.state] || '待确认'}</Tag></div>
                 <p className="mt-1 break-all text-xs text-muted-foreground">{new Date(job.createdAt).toLocaleString()}</p>
-                <p className="mt-1 break-all text-xs text-muted-foreground">记录编号：{job.key} · {job.parameters.vquality} · {job.parameters.videoSeconds} 秒 · {job.parameters.size}</p>
+                <p className="mt-1 break-all text-xs text-muted-foreground">记录编号：{job.diagnosticId || '已保留'} · {job.parameters.vquality} · {job.parameters.videoSeconds} 秒 · {job.parameters.size}</p>
                 {job.reason ? <p role="status" className="mt-2 text-sm leading-relaxed">{videoErrorText(job.reason, { state: job.state })}</p> : null}
                 <div className="mt-2 flex flex-wrap gap-1">
                     {job.state === 'saved' && job.result ? <Button type="text" size="small" icon={<Download size={14} />} onClick={() => void fetch(job.result!.url).then(async response => { if (!response.ok) throw Error('读取视频失败'); saveAs(await response.blob(), `OneYes-Video-${job.key}.${job.result!.mimeType === 'video/webm' ? 'webm' : 'mp4'}`); }).catch(error => message.error(videoErrorText(error)))}>保存视频</Button> : job.taskId ? <Button type="text" size="small" icon={<RefreshCw size={14} />} onClick={() => {

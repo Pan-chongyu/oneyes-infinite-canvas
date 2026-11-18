@@ -94,6 +94,8 @@ export type CanvasNodeMetadata = {
     durationMs?: number;
     videoTaskId?: string;
     videoJobKey?: string;
+    videoDiagnosticId?: string;
+    videoDiagnostics?: ReturnType<typeof import('../../../desktop/video-diagnostics.mjs').safeVideoDiagnostics>;
     videoRecoveryState?: string;
     videoErrorCode?: string;
     videoServerStatus?: string;

@@ -14,6 +14,7 @@ import type { VideoModelInfo } from "@/lib/video-model-catalog";
 import { videoErrorText, videoUserError } from "@/lib/video-display-text";
 import { videoSiteRequestId, videoErrorCode, videoErrorRetryable } from '../../../../desktop/video-errors.mjs';
 import { videoRetryAt } from '../../../../desktop/video-retry-after.mjs';
+import { safeVideoDiagnostics, videoRequestDiagnostic } from '../../../../desktop/video-diagnostics.mjs';
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, GROK_VIDEO_CHANNEL_ID, modelOptionName, resolveModelChannel, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -30,7 +31,7 @@ import { adoptVideoTask, videoRecoveryInput, type VideoRecoveryJob } from '../vi
 type VideoResponse = { id?: string; request_id?: string; status?: string; error?: { message?: string } | string; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null; video?: { url?: string; respect_moderation?: boolean } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
-type RequestOptions = { signal?: AbortSignal; onPending?: (reason?: string, code?: string) => void };
+type RequestOptions = { signal?: AbortSignal; onPending?: (reason?: string, code?: string) => void; onDiagnostic?: (diagnostics: ReturnType<typeof safeVideoDiagnostics>) => void | Promise<void> };
 type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: ReferenceAudio[]; target?: VideoRecoveryJob['target']; onPrepared?: (key: string) => Promise<void>; nativeJobKey?: string };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -47,6 +48,18 @@ export type VideoGenerationTaskState = { status: "pending"; retryAt?: number; re
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
+
+async function recordVideoDiagnostic(response: unknown, phase: 'submit' | 'poll' | 'download', options?: RequestOptions) {
+    // Native requests already persist diagnostics before returning to the page.
+    if (!options?.onDiagnostic || options.signal?.aborted || window.oneYesDesktop?.videoTasks) return;
+    const error = response instanceof Error && response.cause ? response.cause : response;
+    const source = (axios.isAxiosError(error) ? error.response : error) as { data?: unknown; headers?: unknown; status?: number; config?: { url?: string } } | undefined;
+    if (!source?.config?.url || !source.status) return;
+    const data = source.data instanceof Blob ? /json|text\//i.test(source.data.type) ? await source.data.text() : undefined : source.data;
+    if (options.signal?.aborted) return;
+    try { await options.onDiagnostic({ [phase]: videoRequestDiagnostic(source.config.url, data, source.headers, source.status) }); }
+    catch (error) { reportError('video', 'save', error, 'video-diagnostics'); }
+}
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -116,7 +129,7 @@ function videoTaskFailed(message: string) {
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     try { return await prepareVideoGenerationTask(config, prompt, references, options); }
-    catch (error) { throw videoUserError(error); }
+    catch (error) { await recordVideoDiagnostic(error, 'submit', options); throw videoUserError(error); }
 }
 
 function assertVideoModelActive(config: AiConfig, selectedModel: string) {
@@ -304,7 +317,9 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     videos.forEach((file) => body.append("video[]", file));
     audios.forEach((file) => body.append("audio[]", file));
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: { ...aiHeaders(config), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 })).data);
+        const response = await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: { ...aiHeaders(config), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 });
+        await recordVideoDiagnostic(response, 'submit', options);
+        const created = unwrapVideoResponse(response.data);
         const id = created.request_id || created.id;
         if (!id) throw new Error(apiText("noVideoTaskId"));
         return { id, provider: "openai", model };
@@ -343,7 +358,9 @@ async function createBridgeVideoTask(config: AiConfig, model: string, prompt: st
     }), info);
     options?.signal?.throwIfAborted();
     try {
-        const created = unwrapVideoResponse((await submitVideoBridge<ApiVideoResponse>(aiApiUrl(config, '/videos'), request.body, { ...aiHeaders(config, request.contentType), 'Idempotency-Key': options?.nativeJobKey || crypto.randomUUID(), ...submissionHeaders(options) }, options?.signal)).data);
+        const response = await submitVideoBridge<ApiVideoResponse>(aiApiUrl(config, '/videos'), request.body, { ...aiHeaders(config, request.contentType), 'Idempotency-Key': options?.nativeJobKey || crypto.randomUUID(), ...submissionHeaders(options) }, options?.signal);
+        await recordVideoDiagnostic(response, 'submit', options);
+        const created = unwrapVideoResponse(response.data);
         const id = created.request_id || created.id;
         if (!id) throw new Error(apiText("noVideoTaskId"));
         return { id, provider: "openai", model };
@@ -382,7 +399,9 @@ async function createGrokVideoTask(config: AiConfig, model: string, prompt: stri
     }
     options?.signal?.throwIfAborted();
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, videos.length ? "/videos/edits" : "/videos/generations"), body, { headers: { ...aiHeaders(config, "application/json"), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 })).data);
+        const response = await axios.post<ApiVideoResponse>(aiApiUrl(config, videos.length ? "/videos/edits" : "/videos/generations"), body, { headers: { ...aiHeaders(config, "application/json"), ...submissionHeaders(options) }, signal: options?.signal, timeout: 0 });
+        await recordVideoDiagnostic(response, 'submit', options);
+        const created = unwrapVideoResponse(response.data);
         const id = created.request_id || created.id;
         if (!id) throw new Error(apiText("noVideoTaskId"));
         return { id, provider: "openai", model };
@@ -398,6 +417,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     try {
         const taskPath = `/videos/${encodeURIComponent(task.id)}`;
         const response = await axios.get<ApiVideoResponse>(aiApiUrl(config, taskPath), { headers: aiHeaders(config), signal: options?.signal, timeout: 0 });
+        await recordVideoDiagnostic(response, 'poll', options);
         const retryAt = videoRetryAt(response.headers['retry-after']);
         if (response.status === 202 && !response.data) return { status: "pending", retryAt };
         const video = unwrapVideoResponse(response.data);
@@ -414,6 +434,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         if (url || video.status === "completed") {
             stage = "download";
             const content = await axios.get<Blob>(aiApiUrl(config, contentPath), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: 0 });
+            await recordVideoDiagnostic(content, 'download', options);
             await assertVideoBlob(content.data, videoRetryAt(content.headers['retry-after']));
             return { status: "completed", result: { blob: content.data } };
         }
@@ -421,6 +442,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         return { status: "pending", retryAt };
     } catch (error) {
 
+        await recordVideoDiagnostic(error, stage, options);
         reportError("video", stage, error, stage === "download" ? "video-content" : "video-openai");
         const safe = await readAxiosError(error, apiText("videoTaskQueryFailed"), stage);
         if (safe.videoRetryable) return { status: 'pending', reason: safe.message, code: safe.videoCode, retryAt: safe.retryAt };

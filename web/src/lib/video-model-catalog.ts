@@ -1052,5 +1052,35 @@ export const videoModelCatalog: VideoModelInfo[] = [
             "费用按实际积分用量结算，所列为已含 10% 加价的基础售价。",
             "有参考视频时需提供真实参考视频总秒数，不得以生成时长替代。"
         ]
-    }
+    },
+    ...[
+        { id: "seedance-2.0-mini-discount", max: 15, price: "0.858" },
+        { id: "seedance-2.0-fast-discount", max: 15, price: "1.078" },
+        { id: "seedance-2.0-discount", max: 15, price: "1.738" },
+        { id: "seedance-2.5-discount2", max: 30, price: "3.938" },
+        { id: "seedance-2.5-discount", max: 30, price: "5.478" },
+    ].map(({ id, max, price }): VideoModelInfo => ({
+        id,
+        aliases: [`${id} [720p 4-${max}s ¥${price}/条]`],
+        provider: "zhiying",
+        summary: `720p · 4–${max} 秒 · ¥${price}/条`,
+        promptMax: 10000,
+        resolutions: ["720"],
+        duration: { min: 4, max },
+        ratios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        defaultResolution: "720",
+        defaultSeconds: max,
+        modes: ["reference"],
+        referenceLimits: { images: 9, videos: 0, audios: 0, total: 9 },
+        referenceFileMaxBytes: { image: 30 * 1024 * 1024, video: 0, audio: 0 },
+        priceLines: [`720p：¥${price}/条`],
+        notes: [
+            "提示词最多 10000 字符；支持文生视频和最多 9 张参考图片。",
+            "不支持固定首尾帧、参考视频或参考音频，请使用参考素材模式。",
+            "参考图片按实际内容读取并无损处理后上传，单张上限 30 MiB；不会降低原图分辨率。",
+            "费用按实际结算，所列为已含 10% 加价的售价。",
+        ],
+        audio: "unsupported",
+        watermark: "unsupported",
+    }))
 ];

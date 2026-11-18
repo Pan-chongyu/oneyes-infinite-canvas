@@ -33,7 +33,8 @@ Object.assign(window, { videoErrorDisplayTest: async () => {
     const raw = '智赢 88API VendorOther https://private.invalid/x?token=secret 192.0.2.8 account-private Bearer sk-private remaining balance 987654';
     const forbidden = /智赢|88API|VendorOther|private.invalid|192\.0\.2|account-private|Bearer|sk-private|987654/;
     const node: CanvasNodeData = { id: 'safe-video', type: CanvasNodeType.Video, title: '视频', position: { x: 0, y: 0 }, width: 320, height: 200, metadata: { status: 'error', errorDetails: raw, videoTaskId: 'upstream-private-task', loadingMessage: raw } };
-    const job: VideoRecoveryJob = { key: '12345678-1234-1234-1234-123456789abc', taskId: 'upstream-private-task', model: config.model, site: 'https://private.invalid', channelId: 'private-channel', accountId: 123456, provider: 'openai', createdAt: Date.now(), state: 'failed', reason: raw, parameters: { vquality: '480', videoSeconds: '5', size: '16:9' } };
+    const job: VideoRecoveryJob = { key: '12345678-1234-1234-1234-123456789abc', diagnosticId: 'abcdefab-1234-1234-1234-123456789abc', diagnostics: { submit: { at: Date.now(), bridgeRequestId: 'br_' + 'a'.repeat(32), gatewayRequestId: undefined, errorCode: 'invalid_reference_format', message: raw } }, taskId: 'upstream-private-task', model: config.model, site: 'https://private.invalid', channelId: 'private-channel', accountId: 123456, provider: 'openai', createdAt: Date.now(), state: 'failed', reason: raw, parameters: { vquality: '480', videoSeconds: '5', size: '16:9' } };
+    node.metadata!.videoJobKey = job.key;
     check(!forbidden.test(applyVideoRecovery({ ...node, metadata: {} }, job).metadata!.errorDetails!), 'recovered node metadata is safe before persistence');
     const root = createRoot(document.getElementById('root')!);
     const settled = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -59,6 +60,17 @@ Object.assign(window, { videoErrorDisplayTest: async () => {
         const copied = document.querySelector('pre')!.textContent!;
         check(!forbidden.test(copied) && !copied.includes('upstream-private-task'), 'ordinary JSON selection/copy contains safe details only');
         check(copied.includes(videoErrorText(raw)), 'details retain the actionable fixed message');
+        flushSync(() => [...document.querySelectorAll<HTMLElement>('.ant-segmented-item-label')].find(item => item.textContent === '信息')!.click()); await settled();
+        const command = document.execCommand;
+        let diagnosticCopy = '';
+        document.execCommand = name => { if (name === 'copy') diagnosticCopy = window.getSelection()?.toString() || ''; return true; };
+        try {
+            flushSync(() => document.querySelector<HTMLButtonElement>('button[aria-label="复制视频诊断信息"]')!.click()); await settled();
+            const diagnostic = JSON.parse(diagnosticCopy);
+            check(diagnostic.jobId === job.diagnosticId && diagnostic.taskId === job.taskId, 'copy contains independent local record ID and original task receipt');
+            check(diagnostic.requests.submit.bridgeRequestId === job.diagnostics!.submit.bridgeRequestId, 'copy keeps the exact bridge request ID');
+            check(!forbidden.test(diagnosticCopy) && !diagnosticCopy.includes(job.key), 'copy excludes prompt, keys, paths, media URLs, raw response and full idempotency key');
+        } finally { document.execCommand = command; }
         return 'VIDEO_ERROR_DISPLAY_OK';
     } finally {
         flushSync(() => root.unmount());
@@ -183,10 +195,10 @@ Object.assign(window, { videoBridgeTest: async () => {
     const stored = await uploadImage(canvas.toDataURL('image/png'));
     const image = { id: 'bridge-reference', name: 'fixture.png', type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
     for (const info of videoModelCatalog) {
-        const model = 'oneyes-minimax::' + (info.id.startsWith('grok-') ? info.aliases[0] : info.id);
+        const model = 'oneyes-minimax::' + (info.id.startsWith('grok-') || info.id.includes('-discount') ? info.aliases[0] : info.id);
         const selected = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model, vquality: info.defaultResolution, videoSeconds: String(info.defaultSeconds), videoMode: info.modes[0], size: info.ratios.includes('16:9') ? '16:9' : info.ratios[0] };
         const motion = info.id === 'kling-3.0-motion-control';
-        const images = motion ? [image] : info.id === 'grok-imagine-video-1.5' ? [{ ...image, storageKey: undefined, dataUrl: 'https://cdn.example.com/image.png', url: 'https://cdn.example.com/image.png' }] : [];
+        const images = motion || info.id.includes('-discount') ? [image] : info.id === 'grok-imagine-video-1.5' ? [{ ...image, storageKey: undefined, dataUrl: 'https://cdn.example.com/image.png', url: 'https://cdn.example.com/image.png' }] : [];
         await createVideoGenerationTask(selected, 'offline bridge fixture', images, motion ? { videos: [{ id: 'motion', name: 'motion.mp4', url: 'https://cdn.example.com/motion.mp4', durationMs: 5000 }] } : undefined);
     }
     // The same material coming from local, @ and a connection is submitted once.

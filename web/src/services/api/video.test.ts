@@ -28,6 +28,32 @@ function adapter(handle: (request: AxiosRequestConfig) => { data: unknown; statu
     axios.defaults.adapter = async request => ({ status: 200, ...handle(request), statusText: 'OK', headers: {}, config: request });
 }
 
+test('browser bridge diagnostics keep the real task ID, capture three stages and cannot interrupt an accepted receipt', async () => {
+    const ids = ['a', 'b', 'c'].map(digit => 'br_' + digit.repeat(32));
+    const model = videoModelCatalog.find(model => model.id === 'seedance-2.0-fast-discount')!;
+    const selected = { ...config, model: 'default::' + model.aliases[0], vquality: '720', videoSeconds: '4', size: '16:9', videoMode: 'reference' };
+    const records: Record<string, { bridgeRequestId?: string }> = {};
+    let posts = 0, queries = 0;
+    const options = { onDiagnostic: (diagnostics: typeof records) => { Object.assign(records, diagnostics); } };
+    try {
+        axios.defaults.adapter = async request => {
+            let data: unknown, id: string;
+            if (request.method === 'post') { posts++; assert.equal(request.url, 'https://oneyes.ai/v1/videos'); data = { request_id: 'bv_real_receipt', bridge_request_id: ids[0] }; id = ids[0]; }
+            else if (request.url?.endsWith('/content')) { queries++; data = new Blob(['video'], { type: 'video/mp4' }); id = ids[2]; }
+            else { queries++; assert.match(request.url!, /\/bv_real_receipt$/); data = { status: 'completed', bridge_request_id: ids[1] }; id = ids[1]; }
+            return { data, status: 200, statusText: '', headers: { 'x-request-id': id }, config: request };
+        };
+        const task = await createVideoGenerationTask(selected, 'private prompt', [], options);
+        assert.equal(task.id, 'bv_real_receipt');
+        assert.equal((await pollVideoGenerationTask(selected, task, options)).status, 'completed');
+        assert.deepEqual(['submit', 'poll', 'download'].map(stage => records[stage].bridgeRequestId), ids);
+        assert.equal(posts, 1); assert.equal(queries, 2);
+        assert.doesNotMatch(JSON.stringify(records), /private prompt|fixture-key|Bearer|request_id/);
+        const second = await createVideoGenerationTask(selected, 'private prompt', [], { onDiagnostic: () => { throw Error('diagnostic storage failed'); } });
+        assert.equal(second.id, task.id); assert.equal(posts, 2, 'the diagnostic callback never retries or loses the accepted task');
+    } finally { axios.defaults.adapter = original; }
+});
+
 test('explicit retirement, outage or managed pause stops paid creation while the original receipt still recovers', async () => {
     const { parseVideoCatalog } = await import('../../../../desktop/video-catalog.mjs');
     let posts = 0, queries = 0, discoveries = 0;

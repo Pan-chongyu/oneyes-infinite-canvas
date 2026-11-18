@@ -41,7 +41,7 @@ app.whenReady().then(async () => {
                 const body = /multipart\/form-data/.test(type) ? Object.fromEntries(await request.formData()) : await request.json();
                 if (raw) {
                     const { pathToFileURL } = require('node:url');
-                    const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, /^(sd-|seedance-.*official|seedance-2.5-dedicated|SD-特价|wan3\.0$)/.test(body.model) ? 'zhiying-request.mjs' : '88api-request.mjs')).href)).default;
+                    const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, /^(sd-|seedance-.*(?:official|discount)|seedance-2.5-dedicated|SD-特价|wan3\.0$)/.test(body.model) ? 'zhiying-request.mjs' : '88api-request.mjs')).href)).default;
                     assert.doesNotThrow(() => adapter.normalizeCreateBody({ requestBuffer: raw }, type), body.model);
                 }
                 posts.push({ path: target.pathname, body, type });
@@ -100,7 +100,7 @@ app.whenReady().then(async () => {
         assert.equal(posts.length, 12, 'settings changes never submit requests');
         assert.equal(await win.webContents.executeJavaScript('videoBridgeTest()'), 'VIDEO_BRIDGE_NATIVE_OK');
         const bridge = posts.slice(12);
-        assert.equal(bridge.length, 24);
+        assert.equal(bridge.length, 29);
         assert.ok(bridge.every(item => item.path === '/v1/videos'));
         const omni = bridge.find(item => item.body.model === 'gemini-omni-flash-1.1').body;
         assert.equal(omni.duration, 3); assert.equal(omni.seconds, undefined); assert.equal(omni.resolution, '720p');
@@ -109,6 +109,16 @@ app.whenReady().then(async () => {
         assert.deepEqual(Object.keys(zhiying.body), ['model', 'prompt', 'resolution', 'duration', 'aspect_ratio']);
         assert.ok(bridge.at(-1).body.reference_images instanceof File);
         assert.ok(!JSON.stringify(bridge.at(-1).body).includes('data:image/'));
+        const discounts = bridge.filter(item => item.body.model.includes('-discount'));
+        assert.equal(discounts.length, 5);
+        for (const item of discounts) {
+            assert.match(item.body.model, /\[720p 4-(?:15|30)s ¥[\d.]+\/条\]$/);
+            assert.match(item.type, /multipart\/form-data; boundary=/);
+            assert.deepEqual(Object.keys(item.body), ['model', 'prompt', 'resolution', 'duration', 'aspect_ratio', 'reference_images']);
+            const image = item.body.reference_images;
+            assert.ok(image instanceof File); assert.equal(image.type, 'image/webp'); assert.match(image.name, /\.webp$/);
+            assert.equal((await fileTypeFromBuffer(Buffer.from(await image.arrayBuffer()))).mime, 'image/webp');
+        }
         const key = await win.webContents.executeJavaScript('videoBusyTest()');
         assert.equal(busyRequests.length, 2); assert.equal(busyRequests[0].key, key); assert.equal(busyRequests[1].key, key);
         assert.equal(busyRequests[0].type, busyRequests[1].type); assert.deepEqual(busyRequests[0].bytes, busyRequests[1].bytes);

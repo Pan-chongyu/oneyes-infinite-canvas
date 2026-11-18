@@ -7,6 +7,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { videoErrorText, videoSiteRequestId, videoErrorCode, videoErrorRetryable } = require('./video-errors.mjs');
 const { videoRetryAt } = require('./video-retry-after.mjs');
+const { videoRequestDiagnostic, safeVideoDiagnostics } = require('./video-diagnostics.mjs');
 
 const fingerprint = value => createHash('sha256').update(value).digest('hex');
 const site = value => {
@@ -58,6 +59,11 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const data = JSON.parse(stored);
             if (data.version !== 1 || !Array.isArray(data.jobs) || data.jobs.some(job => !/^[a-f0-9-]{36}$/.test(job.key))) throw Error('视频任务清单损坏，已保留原文件');
             jobs = data.jobs;
+            // Public local record IDs are independent of private idempotency keys.
+            if (jobs.some(job => !job.diagnosticId)) {
+                for (const job of jobs) job.diagnosticId ||= randomUUID();
+                await vault.write(JSON.stringify({ version: 1, jobs }));
+            }
             for (const job of jobs) if (!job.taskId && (job.errorCode || job.error?.code) === 'creation_outcome_unknown') { job.state = 'unknown'; job.reason = videoErrorText({ code: 'creation_outcome_unknown' }); }
             for (const job of jobs) if (job.taskId && job.state === 'failed' && videoErrorRetryable({ code: job.errorCode || job.error?.code }) && !['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(job.serverStatus)) {
                 job.state = 'waiting'; job.reason = videoErrorText({ code: job.errorCode || job.error.code });
@@ -68,23 +74,30 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         await mkdir(files, { recursive: true, mode: 0o700 });
     })();
     ready.catch(error => report('load', error));
-    const view = () => jobs.map(job => ({ ...job, reason: job.reason ? videoErrorText(job.reason, { state: job.state }) : undefined, parameters: { ...job.parameters } }));
+    const view = () => jobs.map(job => ({ ...job, diagnostics: safeVideoDiagnostics(job.diagnostics), reason: job.reason ? videoErrorText(job.reason, { state: job.state }) : undefined, parameters: { ...job.parameters } }));
     async function save() { await vault.write(JSON.stringify({ version: 1, jobs })); changed(view()); }
     const get = key => { const job = jobs.find(item => item.key === key); if (!job) throw Error('视频任务不存在'); return job; };
     async function patch(job, values) { await serial(async () => { Object.assign(job, values, { updatedAt: Date.now() }); if (job.reason) job.reason = videoErrorText(job.reason, { state: job.state }); await save(); }); }
+    async function diagnostic(job, phase, url, data, response) {
+        await patch(job, { diagnostics: { ...safeVideoDiagnostics(job.diagnostics), [phase]: videoRequestDiagnostic(url, data, response.headers, response.status) } });
+    }
     const resultPath = (job, temporary = false) => join(files, job.key + (temporary ? '.part' : '.video'));
     async function credential(job) {
         const available = await credentials();
         return available.find(item => item.id === job.channelId && sameSite(item.baseUrl, job.site) && fingerprint(item.apiKey || '') === job.credential && (!job.accountId || item.oneYes?.accountId === job.accountId))
             || transientCredentials.get(job.key);
     }
-    async function readJson(url, headers, signal) {
+    async function readJson(job, url, headers, signal) {
         const response = await fetcher(url, { method: 'GET', headers, signal, redirect: 'manual', credentials: 'omit' });
         const retryAt = videoRetryAt(response.headers.get('retry-after'));
         if (!response.ok) {
-            throw responseError(await response.text(), response, url, 'query');
+            const text = await response.text(); await diagnostic(job, 'poll', url, text, response);
+            throw responseError(text, response, url, 'query');
         }
-        const data = response.status === 202 ? await response.json().catch(() => ({})) : await response.json();
+        let data;
+        try { data = response.status === 202 ? await response.json().catch(() => ({})) : await response.json(); }
+        catch (error) { await diagnostic(job, 'poll', url, undefined, response); throw error; }
+        await diagnostic(job, 'poll', url, data, response);
         return { data: unwrap(data), retryAt, requestId: videoSiteRequestId(url, response.headers) };
     }
     function responseError(data, response, url, phase) {
@@ -102,7 +115,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const root = /\/v1(?:beta)?$/.test(base) ? base : base + '/v1beta';
             // Operation names are paths below this exact site, never full URLs.
             if (!/^(?:[A-Za-z0-9._~-]+\/)*operations\/[A-Za-z0-9._~-]+$/.test(job.taskId) || job.taskId.split('/').some(part => part === '.' || part === '..')) throw Error('Gemini 任务回执路径无效');
-            const { data, requestId, retryAt } = await readJson(root + '/' + job.taskId, { 'x-goog-api-key': current.apiKey }, signal);
+            const { data, requestId, retryAt } = await readJson(job, root + '/' + job.taskId, { 'x-goog-api-key': current.apiKey }, signal);
             if (data.error) return { error: videoErrorText(data, { requestId }), state: 'failed' };
             if (!data.done) return { retryAt };
             const uri = data.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
@@ -115,7 +128,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             return { url: url.href, headers: trusted ? { 'x-goog-api-key': current.apiKey } : {} };
         }
         const path = '/videos/' + encodeURIComponent(job.taskId), headers = { Authorization: 'Bearer ' + current.apiKey };
-        const { data, requestId, retryAt } = await readJson(api(base) + path, headers, signal);
+        const { data, requestId, retryAt } = await readJson(job, api(base) + path, headers, signal);
         if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(data.status)) {
             const state = data.status === 'canceled' ? 'cancelled' : data.status === 'error' ? 'failed' : data.status;
             return { error: videoErrorText(data, { state, requestId }), state, errorCode: videoErrorCode(data), serverStatus: data.status };
@@ -142,7 +155,11 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         try { offset = (await stat(resultPath(job, true))).size; } catch (error) { if (error.code !== 'ENOENT') throw error; }
         if (!job.etag || job.etag.startsWith('W/')) offset = 0;
         const response = await fetcher(url.href, { method: 'GET', redirect: Object.keys(source.headers).length ? 'manual' : 'follow', credentials: 'omit', headers: { ...source.headers, ...(offset ? { Range: `bytes=${offset}-`, 'If-Range': job.etag } : {}) }, signal });
-        if (!response.ok || !response.body || /json|text\/|html/i.test(response.headers.get('content-type') || '')) throw responseError(await response.text(), response, url.href, 'download');
+        if (!response.ok || !response.body || /json|text\/|html/i.test(response.headers.get('content-type') || '')) {
+            const text = await response.text(); await diagnostic(job, 'download', url.href, text, response);
+            throw responseError(text, response, url.href, 'download');
+        }
+        await diagnostic(job, 'download', url.href, undefined, response);
         const range = response.headers.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/), etag = response.headers.get('etag');
         if (response.status === 206 && (!offset || !range || Number(range[1]) !== offset || etag !== job.etag)) {
             await response.body.cancel(); await unlink(resultPath(job, true)).catch(error => { if (error.code !== 'ENOENT') throw error; });
@@ -204,7 +221,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const base = site(input.site);
             if (!input.apiKey || !input.channelId || !['openai', 'gemini'].includes(input.provider) || typeof input.model !== 'string') throw Error('视频恢复信息无效');
             const key = randomUUID();
-            const job = { key, idempotencyKey: key, retryLargeMaterial: input.retryLargeMaterial === true, model: input.model, site: base, channelId: input.channelId, accountId: input.accountId, credential: fingerprint(input.apiKey), provider: input.provider,
+            const job = { key, diagnosticId: randomUUID(), idempotencyKey: key, retryLargeMaterial: input.retryLargeMaterial === true, model: input.model, site: base, channelId: input.channelId, accountId: input.accountId, credential: fingerprint(input.apiKey), provider: input.provider,
                 parameters: Object.fromEntries(['prompt', 'size', 'vquality', 'videoSeconds', 'videoMode', 'videoGenerateAudio', 'videoWatermark'].map(key => [key, String(input.parameters?.[key] ?? '')])),
                 references: (input.references || []).map(item => ({ id: item.id, storageKey: item.storageKey })),
                 target: input.target && { projectId: String(input.target.projectId), nodeId: String(input.target.nodeId) }, createdAt: Date.now(), state: 'prepared' };
@@ -239,17 +256,18 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const job = get(key);
             let data;
             try { data = await response.clone().json(); } catch { /* Preserve uncertain submission, never replay. */ }
+            const diagnostics = { ...safeVideoDiagnostics(job.diagnostics), submit: videoRequestDiagnostic(job.site, data, response.headers, response.status) };
             if (job.retryLargeMaterial && response.status === 429 && (data?.error?.code || data?.code) === 'large_material_busy') {
-                await patch(job, { state: 'throttled', retryAt: videoRetryAt(response.headers.get('retry-after')) ?? Date.now() + 5000, reason: '大素材通道繁忙，尚未提交上游；按服务器要求等待，随后使用同一幂等键提交原请求' }); return;
+                await patch(job, { diagnostics, state: 'throttled', retryAt: videoRetryAt(response.headers.get('retry-after')) ?? Date.now() + 5000, reason: '大素材通道繁忙，尚未提交上游；按服务器要求等待，随后使用同一幂等键提交原请求' }); return;
             }
             try { data = unwrap(data); } catch { /* Retain uncertain response without replaying it. */ }
             const id = data?.request_id || data?.id || data?.name;
             if (response.ok && typeof id === 'string' && id) {
-                await patch(job, { taskId: id, state: 'pending' }); void run(job); return;
+                await patch(job, { diagnostics, taskId: id, state: 'pending' }); void run(job); return;
             }
-            const uncertain = String(data?.error?.code ?? data?.code ?? data?.error?.type ?? '').toLowerCase() === 'creation_outcome_unknown';
+            const uncertain = String(data?.error?.code ?? data?.code ?? data?.error?.type ?? '').toLowerCase() === 'creation_outcome_unknown' || response.status === 409 && !videoErrorCode(data);
             const state = !uncertain && response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status) ? 'failed' : 'unknown';
-            await patch(job, { state, reason: videoErrorText(data, { state, status: response.status, requestId: videoSiteRequestId(job.site, response.headers) }) });
+            await patch(job, { diagnostics, state, errorCode: videoErrorCode(data), reason: videoErrorText(data, { state, status: response.status, requestId: videoSiteRequestId(job.site, response.headers) }) });
         },
         async submissionError(key, reason) {
             await ready; const job = get(key);

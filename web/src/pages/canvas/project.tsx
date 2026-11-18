@@ -377,10 +377,21 @@ function InfiniteCanvasPage() {
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
 
+    const saveVideoDiagnostic = useCallback(async (nodeId: string, diagnostics: NonNullable<CanvasNodeData['metadata']>['videoDiagnostics']) => {
+        if (!nodesRef.current.some(item => item.id === nodeId)) return;
+        flushSync(() => setNodes(previous => {
+            const next = previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata,
+                videoDiagnosticId: diagnostics?.submit ? crypto.randomUUID() : item.metadata?.videoDiagnosticId || crypto.randomUUID(),
+                videoDiagnostics: { ...diagnostics?.submit ? {} : item.metadata?.videoDiagnostics, ...diagnostics } } } : item);
+            nodesRef.current = next; return next;
+        }));
+        updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current }); await flushCanvasStorage();
+    }, [projectId, updateProject]);
+
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
             try {
-                const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios, target: { projectId, nodeId }, onPrepared: async key => {
+                const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios, onDiagnostic: diagnostics => saveVideoDiagnostic(nodeId, diagnostics), target: { projectId, nodeId }, onPrepared: async key => {
                     flushSync(() => setNodes(previous => {
                         const next = previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoJobKey: key, videoTaskId: undefined } } : item);
                         nodesRef.current = next; return next;
@@ -397,11 +408,11 @@ function InfiniteCanvasPage() {
                     updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
                     await flushCanvasStorage();
                 }
-                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal, onPending: (reason, code) => setNodes(previous => previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata, loadingMessage: reason, errorDetails: reason, videoErrorCode: code, videoServerStatus: undefined } } : item)) }));
+                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal, onDiagnostic: diagnostics => saveVideoDiagnostic(nodeId, diagnostics), onPending: (reason, code) => setNodes(previous => previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata, loadingMessage: reason, errorDetails: reason, videoErrorCode: code, videoServerStatus: undefined } } : item)) }));
                 setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
             } catch (error) { throw videoUserError(error); }
         },
-        [projectId, updateProject],
+        [projectId, updateProject, saveVideoDiagnostic],
     );
 
     const pollVideoNodeTask = useCallback(
@@ -418,7 +429,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(node.id);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, videoRecoveryState: undefined, videoServerStatus: undefined } } : item)));
                 controller = startGenerationRequest(node.id, node.id, node.id);
-                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(generationConfig, { id: taskId, provider: node.metadata?.videoTaskProvider === "gemini" ? "gemini" : "openai", model: node.metadata?.model || generationConfig.model, nativeJobKey: node.metadata?.videoJobKey }, { signal: controller.signal, onPending: (reason, code) => setNodes(previous => previous.map(item => item.id === node.id ? { ...item, metadata: { ...item.metadata, loadingMessage: reason, errorDetails: reason, videoErrorCode: code, videoServerStatus: undefined } } : item)) }));
+                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(generationConfig, { id: taskId, provider: node.metadata?.videoTaskProvider === "gemini" ? "gemini" : "openai", model: node.metadata?.model || generationConfig.model, nativeJobKey: node.metadata?.videoJobKey }, { signal: controller.signal, onDiagnostic: diagnostics => saveVideoDiagnostic(node.id, diagnostics), onPending: (reason, code) => setNodes(previous => previous.map(item => item.id === node.id ? { ...item, metadata: { ...item.metadata, loadingMessage: reason, errorDetails: reason, videoErrorCode: code, videoServerStatus: undefined } } : item)) }));
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === node.id
@@ -462,7 +473,7 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [effectiveConfig, finishGenerationRequest, message, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, message, startGenerationRequest, t, saveVideoDiagnostic],
     );
 
     const reviewUnconfirmedVideoTask = useCallback(async (node: CanvasNodeData) => {

@@ -14,8 +14,8 @@ const image = new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "ref
 const imageUrl = "data:image/png;base64,iVBORw0KGgo=";
 const video = new File([new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 105, 115, 111, 109])], "reference.mp4", { type: "video/mp4" });
 
-test("all 23 audited bridge models use provider-specific requests", () => {
-    assert.equal(videoModelCatalog.filter(usesVideoBridgeRequest).length, 23);
+test("all 28 audited bridge models use provider-specific requests", () => {
+    assert.equal(videoModelCatalog.filter(usesVideoBridgeRequest).length, 28);
     for (const model of videoModelCatalog.filter(model => /^(?:grok-|kling-)/.test(model.id))) assert.equal(usesVideoBridgeRequest(model), true, model.id);
 });
 
@@ -27,6 +27,24 @@ test("Zhiying uses supported field names and sends each image once without frame
     assert.equal(request.body.getAll("reference_images").length, 1);
     assert.equal(request.body.get("resolution"), "720p");
     assert.equal(request.contentType, undefined, "the transport must generate its multipart boundary");
+});
+
+test('discount requests preserve exact priced aliases and upload reference bytes only as multipart files', async () => {
+    for (const model of videoModelCatalog.filter(model => model.id.includes('-discount'))) {
+        for (const id of [model.id, ...model.aliases]) {
+            const request = buildVideoBridgeRequest(model, { ...config(model.id), videoSeconds: '4' }, id, 'fixture', { ...empty(), images: [image, image] });
+            assert.ok(request.body instanceof FormData);
+            assert.deepEqual([...request.body.keys()], ['model', 'prompt', 'resolution', 'duration', 'aspect_ratio', 'reference_images', 'reference_images']);
+            assert.equal(request.body.get('model'), id);
+            assert.equal(request.body.get('resolution'), '720p'); assert.equal(request.body.get('duration'), '4');
+            for (const part of request.body.getAll('reference_images') as File[]) {
+                assert.equal(part.type, image.type); assert.equal(part.name, image.name);
+                assert.deepEqual(await part.arrayBuffer(), await image.arrayBuffer());
+            }
+        }
+        for (const seconds of ['3', String(model.duration.max + 1)]) assert.throws(() => buildVideoBridgeRequest(model, { ...config(model.id), videoSeconds: seconds }, model.id, 'fixture', empty()), /支持.*秒/);
+        assert.throws(() => buildVideoBridgeRequest(model, config(model.id), model.id, 'fixture', { ...empty(), audios: ['https://fixture.invalid/ref.mp3'] }), /最多支持 0.*音频/);
+    }
 });
 
 test("Zhiying older video models require actual reference duration; the four probed models do not invent it", () => {
@@ -113,6 +131,12 @@ test("verified request fixtures pass the actual deployed bridge normalizers when
         assert.equal(plan.payload.reference_images.length, 1);
         assert.equal(plan.payload.reference_videos.length, 1);
     }
+    for (const model of videoModelCatalog.filter(model => model.id.includes('-discount'))) {
+        const encoded = await encodeVideoBridgeRequest(buildVideoBridgeRequest(model, config(model.id), model.aliases[0], 'offline image fixture', { ...empty(), images: [image, image] }), model);
+        const plan = bridgeZY.normalizeCreateBody({ requestBuffer: Buffer.from(await encoded.body.arrayBuffer()) }, encoded.contentType);
+        assert.equal(plan.model, model.id); assert.equal(plan.pendingFiles.length, 2); assert.equal(plan.payload.reference_images.length, 2);
+        for (const file of plan.pendingFiles) assert.deepEqual(file.bytes, Buffer.from(await image.arrayBuffer()));
+    }
     for (const id of ["wan3.0-video", "wan3.0-video-prime", "doubao-seedance-2.0", "doubao-seedance-2.5", "minimax-h3", "veo-3.1", "veo-3.1-fast", "gemini-omni-flash-1.1", "gemini-omni-flash-1.2"]) {
         const model = info(id);
         for (const mode of ["frames", "reference"] as const) {
@@ -159,8 +183,8 @@ test('multipart sums only text UTF-8 bytes and never counts binary media as inli
 
 test('per-model file limits and live catalog values remain independent of the 128 MiB envelope', () => {
     const file = (size: number) => new File([new Uint8Array(size)], 'fixture.png', { type: 'image/png' });
-    for (const id of ['seedance-2.0-official', 'seedance-2.0-fast-official', 'seedance-2.5-official', 'sd-2.5-fullblood-line3', 'wan3.0-video']) {
-        const max = (id.startsWith('seedance') ? 16 : id.startsWith('sd-') ? 32 : 20) * 1024 * 1024;
+    for (const id of ['seedance-2.0-official', 'seedance-2.0-fast-official', 'seedance-2.5-official', 'sd-2.5-fullblood-line3', 'wan3.0-video', ...videoModelCatalog.filter(model => model.id.includes('-discount')).map(model => model.id)]) {
+        const max = (id.includes('-discount') ? 30 : id.startsWith('seedance') ? 16 : id.startsWith('sd-') ? 32 : 20) * 1024 * 1024;
         const model = info(id), selected = { ...config(id), videoMode: 'reference' };
         buildVideoBridgeRequest(model, selected, id, 'fixture', { ...empty(), images: [file(max)] });
         assert.throws(() => buildVideoBridgeRequest(model, selected, id, 'fixture', { ...empty(), images: [file(max + 1)] }), /单文件限制/);
