@@ -15,6 +15,7 @@ export const videoErrorMessages = {
     reference_required: '当前模型需要参考图片，请先添加图片。',
     reference_upload_required: '参考素材尚未上传完成或无法读取，请重新选择或上传素材后再提交。',
     unsupported_media: '视频请求或素材格式不受支持（415），请更新客户端并重新选择受支持的素材格式。',
+    invalid_reference_format: '参考素材格式不受支持，请更换为模型支持的图片、视频或音频格式。',
     media_too_large: '当前模型或访问入口拒绝了素材大小，请检查模型单文件限制或减少素材；未自动重发，不会降低画质或更改接口地址。',
     inline_text_too_large: '内联文本或 Base64 素材超过 32 MiB，请使用二进制文件 part 或受支持的预上传素材；未自动重新生成，不会降低画质。',
     bridge_request_too_large: '视频请求正文超过 128 MiB（含封装开销），请减少素材或使用受支持的预上传入口；模型单文件与 CDN 限制独立生效，未自动重发或更改站点地址。',
@@ -68,6 +69,10 @@ export function videoErrorText(value, context = {}) {
     if (error.name === 'AbortError' || error.name === 'CanceledError') kind = 'cancelled';
     else if (code === 'creation_outcome_unknown' || context.state === 'unknown' || /未取得可靠(?:任务|回执)|no video task|no task id|(?:creation|submission) outcome is unknown|task id could not be confirmed|video was submitted but (?:its response could not be verified|.*receipt could not be saved)|提交结果(?:不确定|尚未确认)/i.test(text)) kind = 'creation_outcome_unknown';
     else if (context.state === 'cancelled' || context.state === 'canceled') kind = 'task_cancelled';
+    // Explicit, documented public codes select fixed local actions, never raw text.
+    else if (['invalid_reference_format', 'material_count', 'media_too_large', 'duration_invalid', 'watermark_invalid', 'material_conflict', 'reference_upload_required', 'inline_text_too_large', 'bridge_request_too_large'].includes(code)) kind = code;
+    else if (code === 'resolution_or_ratio_invalid') kind = 'resolution_invalid';
+    else if (code === 'unsupported_field') kind = 'parameters_invalid';
     // Only classify the current public error's explicit rejection semantics.
     // Internal diagnostics and generic gateway errors provide no such evidence.
     else if (/参考(?:图片|图像).{0,12}(?:真人|可识别人物).{0,20}(?:未通过(?:上游)?(?:内容)?审核|审核(?:未通过|拒绝))/.test(text)) kind = 'reference_person_policy';

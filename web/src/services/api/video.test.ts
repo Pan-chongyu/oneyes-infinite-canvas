@@ -445,6 +445,12 @@ test('specific rejection, generic gateway and unknown create/poll errors keep sa
             [{ code: 'content_policy', message: 'Content policy violation' }, messages.content_policy],
             [{ type: 'upstream_error', message: 'Upstream gateway error' }, messages.unknown],
             [{ type: 'creation_outcome_unknown', message: rejection + ' 任务未提交，不扣费' }, messages.creation_outcome_unknown],
+            [{ code: 'invalid_reference_format', message: privateText }, messages.invalid_reference_format],
+            [{ code: 'material_count', message: privateText }, messages.material_count],
+            [{ code: 'media_too_large', message: privateText }, messages.media_too_large],
+            [{ code: 'duration_invalid', message: privateText }, messages.duration_invalid],
+            [{ code: 'resolution_or_ratio_invalid', message: privateText }, messages.resolution_invalid],
+            [{ code: 'unsupported_field', message: privateText }, messages.parameters_invalid],
         ] as const) {
             axios.defaults.adapter = async request => {
                 if (request.method === 'post') { posts++; throw new AxiosError('opaque', 'ERR_BAD_RESPONSE', request, undefined, { config: request, status: 500, statusText: '', headers: { 'x-request-id': id }, data: { error } }); }
@@ -454,6 +460,6 @@ test('specific rejection, generic gateway and unknown create/poll errors keep sa
             await assert.rejects(createVideoGenerationTask(config, 'mock'), err => (err as Error).message === expected + '\n本站请求编号：' + id);
             for (status of ['failed', 'completed']) assert.deepEqual(await pollVideoGenerationTask(config, { id: 'original-task', provider: 'openai', model: config.model }), { status: 'failed', error: expected + '\n本站请求编号：' + id });
         }
-        assert.equal(posts, 4); assert.equal(gets, 8); assert.deepEqual(config, before);
+        assert.equal(posts, 10); assert.equal(gets, 20); assert.deepEqual(config, before);
     } finally { axios.defaults.adapter = original; }
 });

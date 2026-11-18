@@ -169,9 +169,16 @@ app.whenReady().then(async () => {
             ['failed', { type: 'upstream_error', message: 'Upstream gateway error', upstream_error_message: person }, videoErrorMessages.unknown],
             ['failed', { code: 'content_policy', message: 'Content policy violation ' + privateText }, videoErrorMessages.content_policy],
             ['cancelled', { message: privateText }, videoErrorMessages.task_cancelled],
+            ['failed', { code: 'invalid_reference_format', message: privateText }, videoErrorMessages.invalid_reference_format],
+            ['failed', { code: 'material_count', message: privateText }, videoErrorMessages.material_count],
+            ['failed', { code: 'media_too_large', message: privateText }, videoErrorMessages.media_too_large],
+            ['failed', { code: 'duration_invalid', message: privateText }, videoErrorMessages.duration_invalid],
+            ['failed', { code: 'resolution_or_ratio_invalid', message: privateText }, videoErrorMessages.resolution_invalid],
+            ['failed', { code: 'unsupported_field', message: privateText }, videoErrorMessages.parameters_invalid],
         ]) {
             const before = videoOperations.length;
             recoveryJob = { key: 'moderation-job', model: 'default::grok-imagine-video', site: 'https://oneyes.ai', channelId: 'default', provider: 'openai', state, reason: videoErrorText({ error }, { state, requestId }), createdAt: Date.now(), parameters: { size: '16:9', vquality: '1080', videoSeconds: '5' }, target: { projectId: await js('videoWorkflowTest.projectId'), nodeId: 'moderation-video' } };
+            if (error.code === 'invalid_reference_format') recoveryJob.taskId = 'original-error-task';
             await js('videoWorkflowTest.seedErrorTask()');
             await win.loadURL('oneyes-canvas://app/');
             await wait('Boolean(window.videoWorkflowTest && document.querySelector("[data-node-id=moderation-video]"))');
@@ -186,9 +193,16 @@ app.whenReady().then(async () => {
                 const body = await js(`(()=>{const root=document.querySelector('[data-node-id=moderation-video]'),alert=root.querySelector('[role=alert]'),a=alert.getBoundingClientRect(),r=root.getBoundingClientRect();return {text:alert.textContent,color:getComputedStyle(alert).color,visible:a.width>0&&a.height>0&&a.top>=r.top&&a.bottom<=r.bottom}})()`);
                 assert.equal(body.text, text); assert.equal(body.visible, true); assert.equal(body.color, dark ? 'rgb(245, 245, 244)' : 'rgb(41, 37, 36)');
                 assert.doesNotMatch(body.text, /上游|智赢|88API|VendorOther|https?:|Bearer|sk-private|987654|不扣费|任务未提交/);
+                if (!process.env.CI && error.code === 'invalid_reference_format') {
+                    win.showInactive(); win.webContents.invalidate();
+                    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await writeFile(`.secrets/qa-video-reference-format-${dark ? 'dark' : 'light'}.png`, (await win.capturePage()).toPNG());
+                }
             }
             const metadata = await js('videoWorkflowTest.state().nodes.find(n=>n.id==="moderation-video").metadata');
             assert.equal(metadata.errorDetails, text); assert.equal(metadata.vquality, '1080'); assert.equal(metadata.seconds, '5'); assert.equal(metadata.videoJobKey, 'moderation-job');
+            if (error.code === 'invalid_reference_format') assert.equal(metadata.videoTaskId, 'original-error-task');
             assert.ok(videoOperations.slice(before).every(operation => operation === 'list')); assert.equal(recoveries.length, 1); assert.equal(modelReads.length, 0);
             assert.deepEqual(await js('videoWorkflowTest.calls()'), []); assert.deepEqual(external, []); assert.deepEqual(await js('videoWorkflowTest.errors()'), []);
         }

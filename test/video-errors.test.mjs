@@ -10,6 +10,55 @@ const privateText = '智赢 88API VendorOther https://private.invalid/clip?token
 const personRejection = '参考图片可能包含真人或可识别人物，未通过上游内容审核。请更换参考图片后重试。';
 const requestId = '12345678-1234-1234-1234-123456789abc';
 
+test('reference format contract accepts synchronous and asynchronous errors independent of type, including exact legacy text', () => {
+    for (const status of [400, 415, 422, 200]) for (const type of ['invalid_request_error', 'upstream_error', 'video_error', undefined]) for (const code of ['invalid_reference_format', undefined]) {
+        const data = { ...(status === 200 ? { status: 'failed' } : {}), error: { code, type, message: messages.invalid_reference_format } };
+        const expected = messages.invalid_reference_format + '\n本站请求编号：' + requestId;
+        assert.equal(videoErrorText({ response: { status, data } }, { stage: status === 200 ? 'poll' : 'submit', requestId }), expected);
+        assert.equal(videoErrorText(JSON.parse(JSON.stringify(data)), { state: 'unknown' }), messages.creation_outcome_unknown);
+    }
+    assert.equal(videoErrorText({ error: { type: 'video_error', message: messages.invalid_reference_format + ' ' + privateText } }), messages.service_unavailable, 'legacy matching accepts only the complete fixed text');
+});
+
+test('documented public material/parameter codes survive hostile raw messages and IPC serialization as fixed actionable text', () => {
+    for (const [code, kind] of [['invalid_reference_format', 'invalid_reference_format'], ['material_count', 'material_count'], ['media_too_large', 'media_too_large'], ['duration_invalid', 'duration_invalid'], ['resolution_or_ratio_invalid', 'resolution_invalid'], ['unsupported_field', 'parameters_invalid']]) {
+        const expected = messages[kind] + '\n本站请求编号：' + requestId;
+        for (const stage of ['submit', 'poll', 'download']) {
+            let text = videoErrorText({ error: { code, message: privateText } }, { stage, requestId });
+            assert.equal(text, expected);
+            text = JSON.parse(JSON.stringify({ reason: text })).reason;
+            assert.equal(videoErrorText(new Error(text), { state: 'failed' }), expected);
+        }
+        assert.equal(videoErrorText({ error: { code, message: privateText } }, { state: 'unknown' }), messages.creation_outcome_unknown);
+    }
+});
+
+test('actionable submit and async errors persist across a native journal restart without clearing receipts or replaying POST', async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'canvas-video-actionable-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    for (const [code, kind] of [['invalid_reference_format', 'invalid_reference_format'], ['material_count', 'material_count'], ['media_too_large', 'media_too_large'], ['duration_invalid', 'duration_invalid'], ['resolution_or_ratio_invalid', 'resolution_invalid']]) {
+        let stored, gets = 0, done;
+        const complete = new Promise(resolve => { done = resolve; });
+        const input = { site: 'https://oneyes.ai', apiKey: 'fixture', channelId: 'c', model: 'exact-original-model', provider: 'openai', parameters: { vquality: '1080', videoSeconds: '5' }, references: [{ id: 'kept', storageKey: 'original' }] };
+        const options = { directory: join(directory, code), vault: { read: async () => stored, write: async value => { stored = value; } }, credentials: async () => [{ id: 'c', baseUrl: input.site, apiKey: input.apiKey }], changed: jobs => { if (jobs.some(job => job.taskId && job.state === 'failed')) done(); }, probe: async () => ({}), fetcher: async (url, init) => {
+            gets++; assert.equal(init.method, 'GET'); assert.equal(url, 'https://oneyes.ai/v1/videos/original');
+            return Response.json({ status: 'failed', error: { code, message: privateText } }, { headers: { 'x-request-id': requestId } });
+        } };
+        const manager = createVideoTasks(options), key = await manager.prepare(input);
+        await manager.beforeSubmit(key, 'https://oneyes.ai/v1/videos', { Authorization: 'Bearer fixture' });
+        await manager.receipt(key, Response.json({ error: { code, message: privateText } }, { status: 400, headers: { 'x-request-id': requestId } }));
+        const receipt = await manager.adopt({ ...input, taskId: 'original' });
+        await manager.retry(receipt); await complete; await manager.close();
+        const restored = createVideoTasks(options);
+        const jobs = await restored.list();
+        for (const job of jobs) { assert.equal(job.reason, messages[kind] + '\n本站请求编号：' + requestId); assert.equal(job.parameters.vquality, input.parameters.vquality); assert.equal(job.parameters.videoSeconds, input.parameters.videoSeconds); assert.deepEqual(job.references, input.references); }
+        assert.equal(jobs.find(job => job.key === receipt).taskId, 'original');
+        assert.equal(jobs.find(job => job.key === key).taskId, undefined);
+        await assert.rejects(restored.retry(key), /没有任务 ID/); assert.equal(gets, 1);
+        await restored.close();
+    }
+});
+
 test('specific moderation requires current response evidence and survives repeated IPC/display sanitization', () => {
     for (const code of [undefined, 'content_policy']) {
         let text = videoErrorText({ error: { code, type: 'upstream_error', message: personRejection + ' ' + privateText } }, { requestId });

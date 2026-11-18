@@ -5,7 +5,7 @@ import { submitVideoBridge } from './video-bridge-submit';
 
 test('explicit large_material_busy retries the exact binary body and idempotency key after Retry-After', async t => {
     const original = axios.defaults.adapter, body = new Blob(['unchanged binary']), calls: unknown[] = [];
-    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-18T00:00:00Z') });
     try {
         axios.defaults.adapter = async config => {
             calls.push(config.data); assert.equal(config.headers['Idempotency-Key'], 'persisted-fixture-key');
