@@ -1,5 +1,6 @@
 import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
+import { videoErrorRetryable } from '../../../../desktop/video-errors.mjs';
 import { ensureImagePreview, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
@@ -124,7 +125,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 }
 
 export function hasResumableVideoTask(node: CanvasNodeData) {
-    return node.type === CanvasNodeType.Video && Boolean(node.metadata?.videoTaskId) && !node.metadata?.content;
+    const metadata = node.metadata;
+    return node.type === CanvasNodeType.Video && Boolean(metadata?.videoTaskId) && !metadata?.content && (!['failed', 'cancelled', 'expired', 'missing'].includes(metadata?.videoRecoveryState || '') || metadata?.videoRecoveryState === 'failed' && videoErrorRetryable({ code: metadata.videoErrorCode }) && !['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(metadata.videoServerStatus || ''));
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {

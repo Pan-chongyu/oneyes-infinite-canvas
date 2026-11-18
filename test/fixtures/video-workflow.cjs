@@ -175,23 +175,26 @@ app.whenReady().then(async () => {
             ['failed', { code: 'duration_invalid', message: privateText }, videoErrorMessages.duration_invalid],
             ['failed', { code: 'resolution_or_ratio_invalid', message: privateText }, videoErrorMessages.resolution_invalid],
             ['failed', { code: 'unsupported_field', message: privateText }, videoErrorMessages.parameters_invalid],
+            ...['reference_person_policy_rejected', 'content_policy_rejected', 'unsupported_resolution', 'unsupported_duration', 'unsupported_aspect_ratio', 'invalid_reference_dimensions', 'reference_unavailable', 'reference_required', 'too_many_references', 'video_model_unavailable', 'prompt_too_long', 'video_task_expired', 'video_task_canceled'].map(code => ['failed', { code, message: privateText }, videoErrorMessages[code]]),
+            ...['video_service_busy', 'video_generation_timeout', 'video_status_unavailable', 'video_content_unavailable', 'video_not_ready'].map(code => ['waiting', { code, message: privateText }, videoErrorMessages[code]]),
         ]) {
             const before = videoOperations.length;
             recoveryJob = { key: 'moderation-job', model: 'default::grok-imagine-video', site: 'https://oneyes.ai', channelId: 'default', provider: 'openai', state, reason: videoErrorText({ error }, { state, requestId }), createdAt: Date.now(), parameters: { size: '16:9', vquality: '1080', videoSeconds: '5' }, target: { projectId: await js('videoWorkflowTest.projectId'), nodeId: 'moderation-video' } };
-            if (error.code === 'invalid_reference_format') recoveryJob.taskId = 'original-error-task';
+            if (error.code) { recoveryJob.taskId = 'original-error-task'; recoveryJob.errorCode = error.code; }
             await js('videoWorkflowTest.seedErrorTask()');
             await win.loadURL('oneyes-canvas://app/');
             await wait('Boolean(window.videoWorkflowTest && document.querySelector("[data-node-id=moderation-video]"))');
             await js('videoWorkflowTest.refreshRecovery()');
             const text = expected + '\n本站请求编号：' + requestId;
-            await wait(`document.querySelector('[data-node-id=moderation-video] [role=alert]')?.textContent===${JSON.stringify(text)}`);
+            const selector = `[data-node-id=moderation-video] [role=${state === 'waiting' ? 'status' : 'alert'}]`;
+            await wait(`document.querySelector(${JSON.stringify(selector)})?.textContent.includes(${JSON.stringify(text)})`);
             await js('videoWorkflowTest.flush()');
             await win.loadURL('oneyes-canvas://app/');
-            await wait(`document.querySelector('[data-node-id=moderation-video] [role=alert]')?.textContent===${JSON.stringify(text)}`);
+            await wait(`document.querySelector(${JSON.stringify(selector)})?.textContent.includes(${JSON.stringify(text)})`);
             for (const dark of [false, true]) {
                 await js(`videoWorkflowTest.theme(${dark})`);
-                const body = await js(`(()=>{const root=document.querySelector('[data-node-id=moderation-video]'),alert=root.querySelector('[role=alert]'),a=alert.getBoundingClientRect(),r=root.getBoundingClientRect();return {text:alert.textContent,color:getComputedStyle(alert).color,visible:a.width>0&&a.height>0&&a.top>=r.top&&a.bottom<=r.bottom}})()`);
-                assert.equal(body.text, text); assert.equal(body.visible, true); assert.equal(body.color, dark ? 'rgb(245, 245, 244)' : 'rgb(41, 37, 36)');
+                const body = await js(`(()=>{const root=document.querySelector('[data-node-id=moderation-video]'),alert=document.querySelector(${JSON.stringify(selector)}),a=alert.getBoundingClientRect(),r=root.getBoundingClientRect();return {text:alert.textContent,color:getComputedStyle(alert).color,visible:a.width>0&&a.height>0&&a.top>=r.top&&a.bottom<=r.bottom}})()`);
+                assert.ok(body.text.includes(text)); assert.equal(body.visible, true); assert.equal(body.color, dark ? 'rgb(245, 245, 244)' : 'rgb(41, 37, 36)');
                 assert.doesNotMatch(body.text, /上游|智赢|88API|VendorOther|https?:|Bearer|sk-private|987654|不扣费|任务未提交/);
                 if (!process.env.CI && error.code === 'invalid_reference_format') {
                     win.showInactive(); win.webContents.invalidate();
@@ -202,7 +205,7 @@ app.whenReady().then(async () => {
             }
             const metadata = await js('videoWorkflowTest.state().nodes.find(n=>n.id==="moderation-video").metadata');
             assert.equal(metadata.errorDetails, text); assert.equal(metadata.vquality, '1080'); assert.equal(metadata.seconds, '5'); assert.equal(metadata.videoJobKey, 'moderation-job');
-            if (error.code === 'invalid_reference_format') assert.equal(metadata.videoTaskId, 'original-error-task');
+            if (error.code) { assert.equal(metadata.videoTaskId, 'original-error-task'); assert.equal(metadata.videoErrorCode, error.code); }
             assert.ok(videoOperations.slice(before).every(operation => operation === 'list')); assert.equal(recoveries.length, 1); assert.equal(modelReads.length, 0);
             assert.deepEqual(await js('videoWorkflowTest.calls()'), []); assert.deepEqual(external, []); assert.deepEqual(await js('videoWorkflowTest.errors()'), []);
         }

@@ -7,7 +7,7 @@ import { videoErrorText } from '@/lib/video-display-text';
 export type VideoRecoveryJob = {
     key: string; taskId?: string; provider: 'openai' | 'gemini'; model: string; site: string; channelId: string; accountId?: number;
     parameters: Record<string, string>; target?: { projectId: string; nodeId: string }; createdAt: number; updatedAt?: number;
-    state: string; reason?: string; legacy?: boolean; result?: UploadedFile & { sha256: string };
+    state: string; reason?: string; errorCode?: string; serverStatus?: string; legacy?: boolean; result?: UploadedFile & { sha256: string };
 };
 export const useVideoRecoveryStore = create<{ jobs: VideoRecoveryJob[]; error?: string; open: boolean }>(() => ({ jobs: [], open: false }));
 export async function refreshVideoRecovery() {
@@ -34,10 +34,10 @@ export function applyVideoRecovery(node: CanvasNodeData, job: VideoRecoveryJob):
     if (node.metadata?.storageKey === job.result?.storageKey && job.result) return node;
     if (node.metadata?.content) return node;
     const metadata = { ...node.metadata, videoJobKey: job.key, videoTaskId: job.taskId, videoTaskProvider: job.provider,
-        model: job.model, videoRecoveryState: job.state, errorDetails: reason };
+        model: job.model, videoRecoveryState: job.state, videoErrorCode: job.errorCode, videoServerStatus: job.serverStatus, errorDetails: reason, loadingMessage: reason };
     if (job.state === 'saved' && job.result) return { ...node, metadata: { ...metadata, status: 'success', content: job.result.url,
         naturalWidth: job.result.width, naturalHeight: job.result.height, storageKey: job.result.storageKey, bytes: job.result.bytes, mimeType: job.result.mimeType, durationMs: job.result.durationMs } };
     const error = ['failed', 'cancelled', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error', 'download_error'].includes(job.state);
-    if (node.metadata?.videoRecoveryState === job.state && node.metadata?.errorDetails === reason && node.metadata?.videoJobKey === job.key) return node;
+    if (node.metadata?.videoRecoveryState === job.state && node.metadata?.errorDetails === reason && node.metadata?.videoJobKey === job.key && node.metadata?.videoErrorCode === job.errorCode && node.metadata?.videoServerStatus === job.serverStatus) return node;
     return { ...node, metadata: { ...metadata, status: error ? 'error' : 'loading' } };
 }

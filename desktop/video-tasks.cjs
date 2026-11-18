@@ -5,7 +5,7 @@ const { createReadStream } = require('node:fs');
 const { Readable } = require('node:stream');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { videoErrorText, videoSiteRequestId } = require('./video-errors.mjs');
+const { videoErrorText, videoSiteRequestId, videoErrorCode, videoErrorRetryable } = require('./video-errors.mjs');
 const { videoRetryAt } = require('./video-retry-after.mjs');
 
 const fingerprint = value => createHash('sha256').update(value).digest('hex');
@@ -58,6 +58,10 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const data = JSON.parse(stored);
             if (data.version !== 1 || !Array.isArray(data.jobs) || data.jobs.some(job => !/^[a-f0-9-]{36}$/.test(job.key))) throw Error('视频任务清单损坏，已保留原文件');
             jobs = data.jobs;
+            for (const job of jobs) if (!job.taskId && (job.errorCode || job.error?.code) === 'creation_outcome_unknown') { job.state = 'unknown'; job.reason = videoErrorText({ code: 'creation_outcome_unknown' }); }
+            for (const job of jobs) if (job.taskId && job.state === 'failed' && videoErrorRetryable({ code: job.errorCode || job.error?.code }) && !['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(job.serverStatus)) {
+                job.state = 'waiting'; job.reason = videoErrorText({ code: job.errorCode || job.error.code });
+            }
             for (const job of jobs) if (!job.taskId && ['prepared', 'submitting'].includes(job.state)) { job.state = 'unknown'; job.reason = '上次提交未取得可靠回执，请先核对官网任务和用量；不会自动重新生成'; }
             for (const job of jobs) if (!job.taskId && job.state === 'throttled') { job.state = 'not_submitted'; job.reason = '上次请求因大素材繁忙未提交上游，等待已被退出中断。原幂等键与参数已保留；不会自动重建或重新生成'; }
         }
@@ -78,11 +82,19 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         const response = await fetcher(url, { method: 'GET', headers, signal, redirect: 'manual', credentials: 'omit' });
         const retryAt = videoRetryAt(response.headers.get('retry-after'));
         if (!response.ok) {
-            const data = await response.json().catch(() => undefined);
-            throw Object.assign(Error(videoErrorText(data, { status: response.status, stage: 'poll', requestId: videoSiteRequestId(url, response.headers) })), { status: response.status, phase: 'query', retryAt });
+            throw responseError(await response.text(), response, url, 'query');
         }
         const data = response.status === 202 ? await response.json().catch(() => ({})) : await response.json();
         return { data: unwrap(data), retryAt, requestId: videoSiteRequestId(url, response.headers) };
+    }
+    function responseError(data, response, url, phase) {
+        const code = videoErrorCode(data);
+        return Object.assign(Error(videoErrorText(data, { status: response.status, stage: phase === 'query' ? 'poll' : 'download', requestId: videoSiteRequestId(url, response.headers) })), {
+            status: response.status, phase, retryAt: videoRetryAt(response.headers.get('retry-after')),
+            retryable: ![401, 403, 404, 410].includes(response.status) && videoErrorRetryable(data),
+            errorCode: code,
+            terminalState: code === 'video_task_expired' ? 'expired' : code === 'video_task_canceled' ? 'cancelled' : undefined,
+        });
     }
     async function resultSource(job, current, signal) {
         const base = job.site;
@@ -104,11 +116,12 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         }
         const path = '/videos/' + encodeURIComponent(job.taskId), headers = { Authorization: 'Bearer ' + current.apiKey };
         const { data, requestId, retryAt } = await readJson(api(base) + path, headers, signal);
-        if (['failed', 'cancelled', 'canceled', 'expired'].includes(data.status)) {
-            const state = data.status === 'canceled' ? 'cancelled' : data.status;
-            return { error: videoErrorText(data, { state, requestId }), state };
+        if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(data.status)) {
+            const state = data.status === 'canceled' ? 'cancelled' : data.status === 'error' ? 'failed' : data.status;
+            return { error: videoErrorText(data, { state, requestId }), state, errorCode: videoErrorCode(data), serverStatus: data.status };
         }
-        if (data.video?.respect_moderation === false) return { error: videoErrorText(data.error ? data : { code: 'content_policy' }, { requestId }), state: 'failed' };
+        if (['queued', 'processing', 'pending', 'in_progress'].includes(data.status)) return { retryAt };
+        if (data.status !== 'completed' && data.video?.respect_moderation === false) return { error: videoErrorText(data.error ? data : { code: 'content_policy' }, { requestId }), state: 'failed' };
         const source = [data.video?.url, data.video_url, data.result_url, data.url, data.content?.video_url, data.content?.url].find(value => typeof value === 'string' && /^(?:https?:\/\/|\/v1\/videos\/)/.test(value));
         if (!source && !['completed', 'done', 'succeeded', 'success'].includes(data.status)) return { retryAt };
         const relay = api(base) + path + '/content';
@@ -129,7 +142,7 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
         try { offset = (await stat(resultPath(job, true))).size; } catch (error) { if (error.code !== 'ENOENT') throw error; }
         if (!job.etag || job.etag.startsWith('W/')) offset = 0;
         const response = await fetcher(url.href, { method: 'GET', redirect: Object.keys(source.headers).length ? 'manual' : 'follow', credentials: 'omit', headers: { ...source.headers, ...(offset ? { Range: `bytes=${offset}-`, 'If-Range': job.etag } : {}) }, signal });
-        if (!response.ok || !response.body) { await response.body?.cancel(); throw Object.assign(Error(`视频下载失败（HTTP ${response.status}），将重新查询原任务获取有效下载入口`), { status: response.status, phase: 'download', retryAt: videoRetryAt(response.headers.get('retry-after')) }); }
+        if (!response.ok || !response.body || /json|text\/|html/i.test(response.headers.get('content-type') || '')) throw responseError(await response.text(), response, url.href, 'download');
         const range = response.headers.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/), etag = response.headers.get('etag');
         if (response.status === 206 && (!offset || !range || Number(range[1]) !== offset || etag !== job.etag)) {
             await response.body.cancel(); await unlink(resultPath(job, true)).catch(error => { if (error.code !== 'ENOENT') throw error; });
@@ -162,22 +175,23 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const current = await credential(job);
             if (!current) { if (job.state !== 'credentials') await patch(job, { state: 'credentials', reason: '请恢复提交时的站点、账号和 API Key；不会切换账号查询此任务' }); return; }
             if (job.authRejected) return;
-            await patch(job, { state: 'querying', reason: undefined, retryAt: undefined });
+            await patch(job, { state: 'querying', retryAt: undefined });
             const source = await resultSource(job, current, controller.signal);
-            if (source.error) { await patch(job, { state: source.state, reason: source.error }); return; }
-            if (!source.url) { await patch(job, { state: 'pending', retryAt: source.retryAt }); return; }
+            if (source.error) { await patch(job, { state: source.state, reason: source.error, errorCode: source.errorCode, serverStatus: source.serverStatus }); return; }
+            if (!source.url) { await patch(job, { state: 'pending', reason: undefined, errorCode: undefined, retryAt: source.retryAt }); return; }
             try { await download(job, source, controller.signal); }
             catch (error) { error.phase ||= 'download'; throw error; }
         } catch (error) {
             if (closed) return;
-            const state = error.phase === 'query' && [404, 410].includes(error.status) ? (error.status === 404 ? 'missing' : 'expired')
+            const state = error.terminalState || (error.retryable ? (error.phase === 'download' ? 'download_error' : 'waiting')
+                : error.phase === 'query' && [404, 410].includes(error.status) ? (error.status === 404 ? 'missing' : 'expired')
                 : [401, 403].includes(error.status) && error.phase === 'query' ? 'credentials'
                 : error.phase === 'query' && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status) ? 'failed'
                 : ['ENOSPC', 'EACCES', 'EPERM', 'EIO', 'EROFS'].includes(error.code) ? 'save_error'
-                : error.phase === 'download' ? 'download_error' : 'waiting';
+                : error.phase === 'download' ? 'download_error' : 'waiting');
             const reason = videoErrorText(error, { state, stage: error.phase === 'download' ? 'download' : 'poll' });
             report(state, error);
-            await patch(job, { state, reason, retryAt: Number.isFinite(error.retryAt) ? error.retryAt : undefined, ...(state === 'credentials' ? { authRejected: true } : {}) }).catch(error => { changed(view()); report('save', error); });
+            await patch(job, { state, reason, errorCode: error.errorCode, retryAt: Number.isFinite(error.retryAt) ? error.retryAt : undefined, ...(state === 'credentials' ? { authRejected: true } : {}) }).catch(error => { changed(view()); report('save', error); });
         } finally { active.delete(job.key); finish(); }
     }
     const tick = async () => { await ready; if (!closed) for (const job of jobs) void run(job); };

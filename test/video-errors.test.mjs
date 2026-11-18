@@ -10,6 +10,39 @@ const privateText = '智赢 88API VendorOther https://private.invalid/clip?token
 const personRejection = '参考图片可能包含真人或可识别人物，未通过上游内容审核。请更换参考图片后重试。';
 const requestId = '12345678-1234-1234-1234-123456789abc';
 
+test('public bridge error codes select fixed Chinese across HTTP status, type, IPC and storage without leaking raw bodies', () => {
+    const codes = ['reference_person_policy_rejected', 'content_policy_rejected', 'invalid_reference_format', 'media_too_large', 'unsupported_resolution', 'unsupported_duration', 'unsupported_aspect_ratio', 'invalid_reference_dimensions', 'reference_unavailable', 'reference_required', 'too_many_references', 'video_model_unavailable', 'prompt_too_long', 'video_service_busy', 'video_generation_timeout', 'video_status_unavailable', 'video_content_unavailable', 'video_task_expired', 'video_task_canceled', 'video_not_ready'];
+    for (const code of codes) for (const status of [200, 400, 415, 422, 500]) {
+        const text = videoErrorText({ response: { status, data: { error: { code, type: 'unrelated', message: privateText } } } }, { stage: 'poll', requestId });
+        assert.equal(text, messages[code] + '\n本站请求编号：' + requestId);
+        assert.equal(videoErrorText(JSON.parse(JSON.stringify(text)), { state: 'failed' }), text);
+        assert.equal(videoErrorText({ error: { code, message: privateText } }, { state: 'unknown' }), messages.creation_outcome_unknown);
+    }
+});
+
+test('native upgrade resumes only receipts with a saved temporary code and no confirmed terminal server status', async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'canvas-video-upgrade-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const input = { site: 'https://oneyes.ai', apiKey: 'fixture', channelId: 'c', model: 'exact-original', provider: 'openai', references: [{ id: 'original' }], parameters: { vquality: '1080', videoSeconds: '5' } };
+    for (const [errorCode, taskId, serverStatus, resume] of [['video_status_unavailable', 'original', undefined, true], ['video_content_unavailable', 'original', undefined, true], ['video_service_busy', 'original', 'failed', false], ['video_generation_timeout', 'original', 'error', false], ['video_task_expired', 'original', 'expired', false], ['video_task_canceled', 'original', 'canceled', false], ['creation_outcome_unknown', undefined, undefined, false], [undefined, 'original', undefined, false]]) {
+        let stored, queries = 0, done;
+        const completed = new Promise(resolve => { done = resolve; });
+        const options = { directory, vault: { read: async () => stored, write: async value => { stored = value; } }, credentials: async () => [{ id: 'c', baseUrl: input.site, apiKey: input.apiKey }], probe: async () => ({}), interval: 10000, fetcher: async (url, init) => {
+            assert.equal(init.method, 'GET'); assert.equal(url, 'https://oneyes.ai/v1/videos/original'); queries++;
+            return Response.json({ status: 'processing', error: { code: 'invalid_reference_format', message: privateText }, video: { respect_moderation: false } });
+        }, changed: jobs => { if (jobs.some(job => job.state === 'pending')) done(); } };
+        const first = createVideoTasks(options), key = await first.prepare(input); await first.close();
+        const saved = JSON.parse(stored); Object.assign(saved.jobs[0], { taskId, state: 'failed', errorCode, serverStatus, reason: '原先保存的通用错误' }); stored = JSON.stringify(saved);
+        const identity = saved.jobs[0].credential;
+        const restored = createVideoTasks(options);
+        if (resume) await completed;
+        const [job] = await restored.list();
+        assert.equal(job.key, key); assert.equal(job.taskId, taskId); assert.equal(job.credential, identity); assert.deepEqual(job.references, input.references); assert.equal(job.parameters.vquality, '1080');
+        assert.equal(job.state, resume ? 'pending' : errorCode === 'creation_outcome_unknown' ? 'unknown' : 'failed'); assert.equal(queries, resume ? 1 : 0);
+        await restored.close();
+    }
+});
+
 test('reference format contract accepts synchronous and asynchronous errors independent of type, including exact legacy text', () => {
     for (const status of [400, 415, 422, 200]) for (const type of ['invalid_request_error', 'upstream_error', 'video_error', undefined]) for (const code of ['invalid_reference_format', undefined]) {
         const data = { ...(status === 200 ? { status: 'failed' } : {}), error: { code, type, message: messages.invalid_reference_format } };

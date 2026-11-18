@@ -390,14 +390,14 @@ function InfiniteCanvasPage() {
                 } });
                 if (task.provider !== "plugin") {
                     flushSync(() => setNodes((prev) => {
-                        const next = prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, ...extra, prompt, videoJobKey: task.nativeJobKey, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" as const : "openai" as const, model: config.model, size: config.size, seconds: config.videoSeconds, vquality: config.vquality, generateAudio: config.videoGenerateAudio, watermark: config.videoWatermark, videoMode: config.videoMode } } : item));
+                        const next = prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, ...extra, prompt, videoJobKey: task.nativeJobKey, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" as const : "openai" as const, videoRecoveryState: undefined, videoErrorCode: undefined, videoServerStatus: undefined, model: config.model, size: config.size, seconds: config.videoSeconds, vquality: config.vquality, generateAudio: config.videoGenerateAudio, watermark: config.videoWatermark, videoMode: config.videoMode } } : item));
                         nodesRef.current = next;
                         return next;
                     }));
                     updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
                     await flushCanvasStorage();
                 }
-                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal }));
+                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal, onPending: (reason, code) => setNodes(previous => previous.map(item => item.id === nodeId ? { ...item, metadata: { ...item.metadata, loadingMessage: reason, errorDetails: reason, videoErrorCode: code, videoServerStatus: undefined } } : item)) }));
                 setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
             } catch (error) { throw videoUserError(error); }
         },
@@ -416,9 +416,9 @@ function InfiniteCanvasPage() {
                 // recovery of an existing receipt. Recovery validates the exact
                 // original channel/account/key independently of model discovery.
                 setRunningNodeId(node.id);
-                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, videoRecoveryState: undefined, videoServerStatus: undefined } } : item)));
                 controller = startGenerationRequest(node.id, node.id, node.id);
-                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(generationConfig, { id: taskId, provider: node.metadata?.videoTaskProvider === "gemini" ? "gemini" : "openai", model: node.metadata?.model || generationConfig.model, nativeJobKey: node.metadata?.videoJobKey }, { signal: controller.signal }));
+                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(generationConfig, { id: taskId, provider: node.metadata?.videoTaskProvider === "gemini" ? "gemini" : "openai", model: node.metadata?.model || generationConfig.model, nativeJobKey: node.metadata?.videoJobKey }, { signal: controller.signal, onPending: (reason, code) => setNodes(previous => previous.map(item => item.id === node.id ? { ...item, metadata: { ...item.metadata, loadingMessage: reason, errorDetails: reason, videoErrorCode: code, videoServerStatus: undefined } } : item)) }));
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === node.id
@@ -448,7 +448,7 @@ function InfiniteCanvasPage() {
                                       ...item.metadata,
                                       status: item.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
                                       errorDetails: item.metadata?.content ? undefined : errorDetails,
-                                      ...(isVideoTaskFailed(error) ? { videoTaskId: undefined } : {}),
+                                      ...(isVideoTaskFailed(error) ? { videoRecoveryState: 'failed', videoServerStatus: 'failed' } : {}),
                                   },
                               }
                             : item,
@@ -2900,7 +2900,7 @@ function InfiniteCanvasPage() {
                                           ...node.metadata,
                                           status: NODE_STATUS_ERROR,
                                           errorDetails,
-                                          ...(isVideoTaskFailed(error) && node.type === CanvasNodeType.Video ? { videoTaskId: undefined } : {}),
+                                          ...(isVideoTaskFailed(error) && node.type === CanvasNodeType.Video ? { videoRecoveryState: 'failed', videoServerStatus: 'failed' } : {}),
                                       },
                                   }
                             : node,
@@ -3072,7 +3072,7 @@ function InfiniteCanvasPage() {
                                       status: item.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
                                       errorDetails: item.metadata?.content ? undefined : errorDetails,
                                       images: item.metadata?.images?.map((image) => (image.id === imageId ? { ...image, status: NODE_STATUS_ERROR, errorDetails } : image)),
-                                      ...(isVideoTaskFailed(error) && item.type === CanvasNodeType.Video ? { videoTaskId: undefined } : {}),
+                                      ...(isVideoTaskFailed(error) && item.type === CanvasNodeType.Video ? { videoRecoveryState: 'failed', videoServerStatus: 'failed' } : {}),
                                   },
                               }
                             : item,

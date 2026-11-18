@@ -471,7 +471,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot && props.node.type === CanvasNodeType.Image) return <ImageNodeContent {...props} />;
     if (props.node.type === CanvasNodeType.Text && props.node.metadata?.texts?.length && (props.node.metadata.status !== "error" || props.node.metadata.texts.some((text) => text.content))) return <TextContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} message={props.node.type === CanvasNodeType.Video && props.node.metadata.loadingMessage ? '正在生成视频，任务记录已保留，可稍后继续取回。' : props.node.metadata.loadingMessage} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} message={props.node.type === CanvasNodeType.Video && props.node.metadata.loadingMessage ? videoErrorText(props.node.metadata.loadingMessage, { stage: 'poll' }) : props.node.metadata.loadingMessage} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];

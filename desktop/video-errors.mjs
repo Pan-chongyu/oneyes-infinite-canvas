@@ -12,7 +12,8 @@ export const videoErrorMessages = {
     material_count: '参考素材数量超过当前模型限制，请按参数面板减少素材后重新提交。',
     material_conflict: '参考素材设置重复或冲突，请检查首尾帧和参考图片。',
     reference_identity: '同一参考素材 ID 指向不同文件，请重新选择素材；未提交生成。',
-    reference_required: '当前模型需要参考图片，请先添加图片。',
+    reference_required: '该模型需要参考素材，请按模型要求添加图片、视频或音频。',
+    reference_image_required: '当前模型需要参考图片，请先添加图片。',
     reference_upload_required: '参考素材尚未上传完成或无法读取，请重新选择或上传素材后再提交。',
     unsupported_media: '视频请求或素材格式不受支持（415），请更新客户端并重新选择受支持的素材格式。',
     invalid_reference_format: '参考素材格式不受支持，请更换为模型支持的图片、视频或音频格式。',
@@ -39,7 +40,37 @@ export const videoErrorMessages = {
     cancelled: '已取消本次等待；已提交的任务保留在视频任务中。',
     task_cancelled: '服务端已取消原视频任务，已停止等待并保留记录；不会自动重新生成。',
     node_deleted: '视频节点已删除，已停止提交。',
+    reference_person_policy_rejected: '参考图片可能包含真人或可识别人物，未通过内容审核。请更换参考图片后重试。',
+    content_policy_rejected: '参考素材或提示词未通过内容审核，请调整内容后重试。',
+    unsupported_resolution: '所选分辨率不受支持，请选择该模型支持的分辨率。',
+    unsupported_duration: '所选视频时长不受支持，请选择该模型支持的时长。',
+    unsupported_aspect_ratio: '所选画幅比例不受支持，请选择该模型支持的比例。',
+    invalid_reference_dimensions: '参考素材的尺寸或比例不符合模型要求，请调整素材后重试。',
+    reference_unavailable: '参考素材暂时无法读取，请确认素材可访问或重新上传后重试。',
+    too_many_references: '参考素材数量不符合模型要求，请减少或调整素材后重试。',
+    video_model_unavailable: '所选视频模型暂不可用，请选择其他可用模型。',
+    prompt_too_long: '提示词过长，请缩短提示词后重试。',
+    video_service_busy: '视频服务繁忙，请稍后使用原任务信息继续。',
+    video_generation_timeout: '任务处理时间较长，请保留原任务编号，稍后继续查询。',
+    video_status_unavailable: '视频状态暂时无法查询，请保留原任务编号，稍后继续查询。',
+    video_content_unavailable: '视频下载暂时失败，请继续取回原任务。',
+    video_task_expired: '原视频任务或结果已过期，请保留任务编号并联系管理员核对。',
+    video_task_canceled: '原视频任务已取消，请核对任务状态。',
+    video_generation_failed: '视频生成未完成，请检查素材或联系管理员核对原任务。',
+    video_not_ready: '视频尚未完成，请继续查询原任务。',
 };
+
+/** Only explicit public codes determine GET recovery; never wording or type. @param {any} value */
+export function videoErrorCode(value) {
+    let data = value?.response?.data ?? value;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch { return ''; } }
+    const code = data?.error?.code ?? data?.code;
+    return typeof code === 'string' ? code.toLowerCase() : '';
+}
+/** @param {unknown} value */
+export function videoErrorRetryable(value) {
+    return ['video_service_busy', 'video_generation_timeout', 'video_status_unavailable', 'video_content_unavailable', 'video_not_ready'].includes(videoErrorCode(value));
+}
 
 /** Only a site response header is evidence of a site request ID; never body IDs.
  * @param {string} url @param {{get?: (name: string) => unknown, [key: string]: any}} headers */
@@ -68,8 +99,9 @@ export function videoErrorText(value, context = {}) {
     let kind = 'unknown';
     if (error.name === 'AbortError' || error.name === 'CanceledError') kind = 'cancelled';
     else if (code === 'creation_outcome_unknown' || context.state === 'unknown' || /未取得可靠(?:任务|回执)|no video task|no task id|(?:creation|submission) outcome is unknown|task id could not be confirmed|video was submitted but (?:its response could not be verified|.*receipt could not be saved)|提交结果(?:不确定|尚未确认)/i.test(text)) kind = 'creation_outcome_unknown';
-    else if (context.state === 'cancelled' || context.state === 'canceled') kind = 'task_cancelled';
+    else if (context.state === 'cancelled' || context.state === 'canceled') kind = code === 'video_task_canceled' ? code : 'task_cancelled';
     // Explicit, documented public codes select fixed local actions, never raw text.
+    else if (['reference_person_policy_rejected', 'content_policy_rejected', 'unsupported_resolution', 'unsupported_duration', 'unsupported_aspect_ratio', 'invalid_reference_dimensions', 'reference_unavailable', 'reference_required', 'too_many_references', 'video_model_unavailable', 'prompt_too_long', 'video_service_busy', 'video_generation_timeout', 'video_status_unavailable', 'video_content_unavailable', 'video_task_expired', 'video_task_canceled', 'video_generation_failed', 'video_not_ready'].includes(videoErrorCode(data))) kind = videoErrorCode(data);
     else if (['invalid_reference_format', 'material_count', 'media_too_large', 'duration_invalid', 'watermark_invalid', 'material_conflict', 'reference_upload_required', 'inline_text_too_large', 'bridge_request_too_large'].includes(code)) kind = code;
     else if (code === 'resolution_or_ratio_invalid') kind = 'resolution_invalid';
     else if (code === 'unsupported_field') kind = 'parameters_invalid';
@@ -103,7 +135,7 @@ export function videoErrorText(value, context = {}) {
     else if (code === 'duration_invalid' || /duration.{0,80}(?:invalid|outside|out of range|unsupported|not supported)|(?:invalid|unsupported).{0,30}duration|时长.{0,20}(?:不支持|超出|超范围|无效)|不支持.{0,10}时长|支持 [\d /–.-]+ 秒|固定 \d+ 秒|最多支持 \d+ 秒/i.test(text)) kind = 'duration_invalid';
     else if (code === 'resolution_or_ratio_invalid' || /(?:unsupported|invalid).{0,30}(?:resolution|aspect.?ratio)|(?:resolution|aspect.?ratio).{0,30}(?:unsupported|not supported|invalid)|(?:分辨率|画幅比例|像素尺寸).{0,20}(?:不支持|无效|不符)|(?:不支持|仅支持).{0,20}(?:分辨率|比例)|请(?:主动选择支持的分辨率|调整画幅比例)/i.test(text)) kind = 'resolution_invalid';
     else if (code === 'watermark_invalid' || /watermark.{0,50}(?:invalid|must|not supported)|(?:invalid|unsupported).{0,30}watermark|水印(?:开关)?参数无效/i.test(text)) kind = 'watermark_invalid';
-    else if (/需要(?:至少一张)?参考图片|requires an input image/i.test(text)) kind = 'reference_required';
+    else if (/需要(?:至少一张)?参考图片|requires an input image/i.test(text)) kind = 'reference_image_required';
     else if (code === 'reference_upload_required' || /素材.*(?:上传|读取)|参考.*(?:损坏|解码|无法|HTTPS)|invalid image data/i.test(text)) kind = 'reference_upload_required';
     else if (status === 415 || /(?:status|HTTP)\s*415\b/i.test(text)) kind = 'unsupported_media';
     else if (code === 'unsupported_field' || status === 422 || /参数.{0,15}(?:无效|不支持|冲突)|首尾帧不能|仅支持参考模式|固定生成音频/i.test(text)) kind = 'parameters_invalid';
@@ -114,7 +146,7 @@ export function videoErrorText(value, context = {}) {
     // site billing ownership, even when a service uses INSUFFICIENT_BALANCE.
     // A stored safe string must never override uncertain submission or cancel.
     // No submission/billing promise is inferred from wording or HTTP status.
-    const message = ['creation_outcome_unknown', 'cancelled', 'task_cancelled'].includes(kind) ? videoErrorMessages[kind] : canonical || videoErrorMessages[kind];
+    const message = ['creation_outcome_unknown', 'cancelled', 'task_cancelled', 'video_task_canceled'].includes(kind) ? videoErrorMessages[kind] : canonical || videoErrorMessages[kind];
     const id = context.requestId ?? existing?.[2];
     return message + (typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id) ? '\n本站请求编号：' + id : '');
 }

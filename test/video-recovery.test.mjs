@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { videoRetryAt } from '../desktop/video-retry-after.mjs';
+import { videoErrorMessages } from '../desktop/video-errors.mjs';
 const { createVault } = createRequire(import.meta.url)('../desktop/vault.cjs');
 const { createVideoTasks } = createRequire(import.meta.url)('../desktop/video-tasks.cjs');
 
@@ -16,7 +17,7 @@ async function fixture(t, provider = 'openai') {
     const video = join(directory, 'fixture.mp4');
     await promisify(execFile)(resolve('desktop/media-bin/ffmpeg' + (process.platform === 'win32' ? '.exe' : '')), ['-v', 'error', '-f', 'lavfi', '-i', 'color=black:s=320x180:r=10:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', video], { windowsHide: true });
     const bytes = await readFile(video), children = new Set();
-    const state = { posts: 0, accepted: 0, bodies: [], keys: [], queries: 0, downloads: 0, ranges: 0, mode: 'pending', badUrl: true, downloadStarted: false };
+    const state = { posts: 0, accepted: 0, bodies: [], keys: [], queries: 0, downloads: 0, ranges: 0, mode: 'pending', badUrl: true, downloadStarted: false, code: 'video_service_busy' };
     const server = createServer(async (req, res) => {
         if (req.method === 'POST') {
             state.posts++; const parts = []; for await (const chunk of req) parts.push(chunk);
@@ -32,11 +33,12 @@ async function fixture(t, provider = 'openai') {
         }
         if (req.url.startsWith('/v1/videos/receipt-1') && !req.url.includes('/content')) {
             state.queries++; assert.equal(req.headers.authorization, 'Bearer fixture-key');
+            if (state.mode === 'temporary-query') { res.writeHead(422, { 'Content-Type': 'application/json', 'Retry-After': '1' }); res.end(JSON.stringify({ error: { code: state.code, message: 'VendorOther https://private.invalid balance=999 sk-private' } })); return; }
             if (state.mode === 'offline') { res.writeHead(503).end(); return; }
             if (state.mode === 'retry-after') { res.writeHead(429, { 'Retry-After': '1' }).end(); return; }
             if (state.mode === 'pending-retry-after') { res.writeHead(202, { 'Retry-After': '1' }).end(); return; }
             if (state.mode === 'missing') { res.writeHead(404).end(); return; }
-            if (['failed', 'cancelled', 'canceled', 'expired'].includes(state.mode)) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ status: state.mode })); return; }
+            if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(state.mode)) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ status: state.mode, error: { code: state.code } })); return; }
             if (state.mode === 'moderated') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ status: 'done', video: { respect_moderation: false } })); return; }
             const data = state.mode === 'pending' ? { status: 'processing' } : { status: 'completed', url: state.mode === 'expired-url' && state.badUrl ? `${base}/external/expired` : `${base}/external/fresh` };
             res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); return;
@@ -45,6 +47,7 @@ async function fixture(t, provider = 'openai') {
         if (provider === 'gemini') assert.equal(req.headers['x-goog-api-key'], 'fixture-key');
         assert.equal(req.headers.authorization, undefined, 'storage never receives an API key');
         assert.equal(req.headers.cookie, undefined, 'storage never receives a site session');
+        if (state.mode === 'temporary-content') { res.writeHead(422, { 'Content-Type': 'application/json', 'Retry-After': '1' }); res.end(JSON.stringify({ error: { code: state.code, message: 'VendorOther https://private.invalid balance=999 sk-private' } })); return; }
         if (state.mode === 'download-retry-after') { res.writeHead(503, { 'Retry-After': '1' }).end(); return; }
         if (req.url === '/external/expired') { state.badUrl = false; res.writeHead(403).end(); return; }
         const start = Number(req.headers.range?.match(/^bytes=(\d+)-$/)?.[1] || 0);
@@ -172,16 +175,30 @@ for (const [mode, state] of [['pending-retry-after', 'pending'], ['download-retr
     });
 }
 
-for (const status of ['cancelled', 'canceled', 'failed', 'expired']) {
+for (const status of ['cancelled', 'canceled', 'failed', 'error', 'expired']) {
     test(`server ${status} is terminal and stays distinct after a cold start`, async t => {
         const f = await fixture(t); f.state.mode = status;
-        const state = status === 'canceled' ? 'cancelled' : status;
+        const state = status === 'canceled' ? 'cancelled' : status === 'error' ? 'failed' : status;
         const first = f.worker('submit'), job = await first.waitState(state); await first.kill();
         if (state === 'cancelled') assert.match(job.reason, /服务端已取消原视频任务/);
         const queries = f.state.queries; f.state.mode = 'completed';
         const restored = f.worker(); const loaded = await restored.until(item => item.loaded);
         assert.equal(loaded.jobs[0].state, state); assert.equal(loaded.jobs[0].taskId, job.taskId);
         assert.equal(f.state.queries, queries); assert.equal(f.state.downloads, 0); assert.equal(f.state.posts, 1);
+    });
+}
+
+for (const code of ['video_service_busy', 'video_generation_timeout', 'video_status_unavailable', 'video_content_unavailable', 'video_not_ready']) for (const phase of ['query', 'content']) {
+    test(`temporary 422 ${code} during ${phase} keeps receipt, safe cause and Retry-After through process restart then recovers GET-only`, async t => {
+        const f = await fixture(t); f.state.mode = 'temporary-' + phase; f.state.code = code;
+        const first = f.worker('submit'), expectedState = phase === 'query' ? 'waiting' : 'download_error';
+        const event = await first.until(item => item.jobs?.some(job => job.state === expectedState && job.retryAt > Date.now()));
+        const original = event.jobs.find(job => job.state === expectedState);
+        assert.equal(original.reason, videoErrorMessages[code]); assert.equal(original.errorCode, code); assert.equal(original.taskId, 'receipt-1');
+        await first.kill(); const queries = f.state.queries, downloads = f.state.downloads;
+        f.state.mode = 'completed'; const restored = f.worker(); await restored.until(item => item.loaded);
+        assert.equal(f.state.queries, queries); assert.equal(f.state.downloads, downloads);
+        const saved = await f.saved(restored); assert.equal(saved.idempotencyKey, original.idempotencyKey); assert.equal(saved.credential, original.credential);
     });
 }
 

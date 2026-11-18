@@ -12,7 +12,7 @@ import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 import { videoModelState } from '@/lib/video-model-status';
 import type { VideoModelInfo } from "@/lib/video-model-catalog";
 import { videoErrorText, videoUserError } from "@/lib/video-display-text";
-import { videoSiteRequestId } from '../../../../desktop/video-errors.mjs';
+import { videoSiteRequestId, videoErrorCode, videoErrorRetryable } from '../../../../desktop/video-errors.mjs';
 import { videoRetryAt } from '../../../../desktop/video-retry-after.mjs';
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -30,7 +30,7 @@ import { adoptVideoTask, videoRecoveryInput, type VideoRecoveryJob } from '../vi
 type VideoResponse = { id?: string; request_id?: string; status?: string; error?: { message?: string } | string; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null; video?: { url?: string; respect_moderation?: boolean } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; onPending?: (reason?: string, code?: string) => void };
 type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: ReferenceAudio[]; target?: VideoRecoveryJob['target']; onPrepared?: (key: string) => Promise<void>; nativeJobKey?: string };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -43,7 +43,7 @@ type GeminiVideoOperation = {
     error?: { message?: string };
     response?: { generateVideoResponse?: { generatedSamples?: Array<{ video?: { uri?: string } }> } };
 };
-export type VideoGenerationTaskState = { status: "pending"; retryAt?: number } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+export type VideoGenerationTaskState = { status: "pending"; retryAt?: number; reason?: string; code?: string } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -69,6 +69,8 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
 }
 
 async function waitForVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
+    let previousReason: string | undefined | null = null;
+    const pending = (reason?: string, code?: string) => { if (reason !== previousReason) { previousReason = reason; options?.onPending?.(reason, code); } };
     const api = window.oneYesDesktop?.videoTasks;
     if (api && task.provider !== 'plugin') {
         const key = task.nativeJobKey || await adoptVideoTask(config, task);
@@ -78,6 +80,7 @@ async function waitForVideoTask(config: AiConfig, task: VideoGenerationTask, opt
             if (!job) throw Error('原视频恢复记录不存在，请检查本机数据目录；不会重新生成');
             if (job.state === 'saved' && job.result) return { saved: job.result };
             if (['failed', 'cancelled', 'expired', 'missing', 'unknown', 'not_submitted', 'confirmation', 'credentials', 'save_error'].includes(job.state)) throw Error(videoErrorText(job.reason, { state: job.state }));
+            pending(job.reason ? videoErrorText(job.reason, { state: job.state }) : undefined, job.errorCode);
             await delay(MEDIA_POLL_INTERVAL_MS, options?.signal);
         }
     }
@@ -88,12 +91,13 @@ async function waitForVideoTask(config: AiConfig, task: VideoGenerationTask, opt
             const state = await pollVideoGenerationTask(config, task, options);
             if (state.status === "completed") return state.result;
             if (state.status === "failed") throw videoTaskFailed(state.error);
-            if (state.status === 'pending') retryAt = state.retryAt;
+            if (state.status === 'pending') { retryAt = state.retryAt; pending(state.reason, state.code); }
         } catch (error) {
             // Retry only queries/downloads for this receipt, never the paid POST.
             const cause = error instanceof Error && error.cause ? error.cause : error;
             const retryable = axios.isAxiosError(cause) && (cause.response ? cause.response.status === 408 || cause.response.status === 429 || cause.response.status >= 500 : ["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"].includes(cause.code || ""));
             if (options?.signal?.aborted || !retryable) throw error;
+            pending(videoErrorText(error, { stage: 'poll' }));
             retryAt = videoRetryAt(cause.response?.headers['retry-after']);
         }
         await delay(Math.max(MEDIA_POLL_INTERVAL_MS, (retryAt ?? 0) - Date.now()), options?.signal);
@@ -397,10 +401,11 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         const retryAt = videoRetryAt(response.headers['retry-after']);
         if (response.status === 202 && !response.data) return { status: "pending", retryAt };
         const video = unwrapVideoResponse(response.data);
-        if (["failed", "cancelled", "canceled", "expired"].includes(video.status || "")) {
+        if (["failed", "error", "cancelled", "canceled", "expired"].includes(video.status || "")) {
             return { status: "failed", error: videoErrorText(video, { state: video.status, requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
         }
-        if (video.video?.respect_moderation === false) return { status: "failed", error: videoErrorText(video.error ? video : { code: 'content_policy' }, { requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
+        if (['queued', 'processing', 'pending', 'in_progress'].includes(video.status || '')) return { status: 'pending', retryAt };
+        if (video.status !== 'completed' && video.video?.respect_moderation === false) return { status: "failed", error: videoErrorText(video.error ? video : { code: 'content_policy' }, { requestId: videoSiteRequestId(aiApiUrl(config, taskPath), response.headers) }) };
         const url = videoResultUrl(video);
         // Sub2API returns an authenticated relay URL. Rebuild it from the fixed
         // account endpoint; never attach the API key to an upstream media URL.
@@ -409,7 +414,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         if (url || video.status === "completed") {
             stage = "download";
             const content = await axios.get<Blob>(aiApiUrl(config, contentPath), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: 0 });
-            await assertVideoBlob(content.data);
+            await assertVideoBlob(content.data, videoRetryAt(content.headers['retry-after']));
             return { status: "completed", result: { blob: content.data } };
         }
         if (video.status === "done") return { status: "failed", error: apiText("noPlayableVideo") };
@@ -417,14 +422,16 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     } catch (error) {
 
         reportError("video", stage, error, stage === "download" ? "video-content" : "video-openai");
-        throw await readAxiosError(error, apiText("videoTaskQueryFailed"), stage);
+        const safe = await readAxiosError(error, apiText("videoTaskQueryFailed"), stage);
+        if (safe.videoRetryable) return { status: 'pending', reason: safe.message, code: safe.videoCode, retryAt: safe.retryAt };
+        throw safe;
     }
 }
 
 async function videoResultFromUrl(url: string, options?: RequestOptions): Promise<VideoGenerationResult> {
     try {
         const response = await axios.get<Blob>(withLocalProxy(url), { responseType: "blob", signal: options?.signal, timeout: 0 });
-        await assertVideoBlob(response.data);
+        await assertVideoBlob(response.data, videoRetryAt(response.headers['retry-after']));
         return { blob: response.data };
     } catch (error) {
 
@@ -593,16 +600,22 @@ function readApiErrorMessage(value: unknown): string {
 }
 
 async function readAxiosError(error: unknown, _fallback: string, stage?: string) {
-    if (axios.isCancel(error) || error instanceof Error && ['AbortError', 'CanceledError'].includes(error.name)) return videoUserError(error);
+    if (axios.isCancel(error) || error instanceof Error && ['AbortError', 'CanceledError'].includes(error.name)) return Object.assign(videoUserError(error), { videoRetryable: false, retryAt: undefined as number | undefined, videoCode: '' });
     const response = axios.isAxiosError(error) ? error.response : undefined;
     let data = response?.data;
     if (data instanceof Blob && /json|text\/|html/i.test(data.type)) data = await data.text();
     const safe = new Error(videoErrorText(response ? { response: { ...response, data } } : error, { stage, requestId: response ? videoSiteRequestId(response.config.url || '', response.headers) : undefined }), { cause: error });
     if (error instanceof Error) safe.name = error.name;
-    return safe;
+    if (stage && ['video_task_expired', 'video_task_canceled'].includes(videoErrorCode(data))) safe.name = 'VideoTaskFailed';
+    const previous = error as { videoRetryable?: boolean; retryAt?: number; videoCode?: string };
+    return Object.assign(safe, {
+        videoRetryable: Boolean(stage && (previous?.videoRetryable || response && ![401, 403, 404, 410].includes(response.status) && videoErrorRetryable(data))),
+        retryAt: response ? videoRetryAt(response.headers['retry-after']) : previous?.retryAt,
+        videoCode: videoErrorCode(data) || previous?.videoCode || '',
+    });
 }
 
-async function assertVideoBlob(blob: Blob) {
+async function assertVideoBlob(blob: Blob, retryAt?: number) {
     if (!/json|text\/|html/i.test(blob.type)) return;
     let payload: unknown;
     try {
@@ -610,7 +623,7 @@ async function assertVideoBlob(blob: Blob) {
     } catch {
         throw Error(videoErrorText(undefined, { stage: 'download' }));
     }
-    throw Error(videoErrorText(payload, { stage: 'download' }));
+    throw Object.assign(Error(videoErrorText(payload, { stage: 'download' })), { videoRetryable: videoErrorRetryable(payload), videoCode: videoErrorCode(payload), retryAt });
 }
 
 function isPublicMediaUrl(value: string) {

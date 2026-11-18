@@ -282,8 +282,8 @@ test('expired, moderated and done-without-content tasks stop without resubmittin
         }
         let queries = 0;
         adapter(request => { queries++; assert.equal(request.method, 'get'); return { data: { status: 'failed', error: { code: 'video_generation_failed', message: 'task not found' } } }; });
-        await assert.rejects(waitForVideoGenerationTask(config, task), /找不到任务.*官网.*用量.*不要反复生成/);
-        assert.equal(queries, 1, 'an upstream missing task must terminate without resubmission');
+        await assert.rejects(waitForVideoGenerationTask(config, task), /视频生成未完成.*核对原任务/);
+        assert.equal(queries, 1, 'the fixed public failure code takes precedence over untrusted text and never resubmits');
         let posts = 0;
         axios.defaults.adapter = async request => { posts++; throw new AxiosError('error', 'ERR_BAD_RESPONSE', request, undefined, { data: { error: { message: 'xAI upstream returned status 415' } }, status: 400, statusText: '', headers: {}, config: request }); };
         await assert.rejects(createVideoGenerationTask(config, 'test'), /415.*客户端/);
@@ -458,8 +458,63 @@ test('specific rejection, generic gateway and unknown create/poll errors keep sa
                 return { config: request, status: 200, statusText: '', headers: { 'x-request-id': id }, data: { status, error, video: { respect_moderation: false } } };
             };
             await assert.rejects(createVideoGenerationTask(config, 'mock'), err => (err as Error).message === expected + '\n本站请求编号：' + id);
-            for (status of ['failed', 'completed']) assert.deepEqual(await pollVideoGenerationTask(config, { id: 'original-task', provider: 'openai', model: config.model }), { status: 'failed', error: expected + '\n本站请求编号：' + id });
+            for (status of ['failed', 'error']) assert.deepEqual(await pollVideoGenerationTask(config, { id: 'original-task', provider: 'openai', model: config.model }), { status: 'failed', error: expected + '\n本站请求编号：' + id });
         }
         assert.equal(posts, 10); assert.equal(gets, 20); assert.deepEqual(config, before);
+    } finally { axios.defaults.adapter = original; }
+});
+
+
+for (const code of ['video_service_busy', 'video_generation_timeout', 'video_status_unavailable', 'video_content_unavailable', 'video_not_ready']) for (const phase of ['poll', 'download']) {
+    test('browser temporary 422 ' + code + ' at ' + phase + ' reports safe node progress and respects Retry-After using GET only', async t => {
+        t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-11-18T00:00:00Z') });
+        const { videoErrorMessages: messages } = await import('../../../../desktop/video-errors.mjs');
+        const reasons: (string | undefined)[] = []; let queries = 0, downloads = 0;
+        const controller = new AbortController();
+        try {
+            axios.defaults.adapter = async request => {
+                assert.equal(request.method, 'get'); assert.equal(request.timeout, 0);
+                const content = request.url!.endsWith('/content'); if (content) downloads++; else queries++;
+                if (phase === 'poll' ? queries === 1 : content && downloads === 1) throw new AxiosError('private', 'ERR_BAD_REQUEST', request, undefined, { config: request, status: 422, statusText: '', headers: { 'retry-after': '9' }, data: content ? new Blob([JSON.stringify({ error: { code, message: 'VendorOther https://private.invalid balance=999 sk-private' } })], { type: 'application/json' }) : { error: { code, type: 'unrelated', message: 'VendorOther https://private.invalid balance=999 sk-private' } } });
+                return { config: request, status: 200, statusText: '', headers: {}, data: content ? new Blob(['original'], { type: 'video/mp4' }) : { status: 'completed' } };
+            };
+            const waiting = waitForVideoGenerationTask(config, { id: 'original', provider: 'openai', model: config.model }, { signal: controller.signal, onPending: reason => reasons.push(reason) });
+            await turn(); assert.equal(reasons[0], messages[code as keyof typeof messages]);
+            t.mock.timers.tick(8999); await turn(); assert.equal(queries, 1);
+            t.mock.timers.tick(1); await turn(); assert.equal((await waiting).blob?.size, 8); assert.equal(queries, 2);
+        } finally { controller.abort(); axios.defaults.adapter = original; t.mock.timers.reset(); }
+    });
+}
+
+test('browser saved temporary failures resume original receipts while confirmed terminal and unknown submissions stay stopped', async () => {
+    const { hasResumableVideoTask } = await import('@/lib/canvas/canvas-generation-helpers');
+    const { CanvasNodeType } = await import('@/types/canvas');
+    const node = { id: 'original', type: CanvasNodeType.Video, title: '视频', position: { x: 0, y: 0 }, width: 320, height: 200, metadata: { videoTaskId: 'original-task', videoRecoveryState: 'failed', videoErrorCode: 'video_status_unavailable', vquality: '1080' } };
+    const before = structuredClone(node);
+    assert.equal(hasResumableVideoTask(node), true);
+    for (const videoServerStatus of ['failed', 'error', 'expired', 'canceled', 'cancelled']) assert.equal(hasResumableVideoTask({ ...node, metadata: { ...node.metadata, videoServerStatus } }), false);
+    assert.equal(hasResumableVideoTask({ ...node, metadata: { ...node.metadata, videoErrorCode: undefined } }), false);
+    assert.equal(hasResumableVideoTask({ ...node, metadata: { ...node.metadata, videoTaskId: undefined, videoErrorCode: 'creation_outcome_unknown' } }), false);
+    assert.deepEqual(node, before);
+});
+
+test('current queued/processing/completed status ignores historical errors, terminal status reads its fixed code', async () => {
+    const { videoErrorMessages: messages } = await import('../../../../desktop/video-errors.mjs');
+    const task = { id: 'original', provider: 'openai' as const, model: config.model }; let downloads = 0;
+    try {
+        for (const status of ['queued', 'processing', 'completed']) {
+            adapter(request => {
+                assert.equal(request.method, 'get');
+                if (request.url!.endsWith('/content')) { downloads++; return { data: new Blob(['original'], { type: 'video/mp4' }) }; }
+                return { data: { status, error: { code: 'invalid_reference_format', message: 'private' }, video: { respect_moderation: false } } };
+            });
+            const result = await pollVideoGenerationTask(config, task); assert.equal(result.status, status === 'completed' ? 'completed' : 'pending');
+        }
+        assert.equal(downloads, 1);
+        for (const status of ['failed', 'error', 'expired', 'canceled', 'cancelled']) {
+            const code = status === 'expired' ? 'video_task_expired' : status.startsWith('cancel') ? 'video_task_canceled' : 'video_generation_timeout';
+            adapter(() => ({ data: { status, error: { code, message: 'VendorOther balance=99 https://private.invalid' } } }));
+            assert.deepEqual(await pollVideoGenerationTask(config, task), { status: 'failed', error: messages[code as keyof typeof messages] });
+        }
     } finally { axios.defaults.adapter = original; }
 });

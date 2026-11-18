@@ -95,6 +95,8 @@ export type CanvasNodeMetadata = {
     videoTaskId?: string;
     videoJobKey?: string;
     videoRecoveryState?: string;
+    videoErrorCode?: string;
+    videoServerStatus?: string;
     videoTaskProvider?: "openai" | "gemini";
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
