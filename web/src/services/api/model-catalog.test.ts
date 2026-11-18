@@ -73,6 +73,18 @@ test("SD video variants enter their own group with exact upstream IDs and preser
     assert.ok(!edited.models.some(model => model.name === names[1]));
 });
 
+test('Video discovers future Chinese priced models and their returned bare ID without a model whitelist', () => {
+    const canonical = '未来中文-v9', alias = canonical + '【1080p 5–15秒 ￥0/条】';
+    const video = { ...channel(), id: GROK_VIDEO_CHANNEL_ID };
+    const synced = syncChannelModels(video, [canonical, alias, 'gpt-5.5', 'gpt-image-2', '价格待定【720p 5s】']);
+    assert.deepEqual(synced.models.map(model => [model.name, model.capability]), [[canonical, 'video'], [alias, 'video']]);
+    const other = syncChannelModels(channel(), [canonical, alias, 'gpt-5.5', 'gpt-image-2']);
+    assert.equal(other.models.find(model => model.name === canonical)?.capability, 'text', 'Video-specific inference cannot change other groups');
+    const configured = configureModelDefaults({ ...defaultConfig, channels: [synced], videoModel: GROK_VIDEO_CHANNEL_ID + '::' + canonical });
+    assert.equal(resolveModelRequestConfig(configured, GROK_VIDEO_CHANNEL_ID + '::' + alias).model, alias);
+    assert.equal(configured.videoModel, GROK_VIDEO_CHANNEL_ID + '::' + canonical);
+});
+
 test("cached and simultaneous reads share one native request, explicit refresh is fresh and credentials stay out of cache keys", async () => {
     let calls = 0;
     bridge(async () => { calls++; return { data: ["gpt-image-2", "gpt-5.5", "gpt-4o-mini-tts"] }; });

@@ -139,6 +139,9 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
             await wait('document.querySelectorAll("[role=option]").length === 52');
             const rows = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>{const name=option.querySelector("[data-model-name]"),info=option.querySelector("[data-model-information]");return {id:option.getAttribute("data-model-id"),name:name.textContent,info:info?.textContent,separate:info&&info.getBoundingClientRect().top>=name.getBoundingClientRect().bottom}})');
+            await js('document.querySelector("[data-radix-select-viewport]").scrollTop=100000');
+            const searchBounds = await js('(()=>{const input=document.querySelector("input[type=search]"),r=input.getBoundingClientRect();return {visible:input===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)}})()');
+            assert.ok(searchBounds.visible, 'model search must stay visible after scrolling to the bottom');
             assert.ok(rows.every(row => row.separate && /¥/.test(row.info)), 'every video model must have its information on a second line');
             const bounds = await js('(()=>{const r=document.querySelector("[role=listbox]").getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth}})()');
             assert.ok(bounds.left >= 0 && bounds.right <= bounds.width, 'two-line model list must fit narrow windows');
@@ -177,6 +180,14 @@ app.whenReady().then(async () => {
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
         await wait('!document.querySelector("[role=listbox]") && modelTest.state().config.videoModel === "oneyes-minimax::veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]"');
         assert.equal((await js('modelTest.request()')).model, 'veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]', 'only explicit selection adopts a recommended request ID');
+        names.push('未来中文-v9', '未来中文-v9【1080p 5秒 ￥0/条】');
+        await js('modelTest.expire();modelTest.sync()'); await wait('!modelTest.state().syncing');
+        await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+        await wait('Array.from(document.querySelectorAll("[role=option]")).filter(row=>row.getAttribute("data-model-id")?.startsWith("oneyes-minimax::")).length === 27');
+        assert.equal(await js('Array.from(document.querySelectorAll("[role=option]")).find(row=>row.getAttribute("data-model-id")==="oneyes-minimax::未来中文-v9【1080p 5秒 ￥0/条】")?.querySelector("[data-model-name]").textContent'), '未来中文-v9');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+        await wait('!document.querySelector("[role=listbox]")');
         for (const kind of ['text', 'image']) {
             await js(`document.querySelector('[data-testid=${kind}-picker] [role=combobox]').focus()`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });

@@ -8,6 +8,7 @@ import { videoModelOptionName } from "@/lib/video-model-info";
 import { videoDisplayText } from "@/lib/video-display-text";
 import { videoModelDefaults, type VideoModelDefaults } from '@/lib/video-model-defaults';
 import { referenceFileMaxBytes, type ReferenceFileMaxBytes } from '@/lib/video-material-policy';
+import { modelInformationPriority, splitModelInformation } from '@/lib/model-information';
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio" | "decision";
@@ -434,7 +435,8 @@ export function syncChannelModels(channel: ModelChannel, names: string[], metada
     if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== "string" || !name.trim())) throw new Error("上游未返回有效模型，已保留本地配置");
     const platform = channel.id === GROK_VIDEO_CHANNEL_ID ? "grok" : channel.oneYes?.platform || (channel.id === "oneyes-deepseek" ? "deepseek" : channel.id === "oneyes-typesafe" ? "typesafe" : "openai");
     const allowed = platform === "openai" ? ["image", "text", "video", "audio"] : [platform === "deepseek" ? "text" : platform === "typesafe" ? "decision" : "video"];
-    const remote = normalizeChannelModels(names).filter(model => allowed.includes(model.capability));
+    const pricedVideoNames = new Set(platform === 'grok' ? names.filter(name => modelInformationPriority(name) === 2).map(name => splitModelInformation(name).name) : []);
+    const remote = normalizeChannelModels(names).map(model => platform === 'grok' && pricedVideoNames.has(splitModelInformation(model.name).name) ? { ...model, capability: 'video' as const } : model).filter(model => allowed.includes(model.capability));
     const returned = new Set(names.map(name => name.trim()));
     const excluded = new Set(channel.excludedModels || []);
     const models: ChannelModel[] = channel.models.map(model => {

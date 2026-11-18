@@ -83,7 +83,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 onPointerDown={(event) => event.stopPropagation()}
                 onMouseDown={(event) => event.stopPropagation()}
             >
-                {capability === 'video' && <input type="search" aria-label="搜索视频模型" placeholder="搜索模型、分辨率或价格" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.parentElement?.querySelector<HTMLElement>('[role=option]:not([data-disabled])')?.focus(); } }} className="mb-1 w-full rounded-lg border border-input bg-transparent px-2 py-2 text-sm outline-none focus:border-ring" />}
+                {capability === 'video' && <input type="search" aria-label="搜索视频模型" placeholder="搜索模型、分辨率或价格" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.parentElement?.querySelector<HTMLElement>('[role=option]:not([data-disabled])')?.focus(); } }} className="sticky top-0 z-10 mb-1 w-full rounded-lg border border-input bg-popover px-2 py-2 text-sm outline-none focus:border-ring" />}
                 {visibleOptions.length ? (
                     visibleOptions.map((option) => (
                         <SelectItem key={option.value} value={option.value} data-model-id={option.value} textValue={option.label} className="py-2 [&>span:last-child]:min-w-0" title={option.label}
