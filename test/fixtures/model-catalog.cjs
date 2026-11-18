@@ -29,6 +29,8 @@ ipcMain.handle('collaboration:call', () => ({ status: 'offline' }));
 let recoveryRetries = 0;
 const recoveryJobs = [{ key: '00000000-0000-0000-0000-000000000001', taskId: 'original-task', model: 'default::gemini-omni-flash-1.2', provider: 'openai', site: 'https://oneyes.ai', channelId: 'default', state: 'credentials', reason: '请恢复原 API Key 后继续查询', createdAt: Date.now(), parameters: { vquality: '1080p', videoSeconds: '5', size: '16:9' } },
     { key: '00000000-0000-0000-0000-000000000002', model: 'default::wan3.0-video', provider: 'openai', site: 'https://oneyes.ai', channelId: 'default', state: 'unknown', reason: '未取得可靠回执，请先核对官网任务和用量', createdAt: Date.now(), parameters: { vquality: '720p', videoSeconds: '5', size: '16:9' } }];
+recoveryJobs[0].diagnosticId = '11111111-1111-1111-1111-111111111111';
+recoveryJobs[1].diagnosticId = '22222222-2222-2222-2222-222222222222';
 ipcMain.handle('video-tasks:call', (_event, operation, args) => {
     if (operation === 'list') return recoveryJobs;
     assert.equal(operation, 'retry'); assert.equal(args, recoveryJobs[0].key); recoveryRetries++;
@@ -515,7 +517,8 @@ app.whenReady().then(async () => {
         await js('showVideoRecovery()');
         await wait('document.querySelector(".ant-modal-body")?.textContent.includes("等待恢复凭据")');
         const recovery = await js('document.querySelector(".ant-modal-body").textContent');
-        assert.match(recovery, /提交待核实/); assert.match(recovery, /不会重新生成、重复付费/); assert.match(recovery, /记录编号：00000000-0000-0000-0000-000000000001/);
+        assert.match(recovery, /提交待核实/); assert.match(recovery, /不会重新生成、重复付费/); assert.match(recovery, /记录编号：11111111-1111-1111-1111-111111111111/);
+        for (const job of recoveryJobs) assert.ok(!recovery.includes(job.key), 'ordinary recovery must never display the full idempotency key');
         assert.doesNotMatch(recovery, /original-task|https:\/\//, 'ordinary recovery details expose local records, never service task IDs or sites');
         assert.equal(await js('[...document.querySelectorAll(".ant-modal-body button")].filter(button=>button.textContent.includes("重试查询")).length'), 1, 'an unknown submission cannot offer paid automatic regeneration');
         await js('[...document.querySelectorAll(".ant-modal-body button")].find(button=>button.textContent.includes("重试查询")).click()');

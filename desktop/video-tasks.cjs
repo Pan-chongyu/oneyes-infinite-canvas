@@ -256,7 +256,8 @@ function createVideoTasks({ directory, vault, credentials, fetcher, probe, chang
             const job = get(key);
             let data;
             try { data = await response.clone().json(); } catch { /* Preserve uncertain submission, never replay. */ }
-            const diagnostics = { ...safeVideoDiagnostics(job.diagnostics), submit: videoRequestDiagnostic(job.site, data, response.headers, response.status) };
+            const previous = safeVideoDiagnostics(job.diagnostics);
+            const diagnostics = { ...previous, submit: previous.submit?.bridgeRequestId ? previous.submit : videoRequestDiagnostic(job.site, data, response.headers, response.status) };
             if (job.retryLargeMaterial && response.status === 429 && (data?.error?.code || data?.code) === 'large_material_busy') {
                 await patch(job, { diagnostics, state: 'throttled', retryAt: videoRetryAt(response.headers.get('retry-after')) ?? Date.now() + 5000, reason: '大素材通道繁忙，尚未提交上游；按服务器要求等待，随后使用同一幂等键提交原请求' }); return;
             }

@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
         assert.equal(input.apiKey, 'original-recovery-key'); assert.equal(input.channelId, 'old-channel');
         assert.equal(input.parameters.vquality, '720'); assert.equal(input.parameters.videoSeconds, '5');
         assert.ok(recoveryResult); recoveries.push(input);
-        recoveryJob = { ...input, apiKey: undefined, key: 'retired-job', state: 'saved', result: recoveryResult };
+        recoveryJob = { ...input, apiKey: undefined, key: 'retired-job', diagnosticId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', state: 'saved', result: recoveryResult };
         return recoveryJob.key;
     });
     protocol.handle('oneyes-canvas', request => { const path = new URL(request.url).pathname; if (path.startsWith('/media-tools/')) return media.request(request); if (path === '/plugins/index.json') return Response.json([]); const { file } = route(request.url, root); assert.ok(file); return net.fetch(file); });
@@ -131,7 +131,7 @@ app.whenReady().then(async () => {
         console.log('NATIVE_RETIRED_MODEL_CANVAS_RECEIPT_RECOVERY_ORIGINAL_MODEL_KEY_AND_PARAMETERS_OK');
         const unconfirmedCases = [...['unknown', 'submitting', 'prepared', 'not_submitted'].map(status => ({ status, entry: 'overlay' })), ...['toolbar', 'panel'].map(entry => ({ status: 'unknown', entry }))];
         for (const { status, entry } of unconfirmedCases) {
-            recoveryJob = { key: 'unconfirmed-job', model: 'default::grok-imagine-video', site: 'https://oneyes.ai', channelId: 'default', provider: 'openai', state: status, createdAt: Date.now(), parameters: { size: '16:9', vquality: '480', videoSeconds: '5' } };
+            recoveryJob = { key: 'unconfirmed-job', diagnosticId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', model: 'default::grok-imagine-video', site: 'https://oneyes.ai', channelId: 'default', provider: 'openai', state: status, createdAt: Date.now(), parameters: { size: '16:9', vquality: '480', videoSeconds: '5' } };
             await js('videoWorkflowTest.seedUnconfirmedTask()');
             const loaded = new Promise(resolve => win.webContents.once('did-finish-load', resolve)); win.reload(); await loaded;
             await wait('Boolean(window.videoWorkflowTest && document.querySelector("[data-node-id=unconfirmed-video]"))');
@@ -148,7 +148,8 @@ app.whenReady().then(async () => {
                     await js('document.querySelector("button[aria-label=查看原任务]").click()');
                 }
             }
-            await wait('Boolean(document.querySelector(".ant-modal-body")?.textContent.includes("unconfirmed-job"))');
+            await wait('Boolean(document.querySelector(".ant-modal-body")?.textContent.includes("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"))');
+            assert.ok(!await js('document.querySelector(".ant-modal-body").textContent.includes("unconfirmed-job")'), 'recovery displays the independent diagnostic ID, never the private submission key');
             assert.equal(await js('[...document.querySelectorAll(".ant-modal-body button")].some(button=>/重试查询|生成/.test(button.textContent))'), false, status);
             assert.ok(videoOperations.slice(before).length > 0);
             assert.ok(videoOperations.slice(before).every(operation => operation === 'list'), status + ': ordinary retry cannot prepare, adopt or submit');

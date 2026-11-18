@@ -27,7 +27,7 @@ test('bridge IDs are exact, separate from task IDs and accepted only from the ac
     }
 });
 
-async function fixture(t, fetcher) {
+async function fixture(t, fetcher, retryLargeMaterial = false) {
     const directory = await mkdtemp(join(tmpdir(), 'canvas-diagnostics-'));
     let stored; const vault = { read: async () => stored, write: async value => { stored = value; } };
     const done = Promise.withResolvers();
@@ -35,7 +35,7 @@ async function fixture(t, fetcher) {
         probe: async () => ({ width: 4, height: 3, durationMs: 1000, mimeType: 'video/mp4' }),
         changed: jobs => { if (jobs[0]?.state === 'saved') done.resolve(jobs[0]); } });
     const instance = manager(); t.after(async () => { await instance.close(); await rm(directory, { recursive: true, force: true }); });
-    const key = await instance.prepare({ site: base, apiKey: secret, channelId: 'fixture', model: 'fixture::seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]', provider: 'openai', parameters: { prompt: secret } });
+    const key = await instance.prepare({ site: base, apiKey: secret, channelId: 'fixture', model: 'fixture::seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]', provider: 'openai', retryLargeMaterial, parameters: { prompt: secret } });
     const headers = { Authorization: 'Bearer ' + secret, 'Content-Type': 'application/json', 'Idempotency-Key': key };
     await instance.beforeSubmit(key, base + '/v1/videos', headers, JSON.stringify({ model: 'fixture', prompt: secret }));
     return { instance, key, manager, done: done.promise, journal: () => JSON.parse(stored) };
@@ -72,4 +72,12 @@ test('gateway-replaced HTTP 409 keeps the original idempotency record and safe g
     assert.equal(f.journal().jobs[0].idempotencyKey, f.key); assert.equal(calls, 0);
     assert.doesNotMatch(videoDiagnosticReport(job), /prompt-secret|sk-private|private.invalid|idempotency/);
     assert.ok(!videoDiagnosticReport(job).includes(f.key));
+});
+
+test('an explicitly unsent busy response retains the first valid bridge submit ID when the original key receives its receipt', async t => {
+    const f = await fixture(t, async () => Response.json({ status: 'processing', bridge_request_id: br('c') }), true);
+    await f.instance.receipt(f.key, Response.json({ error: { code: 'large_material_busy' }, bridge_request_id: br('a') }, { status: 429 }));
+    await f.instance.receipt(f.key, Response.json({ request_id: task, bridge_request_id: br('b') }));
+    const job = (await f.instance.list())[0];
+    assert.equal(job.taskId, task); assert.equal(job.diagnostics.submit.bridgeRequestId, br('a')); assert.equal(job.idempotencyKey, f.key);
 });
