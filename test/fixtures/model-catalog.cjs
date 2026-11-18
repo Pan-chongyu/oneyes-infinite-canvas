@@ -337,13 +337,11 @@ app.whenReady().then(async () => {
             const target = await js(`(()=>{const item=document.activeElement,r=item.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),visible:item.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),model:item.getAttribute('data-model-id'),text:item.textContent.trim()};})()`);
             assert.equal(target.visible, true, 'last model must be clickable above neighboring nodes');
             assert.notEqual((await js('modelNodeTest.state()')).metadata.model, target.model);
-            await js(`window.modelPointerTrace=[];for(const type of ['pointermove','pointerdown','pointerup','mousedown','mouseup','click'])document.addEventListener(type,event=>window.modelPointerTrace.push({type,x:event.clientX,y:event.clientY,model:event.target.closest?.('[data-model-id]')?.getAttribute('data-model-id'),disabled:event.target.closest?.('[data-model-id]')?.hasAttribute('data-disabled'),prevented:event.defaultPrevented}),{capture:true,once:true})`);
             win.webContents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y });
             await wait(`document.elementFromPoint(${target.x},${target.y})?.closest('[role=option]')?.getAttribute('data-model-id')===${JSON.stringify(target.model)} && document.activeElement?.getAttribute('data-model-id')===${JSON.stringify(target.model)}`);
             win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: target.x, y: target.y });
             await js('new Promise(resolve=>requestAnimationFrame(resolve))');
             win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: target.x, y: target.y });
-            console.log('NATIVE_MODEL_POINTER_TRACE', { scale, target, events: await js('window.modelPointerTrace'), selected: (await js('modelNodeTest.state()')).metadata.model });
             await wait('!document.querySelector("[role=listbox]")');
             assert.equal((await js('modelNodeTest.state()')).metadata.model, target.model);
             const selectedMetadata = (await js('modelNodeTest.state()')).metadata;
