@@ -8,9 +8,12 @@ const { fetchModelCatalog, fetchModelCatalogEntries } = await import("./model-ca
 const { configureModelDefaults, defaultConfig, GROK_VIDEO_CHANNEL_ID, normalizeOneYesConfig, resolveModelRequestConfig, selectableModelsByCapability, syncChannelModels, useConfigStore } = await import("@/stores/use-config-store");
 const { useModelCatalogStore } = await import("@/stores/use-model-catalog-store");
 const { useOneYesAccountStore } = await import("@/stores/use-oneyes-account-store");
+const { useVideoCatalogStore } = await import('@/stores/use-video-catalog-store');
+const restoreVideoCatalog = useVideoCatalogStore.getState().restore;
 type ModelChannel = typeof defaultConfig.channels[number];
 const channel = (apiKey = "fixture-secret-a"): ModelChannel => ({ ...defaultConfig.channels[0], apiKey, models: [] });
 function bridge(list: (key: string) => Promise<{ data?: string[]; error?: string }>) {
+    useVideoCatalogStore.setState({ catalog: undefined, delayed: true, restore: async () => {} });
     window.oneYesDesktop = { models: { list } } as NonNullable<Window["oneYesDesktop"]>;
     queryClient.clear();
     useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [channel()] });
@@ -207,4 +210,50 @@ test("managed keys wait for the owning account and each platform keeps only appr
         const result = syncChannelModels({ ...channel(), id }, names);
         assert.ok(result.models.length && result.models.every(model => model.capability === capability));
     }
+});
+
+test('public feed caches coalesced reads, retains last good state/price on failures and expiry, and never grants key rights', async t => {
+    const { default: storage } = await import('localforage');
+    const { fetchVideoCatalog } = await import('./video-catalog');
+    const { parseVideoCatalog } = await import('../../../../desktop/video-catalog.mjs');
+    let saved: unknown, calls = 0;
+    t.mock.method(storage, 'setItem', async (_key: string, value: unknown) => { saved = value; return value; });
+    const fixture = () => ({ schema_version: 1, generated_at: new Date().toISOString(), refresh_after_seconds: 300, check: { stale: false }, data: [{ id: 'grok-imagine-video', model_name: 'grok-imagine-video', model_info: '480p 5s ¥1/条', request_ids: ['grok-imagine-video'], status: 'active', new_tasks_enabled: true, stale: false, price_stale: false, parameters_stale: false }] });
+    let feed: unknown = fixture(), error = '';
+    bridge(async () => ({ data: ['grok-imagine-video'] }));
+    window.oneYesDesktop!.models.videoCatalog = async () => { calls++; return error ? { error } : { data: feed }; };
+    const before = structuredClone(useConfigStore.getState().config);
+    try {
+        const [a, b] = await Promise.all([fetchVideoCatalog(), fetchVideoCatalog()]);
+        assert.deepEqual(a, b); assert.equal(calls, 1);
+        await useVideoCatalogStore.getState().sync(); assert.equal(calls, 1);
+        const good = useVideoCatalogStore.getState().catalog;
+        assert.deepEqual(saved, good); assert.equal(useVideoCatalogStore.getState().delayed, false);
+        for (const bad of [undefined, {}, { ...fixture(), data: [] }, { ...fixture(), generated_at: 'bad' }, { ...fixture(), generated_at: new Date(Date.now() + 61_000).toISOString() }, { ...fixture(), generated_at: new Date(Date.now() - 661_000).toISOString() }]) {
+            feed = bad; await useVideoCatalogStore.getState().sync(true);
+            assert.deepEqual(useVideoCatalogStore.getState().catalog, good); assert.equal(useVideoCatalogStore.getState().delayed, true);
+        }
+        error = 'private auth/body'; await useVideoCatalogStore.getState().sync(true);
+        assert.deepEqual(useVideoCatalogStore.getState().catalog, good); error = '';
+        const unknown = fixture(); Object.assign(unknown.data[0], { status: 'unknown', new_tasks_enabled: false, model_info: 'unverified price ¥999/条', price_stale: true, parameters_stale: true });
+        feed = unknown; await useVideoCatalogStore.getState().sync(true);
+        const retained = useVideoCatalogStore.getState().catalog!;
+        assert.equal(retained.data[0].status, 'active'); assert.equal(retained.data[0].new_tasks_enabled, false); assert.equal(retained.data[0].model_info, 'unverified price ¥999/条'); assert.equal(retained.data[0].price_stale, true); assert.equal(retained.data[0].stale, true);
+        const newPrice = fixture(); Object.assign(newPrice.data[0], { model_info: '480p 5s ¥2/条', parameters_stale: true, price_stale: false });
+        feed = newPrice; await useVideoCatalogStore.getState().sync(true);
+        assert.equal(useVideoCatalogStore.getState().catalog!.data[0].model_info, '480p 5s ¥2/条', 'pending parameter review cannot hide a verified new price');
+        assert.equal(useVideoCatalogStore.getState().catalog!.data[0].parameters_stale, true);
+        assert.equal(useVideoCatalogStore.getState().catalog!.data[0].price_stale, false);
+        assert.deepEqual(useVideoCatalogStore.getState().catalog!.data[0].request_ids, ['grok-imagine-video']);
+        const serverRetained = fixture(); Object.assign(serverRetained.data[0], { model_info: '480p 5s ¥3/条', price_stale: true });
+        feed = serverRetained; await useVideoCatalogStore.getState().sync(true);
+        assert.equal(useVideoCatalogStore.getState().catalog!.data[0].model_info, '480p 5s ¥3/条', 'server last-verified price has priority over an older local cache');
+        serverRetained.data[0].model_info = ''; await useVideoCatalogStore.getState().sync(true);
+        assert.equal(useVideoCatalogStore.getState().catalog!.data[0].model_info, '480p 5s ¥3/条', 'only an absent display line falls back to local reference information');
+        t.mock.method(storage, 'getItem', async () => parseVideoCatalog(fixture()));
+        useVideoCatalogStore.setState({ catalog: undefined, restore: restoreVideoCatalog });
+        await useVideoCatalogStore.getState().restore();
+        assert.equal(useVideoCatalogStore.getState().catalog!.data[0].status, 'active'); assert.equal(useVideoCatalogStore.getState().delayed, true);
+        assert.deepEqual(useConfigStore.getState().config, before, 'public display metadata cannot mutate config, parameters or key permissions');
+    } finally { queryClient.clear(); useVideoCatalogStore.setState({ catalog: undefined, delayed: true, restore: async () => {} }); }
 });

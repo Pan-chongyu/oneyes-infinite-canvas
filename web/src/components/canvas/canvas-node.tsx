@@ -15,6 +15,9 @@ import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasN
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { useTranslation } from "react-i18next";
+import { VideoModelStatus } from '@/components/video-model-status';
+import { useConfigStore, isModelUnavailable } from '@/stores/use-config-store';
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
@@ -325,6 +328,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 else onContextMenu(event, data.id);
             }}
         >
+            {data.type === CanvasNodeType.Video && data.metadata?.model && <div className="pointer-events-none absolute left-3 top-2 z-[65] max-w-[calc(100%-24px)]"><VideoModelStatus value={data.metadata.model} /></div>}
             {!referenceSelectionState && (isSelected || hovered || isEditingTitle) && (
                 <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     {isEditingTitle ? (
@@ -521,12 +525,16 @@ function LoadingContent({ theme, message }: Pick<NodeContentRendererProps, "them
 
 function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
     const { t } = useTranslation();
+    const config = useConfigStore(state => state.config);
+    useVideoCatalogStore(state => state.catalog);
+    const disabled = node.type === CanvasNodeType.Video && !(!node.metadata?.content && (node.metadata?.videoTaskId || node.metadata?.videoJobKey)) && isModelUnavailable(config, node.metadata?.model || config.videoModel);
     return (
         <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
             <div role="alert" className="whitespace-pre-line break-words text-xs leading-5" style={{ color: theme.node.text }}>{node.type === CanvasNodeType.Video ? videoErrorText(node.metadata?.errorDetails || t("canvas.node.failed"), { state: node.metadata?.videoRecoveryState }) : node.metadata?.errorDetails || t("canvas.node.failed")}</div>
             <button
                 type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
+                disabled={disabled}
+                className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02] disabled:opacity-50"
                 style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                 onClick={(event) => {
                     event.stopPropagation();

@@ -10,9 +10,10 @@ globalThis.window = { localStorage } as unknown as Window & typeof globalThis;
 const { createVideoGenerationTask, pollVideoGenerationTask, waitForVideoGenerationTask } = await import('./video');
 const { defaultConfig } = await import('@/stores/use-config-store');
 const { videoModelCatalog } = await import('@/lib/video-model-catalog');
+const { useVideoCatalogStore } = await import('@/stores/use-video-catalog-store');
 const availableModels = [...videoModelCatalog.flatMap(model => [model.id, ...model.aliases]), 'sora-2', 'seedance-2.5'];
 const desktop = () => ({ models: { list: async () => ({ data: availableModels }) } }) as unknown as NonNullable<Window['oneYesDesktop']>;
-beforeEach(() => { window.oneYesDesktop = desktop(); });
+beforeEach(() => { window.oneYesDesktop = desktop(); useVideoCatalogStore.setState({ catalog: undefined, delayed: true, restore: async () => {} }); });
 const interceptor = axios.interceptors.request.use(request => {
     if (request.url?.startsWith('oneyes-canvas://app/oneyes-api')) request.url = request.url.replace('oneyes-canvas://app/oneyes-api', 'https://oneyes.ai');
     return request;
@@ -26,6 +27,32 @@ const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 function adapter(handle: (request: AxiosRequestConfig) => { data: unknown; status?: number }) {
     axios.defaults.adapter = async request => ({ status: 200, ...handle(request), statusText: 'OK', headers: {}, config: request });
 }
+
+test('explicit retirement, outage or managed pause stops paid creation while the original receipt still recovers', async () => {
+    const { parseVideoCatalog } = await import('../../../../desktop/video-catalog.mjs');
+    let posts = 0, queries = 0, discoveries = 0;
+    window.oneYesDesktop!.models.list = async () => { discoveries++; return { data: availableModels }; };
+    try {
+        adapter(request => {
+            if (request.method === 'post') { posts++; return { data: { request_id: 'new-task' } }; }
+            queries++; assert.match(request.url!, /\/videos\/original-receipt$/);
+            return { data: { status: 'processing' } };
+        });
+        for (const [status, enabled, pattern] of [['retired', false, /已下架/], ['unavailable', false, /暂不可用/], ['active', false, /暂停新建/]] as const) {
+            useVideoCatalogStore.setState({ catalog: parseVideoCatalog({ schema_version: 1, generated_at: new Date().toISOString(), check: { stale: false }, data: [{ id: 'grok-imagine-video', request_ids: ['grok-imagine-video'], status, new_tasks_enabled: enabled, stale: false, price_stale: false, parameters_stale: false }] }) });
+            await assert.rejects(createVideoGenerationTask(config, 'new paid task'), pattern);
+            assert.equal((await pollVideoGenerationTask(config, { id: 'original-receipt', provider: 'openai', model: config.model })).status, 'pending');
+        }
+        assert.equal(posts, 0); assert.equal(discoveries, 0); assert.equal(queries, 3);
+        useVideoCatalogStore.setState({ catalog: undefined, delayed: true });
+        // A feed request that never returns must not hold a permitted generation hostage.
+        let release!: (value: { error: string }) => void;
+        window.oneYesDesktop!.models.videoCatalog = async () => new Promise(resolve => { release = resolve; });
+        assert.equal((await createVideoGenerationTask(config, 'explicit user generation')).id, 'new-task');
+        assert.equal(posts, 1); assert.equal(discoveries, 1);
+        release({ error: 'delayed' }); await turn();
+    } finally { axios.defaults.adapter = original; queryClient.clear(); }
+});
 
 test('video waits past the old 120-poll limit and retries only the original GET after transient failures', async t => {
     t.mock.timers.enable({ apis: ['setTimeout'] });

@@ -9,6 +9,8 @@ import { videoDisplayText } from "@/lib/video-display-text";
 import { videoModelDefaults, type VideoModelDefaults } from '@/lib/video-model-defaults';
 import { referenceFileMaxBytes, type ReferenceFileMaxBytes } from '@/lib/video-material-policy';
 import { modelInformationPriority, splitModelInformation } from '@/lib/model-information';
+import { useVideoCatalogStore } from './use-video-catalog-store';
+import { videoModelState } from '@/lib/video-model-status';
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio" | "decision";
@@ -212,7 +214,8 @@ export function modelCapabilityOf(config: AiConfig, value: string): ModelCapabil
 }
 
 export function isModelUnavailable(config: AiConfig, value: string) {
-    return findChannelModel(config, value)?.model.unavailable === true;
+    const model = findChannelModel(config, value)?.model;
+    return model?.unavailable === true || (!model || model.capability === 'video') && videoModelState(config, value, useVideoCatalogStore.getState().catalog).disabled;
 }
 
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
@@ -236,7 +239,7 @@ export function resolveModelForCapability(config: AiConfig, currentModel: string
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
     if (!capability) return config.models;
-    return config.channels.flatMap((channel) => channel.models.filter((model) => !model.unavailable && model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+    return config.channels.flatMap((channel) => channel.models.filter((model) => !model.unavailable && model.capability === capability && !isModelUnavailable(config, encodeChannelModel(channel.id, model.name))).map((model) => encodeChannelModel(channel.id, model.name)));
 }
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
@@ -246,7 +249,7 @@ export function resolveModelScript(config: AiConfig, value: string) {
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const match = findChannelModel(config, model);
-    return Boolean(match && !match.model.unavailable && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
+    return Boolean(match && !isModelUnavailable(config, model) && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
 }
 
 export function hasConfiguredModels(config: AiConfig) {

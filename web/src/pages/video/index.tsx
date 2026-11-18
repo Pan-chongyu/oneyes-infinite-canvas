@@ -20,7 +20,8 @@ import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUr
 import { createVideoGenerationTask, isVideoTaskFailed, waitForVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, isModelUnavailable, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 import { videoErrorText } from "@/lib/video-display-text";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
@@ -109,7 +110,8 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const inputs = { imageCount: references.length, audioCount: 0, videoCount: 0 };
-    const canGenerate = Boolean(prompt.trim());
+    useVideoCatalogStore(state => state.catalog);
+    const canGenerate = Boolean(prompt.trim()) && !isModelUnavailable(effectiveConfig, model);
 
     useEffect(() => {
         if (!running || !startedAt) return;

@@ -10,6 +10,7 @@ const { createAccount } = require('./account.cjs');
 const { createAgent } = require('./agent.cjs');
 const { createNetwork } = require('./network.cjs');
 const { createModelCatalog } = require('./models.cjs');
+const { createVideoCatalog } = require('./video-catalog.mjs');
 const { createUpdater } = require('./updater.cjs');
 const { createReleaseFetcher } = require('./release-fetch.cjs');
 const { createNativeFetch } = require('./native-fetch.cjs');
@@ -66,6 +67,7 @@ app.whenReady().then(async () => {
         report: (stage, error) => report('video', stage, error),
         changed: jobs => { if (window && !window.isDestroyed()) window.webContents.send('video-tasks:state', jobs); } });
     const listModels = createModelCatalog(network.fetch);
+    const videoCatalog = createVideoCatalog(network.fetch);
     if (smoke) {
         const smokePort = await new Promise(resolve => { const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
         const fs = require('node:fs/promises');
@@ -190,6 +192,11 @@ app.whenReady().then(async () => {
         trusted(event);
         try { return { data: await listModels(apiKey, details === true) }; }
         catch (error) { report('models', 'request', error); return { error: error.message }; }
+    });
+    ipcMain.handle('models:videoCatalog', async event => {
+        trusted(event);
+        try { return { data: await videoCatalog() }; }
+        catch { return { error: '模型状态信息更新延迟' }; }
     });
     ipcMain.handle('agent:call', async (event, operation) => {
         trusted(event);

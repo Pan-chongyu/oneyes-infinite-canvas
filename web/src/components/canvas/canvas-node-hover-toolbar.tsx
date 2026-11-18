@@ -10,6 +10,8 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useConfigStore, isModelUnavailable } from '@/stores/use-config-store';
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
@@ -51,6 +53,7 @@ type ToolbarTool = {
     onClick: () => void;
     active?: boolean;
     danger?: boolean;
+    disabled?: boolean;
 };
 
 export function CanvasNodeHoverToolbar({
@@ -80,6 +83,8 @@ export function CanvasNodeHoverToolbar({
     onUngroup,
     extraTools = [],
 }: CanvasNodeHoverToolbarProps) {
+    const config = useConfigStore(state => state.config);
+    useVideoCatalogStore(state => state.catalog);
     const [quickImageToolIds, setQuickImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [showImageToolLabels, setShowImageToolLabels] = useState(false);
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
@@ -173,7 +178,7 @@ export function CanvasNodeHoverToolbar({
         ...(hasVideo ? [{ id: "reverseVideoPrompt", title: t("canvas.videoWorkflow.reverse"), label: t("canvas.imageTools.reversePrompt"), icon: <Sparkles className="size-4" />, onClick: () => onReversePrompt(node) }] : []),
         ...(hasVideo && onCreateVideoConfig ? [{ id: "videoConfig", title: t("canvas.videoWorkflow.generateHint"), label: t("canvas.configNode.title"), icon: <Settings2 className="size-4" />, onClick: () => onCreateVideoConfig(node) }] : []),
         ...(canQueryVideoTask ? [{ id: "queryVideoTask", title: t("canvas.nodeToolbar.queryVideoTaskTitle"), label: t("canvas.nodeToolbar.queryVideoTask"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
-        ...(canRetry ? [{ id: "retry", title: needsVideoReview ? '查看原视频恢复记录，不重新生成' : t("canvas.nodeToolbar.retryTitle"), label: needsVideoReview ? '查看原任务' : t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
+        ...(canRetry ? [{ id: "retry", title: needsVideoReview ? '查看原视频恢复记录，不重新生成' : t("canvas.nodeToolbar.retryTitle"), label: needsVideoReview ? '查看原任务' : t("canvas.node.retry"), disabled: isVideo && !needsVideoReview && isModelUnavailable(config, node.metadata?.model || config.videoModel), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: t(hasAudio ? "canvas.nodeToolbar.downloadAudio" : hasVideo ? "canvas.nodeToolbar.downloadVideo" : "canvas.nodeToolbar.downloadImage"), label: t("common.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
         ...(isVideo ? [{ id: "edit", title: t("common.edit"), label: t("common.edit"), icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
@@ -318,12 +323,12 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     );
 }
 
-function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false }: ToolbarTool & { showLabel: boolean }) {
+function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false, disabled = false }: ToolbarTool & { showLabel: boolean }) {
     const theme = canvasThemes[useThemeStore(state => state.theme)];
     const hasText = showLabel && Boolean(label);
     return (
         <Tooltip title={title} placement="top" mouseEnterDelay={0.2}>
-            <button type="button" className={`group relative flex h-full shrink-0 items-center whitespace-nowrap px-1.5 ${danger ? "text-destructive" : ""}`} onClick={onClick} aria-label={title}>
+            <button type="button" disabled={disabled} className={`group relative flex h-full shrink-0 items-center whitespace-nowrap px-1.5 disabled:opacity-50 ${danger ? "text-destructive" : ""}`} onClick={onClick} aria-label={title}>
                 <span style={{ '--tool-hover': theme.toolbar.itemHover, background: active ? theme.toolbar.activeBg : undefined } as CSSProperties} className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[var(--tool-hover)]`}>
                     {icon}
                     {hasText ? <span>{label}</span> : null}

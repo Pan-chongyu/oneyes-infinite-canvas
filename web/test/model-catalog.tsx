@@ -27,11 +27,14 @@ import { MemoryRouter } from 'react-router-dom';
 import { VideoRecovery } from '@/components/layout/video-recovery';
 import { UserStatusActions } from '@/components/layout/user-status-actions';
 import { useVideoRecoveryStore } from '@/services/video-recovery';
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 
 await useConfigStore.persist.rehydrate();
 useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-model-key", models: [] }] });
 Object.assign(window, { modelTest: {
-    state: () => ({ ...useModelCatalogStore.getState(), config: useConfigStore.getState().config }),
+    state: () => ({ ...useModelCatalogStore.getState(), config: useConfigStore.getState().config, feed: useVideoCatalogStore.getState() }),
+    feedSync: () => useVideoCatalogStore.getState().sync(true),
+    feedReset: () => useVideoCatalogStore.setState({ catalog: undefined, delayed: true }),
     expire: () => queryClient.invalidateQueries({ queryKey: ["oneyes-model-catalog"], refetchType: "none" }),
     sync: () => useModelCatalogStore.getState().sync(),
     video: () => useConfigStore.getState().replaceConfig({ ...useConfigStore.getState().config, channels: [
@@ -109,6 +112,7 @@ function ConfigCanvas() {
     const [node, setNode] = useState<CanvasNodeData>({ id: "config", type: CanvasNodeType.Config, title: "生成配置", position: { x: 0, y: 0 }, width: 600, height: 250, metadata: { generationMode: "video", model: `${GROK_VIDEO_CHANNEL_ID}::grok-imagine-video` } });
     Object.assign(window, { modelNodeTest: {
         state: () => node,
+        video: (model: string, receipt: boolean) => flushSync(() => { setFrame({ scale: 1, x: 40, y: 180 }); setNode(previous => ({ ...previous, id: 'status-video', title: '历史视频', type: CanvasNodeType.Video, metadata: { model, status: 'error', errorDetails: '视频结果取回未完成，请重试查询原任务', videoTaskId: receipt ? 'original-receipt' : undefined } })); }),
         events: () => events.current,
         toolbar: (scale: number, x: number, y: number, dark: boolean, running = false, copy = false) => flushSync(() => { setToolbar(true); setFrame({ scale, x, y }); setNode(previous => ({ ...previous, id: copy ? 'config-copy' : 'config', metadata: { ...previous.metadata, status: running ? 'loading' : 'idle' } })); useThemeStore.getState().setTheme(dark ? 'dark' : 'light'); }),
         actions: () => actions.current,
@@ -119,7 +123,7 @@ function ConfigCanvas() {
         onMouseDown: (event: React.MouseEvent) => { event.stopPropagation(); events.current.drag++; }, onHoverStart: () => {}, onHoverEnd: () => {}, onConnectStart: () => {}, onResizeStart: () => {}, onResize: () => {}, onResizeEnd: () => {}, onContentChange: () => {}, onTitleChange: () => {}, onContextMenu: () => {} };
     const noop = () => {};
     return <main className="relative" style={{ height: "100vh" }}>{toolbar ? <div data-canvas-top-bar className="pointer-events-none absolute inset-x-0 top-0 h-16" /> : null}<InfiniteCanvas containerRef={container} viewport={{ x: frame.x, y: frame.y, k: frame.scale }} tool="select" onViewportChange={() => { events.current.viewport++; }} onCanvasMouseDown={() => { events.current.background++; }}>
-        {mounted ? <CanvasNode {...props} data={node} renderNodeContent={current => <CanvasConfigNodePanel node={current} isRunning={current.metadata?.status === 'loading'} inputSummary={{ textCount: 0, imageCount: 0, videoCount: 0, audioCount: 0 }} videoInputs={{ imageCount: 0, videoCount: 0, audioCount: 0 }} onConfigChange={(_id, patch) => setNode(previous => ({ ...previous, metadata: { ...previous.metadata, ...patch } }))} onGenerate={() => {}} onStop={() => { actions.current.push('stop'); setNode(previous => ({ ...previous, metadata: { ...previous.metadata, status: 'idle' } })); }} onComposerToggle={() => {}} />} /> : null}
+        {mounted ? <CanvasNode {...props} data={node} onRetry={() => actions.current.push('retry')} renderNodeContent={node.type === CanvasNodeType.Video ? undefined : current => <CanvasConfigNodePanel node={current} isRunning={current.metadata?.status === 'loading'} inputSummary={{ textCount: 0, imageCount: 0, videoCount: 0, audioCount: 0 }} videoInputs={{ imageCount: 0, videoCount: 0, audioCount: 0 }} onConfigChange={(_id, patch) => setNode(previous => ({ ...previous, metadata: { ...previous.metadata, ...patch } }))} onGenerate={() => {}} onStop={() => { actions.current.push('stop'); setNode(previous => ({ ...previous, metadata: { ...previous.metadata, status: 'idle' } })); }} onComposerToggle={() => {}} />} /> : null}
         <CanvasNode {...props} data={{ id: "overlap", type: CanvasNodeType.Text, title: "相邻节点", position: { x: 0, y: 245 }, width: 600, height: 120, metadata: { content: "下拉菜单应在相邻节点之上" } }} />
     </InfiniteCanvas>{toolbar ? <CanvasNodeHoverToolbar node={mounted ? node : null} onKeep={noop} onLeave={noop} onInfo={() => actions.current.push('info')} onDecreaseFont={noop} onIncreaseFont={noop} onToggleDialog={() => actions.current.push('config')} onGenerateImage={noop} onUpload={noop} onDownload={noop} onSaveAsset={noop} onMaskEdit={noop} onCrop={noop} onSplit={noop} onUpscale={noop} onSuperResolve={noop} onAngle={noop} onViewImage={noop} onReversePrompt={noop} onRetry={noop} onToggleFreeResize={noop} onDelete={() => actions.current.push('delete')} /> : null}</main>;
 }

@@ -10,6 +10,8 @@ import { useModelCatalogStore } from "@/stores/use-model-catalog-store";
 import { modelPickerOptions } from "@/lib/video-model-info";
 import { splitModelInformation } from '@/lib/model-information';
 import { videoDisplayText } from '@/lib/video-display-text';
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
+import { VideoModelStatus } from './video-model-status';
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -27,7 +29,8 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
-    const options = useMemo(() => modelPickerOptions(config, Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), value), [capability, config, value]);
+    const catalog = useVideoCatalogStore(state => state.catalog);
+    const options = useMemo(() => modelPickerOptions(config, Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...(capability === 'video' ? config.channels.flatMap(channel => channel.models.filter(model => model.capability === 'video').map(model => channel.id + '::' + model.name)) : selectableModelsByCapability(config, capability))].filter((model): model is string => Boolean(model)))), value, catalog), [capability, config, value, catalog]);
     const current = value || "";
     const unavailable = isModelUnavailable(config, current);
     const selected = options.find(option => option.value === current) || (capability === 'video' && options.find(option => option.value.split('::')[0] === current.split('::')[0] && option.name === splitModelInformation(modelOptionName(current)).name)) || { value: current, ...(capability === 'video' ? splitModelInformation(videoDisplayText(modelOptionName(current))) : { name: modelOptionLabel(config, current), information: '' }), label: videoDisplayText(modelOptionLabel(config, current)) };
@@ -53,7 +56,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 if (nextOpen) { void useModelCatalogStore.getState().sync(); window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId })); }
                 setOpen(nextOpen);
             }}
-            onValueChange={onChange}
+            onValueChange={value => { if (!isModelUnavailable(config, value)) onChange(value); }}
         >
             <SelectTrigger
                 className={cn(
@@ -70,7 +73,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 style={selected.information ? { height: 'auto', minHeight: 44, paddingBlock: 5 } : undefined}
             >
                 <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 text-left leading-snug"><span data-model-name className="block truncate">{current ? selected.name : pickerPlaceholder}</span>{selected.information && <span data-model-information className="block truncate text-xs text-muted-foreground">{selected.information}</span>}{unavailable && <span className="block text-xs text-destructive">暂不可用，请重新选择</span>}</span>
+                <span className="canvas-model-picker-text min-w-0 flex-1 text-left leading-snug"><span className="flex flex-wrap items-center gap-x-1.5"><span data-model-name className="min-w-0 truncate">{current ? selected.name : pickerPlaceholder}</span>{current && capability === 'video' && <VideoModelStatus config={config} value={current} />}</span>{selected.information && <span data-model-information className="block truncate text-xs text-muted-foreground">{selected.information}</span>}{unavailable && <span className="block text-xs text-destructive">暂不可用，请重新选择</span>}</span>
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
@@ -86,10 +89,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 {capability === 'video' && <input type="search" aria-label="搜索视频模型" placeholder="搜索模型、分辨率或价格" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.parentElement?.querySelector<HTMLElement>('[role=option]:not([data-disabled])')?.focus(); } }} className="sticky top-0 z-10 mb-1 w-full rounded-lg border border-input bg-popover px-2 py-2 text-sm outline-none focus:border-ring" />}
                 {visibleOptions.length ? (
                     visibleOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value} data-model-id={option.value} textValue={option.label} className="py-2 [&>span:last-child]:min-w-0" title={option.label}
-                            onPointerUp={() => { if (option.value === selected.value && current !== option.value) onChange(option.value); }}
-                            onKeyDown={event => { if (['Enter', ' '].includes(event.key) && option.value === selected.value && current !== option.value) onChange(option.value); }}>
-                            <ModelLabel option={option} />
+                        <SelectItem key={option.value} value={option.value} disabled={isModelUnavailable(config, option.value)} data-model-id={option.value} textValue={option.label} className="py-2 data-disabled:opacity-75 [&>span:last-child]:min-w-0" title={option.label}
+                            onPointerUp={() => { if (!isModelUnavailable(config, option.value) && option.value === selected.value && current !== option.value) onChange(option.value); }}
+                            onKeyDown={event => { if (!isModelUnavailable(config, option.value) && ['Enter', ' '].includes(event.key) && option.value === selected.value && current !== option.value) onChange(option.value); }}>
+                            <ModelLabel option={option} config={config} video={capability === 'video'} />
                         </SelectItem>
                     ))
                 ) : (
@@ -108,11 +111,11 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     return config.models.length ? i18n.t("settingsPanels.model.noMatch", { capability: label }) : i18n.t("settingsPanels.model.addFirst");
 }
 
-function ModelLabel({ option }: { option: ReturnType<typeof modelPickerOptions>[number] }) {
+function ModelLabel({ option, config, video }: { option: ReturnType<typeof modelPickerOptions>[number]; config: AiConfig; video: boolean }) {
     return (
         <span className="flex min-w-0 items-center gap-2">
             <ModelIcon model={option.value} />
-            <span className="flex min-w-0 flex-col gap-0.5 whitespace-normal break-words text-left leading-snug"><span data-model-name>{option.name}</span>{option.information && <span data-model-information className="text-xs text-muted-foreground">{option.information}</span>}</span>
+            <span className="flex min-w-0 flex-col gap-0.5 whitespace-normal break-words text-left leading-snug"><span className="flex flex-wrap items-center gap-x-1.5"><span data-model-name>{option.name}</span>{video && <VideoModelStatus config={config} value={option.value} />}</span>{option.information && <span data-model-information className="text-xs text-muted-foreground">{option.information}</span>}</span>
         </span>
     );
 }

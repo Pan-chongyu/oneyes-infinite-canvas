@@ -8,6 +8,8 @@ import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { isGrokVideoModel, isUnsupportedGrokVideoResolution, isUnsupportedMiniMaxVideoResolution, normalizeVideoResolutionForModel } from "@/lib/video-capabilities";
 import { getVideoModelInfo, videoModelConfigError } from "@/lib/video-model-info";
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
+import { videoModelState } from '@/lib/video-model-status';
 import type { VideoModelInfo } from "@/lib/video-model-catalog";
 import { videoErrorText, videoUserError } from "@/lib/video-display-text";
 import { videoSiteRequestId } from '../../../../desktop/video-errors.mjs';
@@ -113,9 +115,22 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     catch (error) { throw videoUserError(error); }
 }
 
+function assertVideoModelActive(config: AiConfig, selectedModel: string) {
+    if (!isOneYes(resolveModelChannel(config, selectedModel).baseUrl) || resolveModelScript(config, selectedModel)) return;
+    const state = videoModelState(config, selectedModel, useVideoCatalogStore.getState().catalog);
+    if (state.status === 'retired') throw Object.assign(Error('模型已下架'), { code: 'model_retired' });
+    if (state.status === 'unavailable') throw Object.assign(Error('当前视频模型暂不可用'), { code: 'model_unavailable' });
+    if (state.newTasksEnabled === false) throw Object.assign(Error('模型暂停新建'), { code: 'model_paused' });
+}
+
 async function prepareVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = config.model || config.videoModel;
     const channel = resolveModelChannel(config, selectedModel);
+    if (isOneYes(channel.baseUrl) && !resolveModelScript(config, selectedModel)) {
+        void useVideoCatalogStore.getState().sync();
+        options?.signal?.throwIfAborted();
+        assertVideoModelActive(config, selectedModel);
+    }
     const parameterError = videoModelConfigError(config, selectedModel);
     if (parameterError) throw Error(parameterError);
     if (channel.apiFormat !== 'gemini' && isOneYes(channel.baseUrl) && !resolveModelScript(config, selectedModel)) {
@@ -126,6 +141,7 @@ async function prepareVideoGenerationTask(config: AiConfig, prompt: string, refe
         // Use this key's current limits without changing saved selections.
         config = { ...config, channels: config.channels.map(item => item.id === channel.id ? { ...item, models: [...item.models.filter(model => model.name !== entry.id), { ...item.models.find(model => model.name === entry.id), name: entry.id, capability: 'video', referenceFileMaxBytes: entry.referenceFileMaxBytes }] } : item) };
     }
+    assertVideoModelActive(config, selectedModel);
     const api = window.oneYesDesktop?.videoTasks;
     if (!api || resolveModelScript(config, config.model || config.videoModel)) return createVideoTask(config, prompt, references, options);
     const selected = { ...config, model: config.model || config.videoModel };

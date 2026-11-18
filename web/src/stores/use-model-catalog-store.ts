@@ -3,6 +3,7 @@ import { fetchModelCatalogEntries, modelCatalogIdentity } from "@/services/api/m
 import { reportError } from "@/services/diagnostics";
 import { configureModelDefaults, syncChannelModels, useConfigStore } from "./use-config-store";
 import { useOneYesAccountStore } from "./use-oneyes-account-store";
+import { useVideoCatalogStore } from './use-video-catalog-store';
 
 let revision = 0;
 export const useModelCatalogStore = create<{
@@ -16,6 +17,7 @@ export const useModelCatalogStore = create<{
         const current = ++revision;
         if (!channels.length) { set({ syncing: false, errors: {}, checked: [], updatedAt: 0 }); return; }
         set({ syncing: true });
+        void useVideoCatalogStore.getState().sync(force);
         const results = await Promise.allSettled(channels.map(channel => fetchModelCatalogEntries(channel, force)));
         if (current !== revision) return;
         const store = useConfigStore.getState(), errors: Record<string, string> = {}, checked: string[] = [];

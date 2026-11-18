@@ -8,6 +8,14 @@ const { createModelCatalog } = require('../../desktop/models.cjs');
 app.setPath('userData', mkdtempSync(join(tmpdir(), 'canvas-models-')));
 let stored = null, calls = 0, status = 200;
 let names = ['gpt-image-2', 'gpt-5.5', 'gpt-4o-mini-tts', 'grok-imagine-video'];
+let feedStatus = 200, feedOverride, feedCalls = 0;
+const { createVideoCatalog } = require('../../desktop/video-catalog.mjs');
+const videoCatalog = createVideoCatalog(async (url, init) => {
+    feedCalls++; assert.equal(url, 'https://oneyes.ai/video-models/catalog.json');
+    assert.deepEqual(init.headers, { Accept: 'application/json' }); assert.equal(init.credentials, 'omit');
+    return Response.json(feedOverride || { schema_version: 1, generated_at: new Date().toISOString(), refresh_after_seconds: 300, check: { stale: false }, data: [{ id: 'grok-imagine-video', model_name: 'grok-imagine-video', model_info: '480p 5s ¥0.385/秒', request_ids: ['grok-imagine-video'], status: 'active', new_tasks_enabled: true, stale: false, price_stale: false, parameters_stale: false }] }, { status: feedStatus });
+});
+ipcMain.handle('models:videoCatalog', async () => { try { return { data: await videoCatalog() }; } catch { return { error: '模型状态信息更新延迟' }; } });
 const catalog = createModelCatalog(async (url, init) => {
     assert.equal(url, 'https://api.oneyes.ai/v1/models');
     assert.equal(init.method, 'GET'); assert.equal(init.headers.Authorization, 'Bearer fixture-model-key');
@@ -32,12 +40,14 @@ app.whenReady().then(async () => {
     const js = code => win.webContents.executeJavaScript(code).catch(error => { throw new Error(`${error.message}: ${code}`, { cause: error }); });
     const wait = async condition => {
         const end = Date.now() + 20000;
-        while (!await js(condition)) { if (Date.now() > end) throw Error(`Timed out: ${condition}`); await new Promise(resolve => setTimeout(resolve, 25)); }
+        while (!await js(condition)) { if (Date.now() > end) throw Error(`Timed out: ${condition}; model rows=${JSON.stringify(await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({id:option.getAttribute("data-model-id"),disabled:option.hasAttribute("data-disabled")}))'))}`); await new Promise(resolve => setTimeout(resolve, 25)); }
     };
     try {
         await win.loadURL(process.argv[2]);
         await wait('window.modelTest && modelTest.state().updatedAt && !modelTest.state().syncing');
         assert.equal(calls, 1, 'StrictMode startup must share one native discovery');
+        await wait('modelTest.state().feed.catalog && !modelTest.state().feed.delayed');
+        assert.equal(feedCalls, 1, 'public status reads share the same five-minute cache');
         const initial = await js('modelTest.state().config');
         assert.equal(initial.models.length, 4);
         for (const key of ['imageModel', 'videoModel', 'textModel', 'audioModel']) assert.ok(initial[key]);
@@ -99,7 +109,7 @@ app.whenReady().then(async () => {
             await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-            await wait('document.querySelectorAll("[role=option]").length === 5');
+            await wait('document.querySelectorAll("[role=option]:not([data-disabled])").length === 6');
             const labels = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({name:option.querySelector("[data-model-name]").textContent,information:option.querySelector("[data-model-information]")?.textContent,label:option.textContent}))');
             for (const variant of variants.slice(0, 2)) assert.ok(labels.some(label => label.name === variant && /720p.*¥/.test(label.information)), variant);
             assert.ok(labels.every(label => !/sdxl|gpt-5|OneYes Grok/.test(label.label)));
@@ -137,8 +147,8 @@ app.whenReady().then(async () => {
             }
             await js(`setRecoveryTheme(${JSON.stringify(theme)});document.querySelector('[data-testid=video-picker] [role=combobox]').focus()`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-            await wait('document.querySelectorAll("[role=option]").length === 52');
-            const rows = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>{const name=option.querySelector("[data-model-name]"),info=option.querySelector("[data-model-information]");return {id:option.getAttribute("data-model-id"),name:name.textContent,info:info?.textContent,separate:info&&info.getBoundingClientRect().top>=name.getBoundingClientRect().bottom}})');
+            await wait('document.querySelectorAll("[role=option]:not([data-disabled])").length === 52');
+            const rows = await js('Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).map(option=>{const name=option.querySelector("[data-model-name]"),info=option.querySelector("[data-model-information]");return {id:option.getAttribute("data-model-id"),name:name.textContent,info:info?.textContent,separate:info&&info.getBoundingClientRect().top>=name.getBoundingClientRect().bottom}})');
             await js('document.querySelector("[data-radix-select-viewport]").scrollTop=100000');
             const searchBounds = await js('(()=>{const input=document.querySelector("input[type=search]"),r=input.getBoundingClientRect();return {visible:input===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)}})()');
             assert.ok(searchBounds.visible, 'model search must stay visible after scrolling to the bottom');
@@ -184,7 +194,7 @@ app.whenReady().then(async () => {
         await js('modelTest.expire();modelTest.sync()'); await wait('!modelTest.state().syncing');
         await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-        await wait('Array.from(document.querySelectorAll("[role=option]")).filter(row=>row.getAttribute("data-model-id")?.startsWith("oneyes-minimax::")).length === 27');
+        await wait('Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).filter(row=>row.getAttribute("data-model-id")?.startsWith("oneyes-minimax::")).length === 27');
         assert.equal(await js('Array.from(document.querySelectorAll("[role=option]")).find(row=>row.getAttribute("data-model-id")==="oneyes-minimax::未来中文-v9【1080p 5秒 ￥0/条】")?.querySelector("[data-model-name]").textContent'), '未来中文-v9');
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
         await wait('!document.querySelector("[role=listbox]")');
@@ -201,6 +211,69 @@ app.whenReady().then(async () => {
         await js(`modelTest.replace(${JSON.stringify(beforeDisplay)})`); names = variantsNames;
         await js('modelTest.expire();modelTest.sync()'); await wait('!modelTest.state().syncing');
         console.log('NATIVE_MODEL_INFORMATION_26_CANONICAL_TWO_LINES_THEMES_TYPEAHEAD_EXACT_OLD_IDS_AND_TEXT_IMAGE_VISIBILITY_OK');
+        const beforeStatus = await js('modelTest.state().config'), beforeStatusNames = names;
+        const live = require('./video-catalog-public.json');
+        feedOverride = { ...live, generated_at: new Date().toISOString() };
+        names = live.data.flatMap(model => model.request_ids);
+        await js('modelTest.expire();modelTest.sync();modelTest.feedSync()'); await wait('!modelTest.state().syncing');
+        await js('modelTest.selectVideo("oneyes-minimax::sd-2.5-fullblood-line2")');
+        await wait('document.querySelector("[data-testid=video-picker] [data-video-model-status=retired]")');
+        for (const theme of ['light', 'dark']) {
+            await js(`setRecoveryTheme(${JSON.stringify(theme)});document.querySelector('[data-testid=video-picker] [role=combobox]').focus()`);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('Boolean(document.querySelector("[role=listbox]"))');
+            assert.ok(await js('Array.from(document.querySelectorAll("[role=option]")).filter(option=>option.querySelector("[data-video-model-status=retired]")).every(option=>option.hasAttribute("data-disabled"))'));
+            if (!process.env.CI) await writeFile(`.secrets/qa-model-live-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await wait('!document.querySelector("[role=listbox]")');
+        }
+        console.log('NATIVE_REAL_PUBLIC_28_MODEL_SAMPLE_26_ACTIVE_TWO_RETIRED_EXACT_IDS_AND_THEME_BADGES_OK');
+        const stateNames = ['grok-imagine-video', 'wan3.0-video', 'veo-3.1-fast', 'doubao-seedance-2.5'];
+        const stateData = stateNames.map((id, index) => ({ id, model_name: id, request_ids: [id], model_info: '720p 5s ¥1/条', status: ['active', 'retired', 'unavailable', 'active'][index], new_tasks_enabled: index === 0, stale: false, price_stale: index === 0, parameters_stale: index === 0 }));
+        names = stateNames;
+        feedOverride = { schema_version: 1, generated_at: new Date().toISOString(), refresh_after_seconds: 300, check: { stale: false }, data: stateData };
+        await js(`modelTest.replace({...modelTest.state().config,channels:[{...modelTest.state().config.channels[0],models:${JSON.stringify(stateNames.map(name => ({ name, capability: 'video' })))}}],videoModel:'default::wan3.0-video'})`);
+        await js('modelTest.expire();modelTest.sync();modelTest.feedSync()');
+        await wait('!modelTest.state().syncing');
+        await wait('document.querySelector("[data-testid=video-picker] [data-video-model-status=retired]")');
+        const statusConfig = await js('modelTest.state().config');
+        for (const theme of ['light', 'dark']) {
+            await js(`setRecoveryTheme(${JSON.stringify(theme)});document.querySelector('[data-testid=video-picker] [role=combobox]').focus()`);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('document.querySelectorAll("[role=option]").length >= 4');
+            const states = (await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({id:option.getAttribute("data-model-id"),disabled:option.hasAttribute("data-disabled"),text:option.textContent}))')).filter(item => stateNames.some(id => item.id === 'default::' + id));
+            assert.equal(states.length, 4);
+            assert.equal(states.filter(item => item.disabled).length, 3);
+            assert.match(states.find(item => item.id === 'default::wan3.0-video').text, /已下架/);
+            assert.match(states.find(item => item.id === 'default::veo-3.1-fast').text, /暂不可用/);
+            assert.match(states.find(item => item.id === 'default::doubao-seedance-2.5').text, /暂停新建/);
+            assert.match(states.find(item => !item.disabled).text, /可用.*价格待核实.*参数待更新/);
+            assert.doesNotMatch(states.map(item => item.text).join(''), /88api|智赢|https?:\/\//i);
+            if (!process.env.CI) await writeFile(`.secrets/qa-model-status-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await wait('!document.querySelector("[role=listbox]")');
+        }
+        feedStatus = 401; await js('modelTest.feedSync()');
+        await wait('document.querySelector("[data-testid=video-picker] [data-model-info-delayed]")');
+        assert.equal(await js('modelTest.state().feed.catalog.data[1].status'), 'retired');
+        if (!process.env.CI) {
+            await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('document.querySelector("[role=listbox]")');
+            await writeFile('.secrets/qa-model-status-delayed.png', (await win.webContents.capturePage()).toPNG());
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await wait('!document.querySelector("[role=listbox]")');
+        }
+        feedStatus = 200; feedOverride = { ...feedOverride, generated_at: new Date(Date.now() - 661_000).toISOString(), data: stateData.map(item => ({ ...item, status: 'active', new_tasks_enabled: true })) };
+        await js('modelTest.feedSync()');
+        assert.equal(await js('modelTest.state().feed.catalog.data[1].status'), 'retired', 'an expired false-stale JSON must not revive a confirmed retired model');
+        assert.deepEqual(await js('modelTest.state().config'), statusConfig, 'feed failure and refresh must preserve selection and generation parameters');
+        feedOverride = undefined;
+        names = beforeStatusNames;
+        await js(`modelTest.replace(${JSON.stringify(beforeStatus)});modelTest.expire();modelTest.sync();modelTest.feedSync()`);
+        await wait('!modelTest.state().syncing');
+        assert.equal(recoveryRetries, 0);
+        console.log('NATIVE_DYNAMIC_VIDEO_STATUS_BADGES_PRIORITY_FAILURE_CACHE_EXPIRY_AND_NO_TASK_REPLAY_OK');
         const beforeRetirement = await js('modelTest.state().config'), originalNames = names;
         const legacyVideos = ['seedance-2.0', 'doubao-seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0 [720p ¥1/秒]'];
         const activeVideos = displayModels.filter(model => ['doubao-seedance-2.0', 'doubao-seedance-2.5'].includes(model.id)).map(model => model.request_id);
@@ -219,8 +292,9 @@ app.whenReady().then(async () => {
         await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
         await wait('Boolean(document.querySelector("[role=listbox]"))');
-        const offered = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.getAttribute("data-model-id"))');
+        const offered = await js('Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).map(option=>option.getAttribute("data-model-id"))');
         assert.ok(offered.every(id => !legacyVideos.some(name => id === 'default::' + name || id === 'oneyes-minimax::' + name)));
+        assert.ok(await js('Array.from(document.querySelectorAll("[role=option][data-disabled]")).some(option=>option.getAttribute("data-model-id")==="oneyes-minimax::seedance-2.0 [720p ¥1/秒]" && option.querySelector("[data-video-model-status=unknown]"))'), 'missing key rights are retained disabled without claiming upstream retirement');
         assert.ok(offered.includes('oneyes-minimax::' + activeVideos[0]));
         await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.getAttribute("data-model-id")===${JSON.stringify('oneyes-minimax::' + activeVideos[0])}).focus()`);
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
@@ -230,7 +304,7 @@ app.whenReady().then(async () => {
         await js(`modelTest.replace(${JSON.stringify(beforeRetirement)})`); names = originalNames;
         await js('modelTest.expire();modelTest.sync()');
         await wait('!modelTest.state().syncing');
-        console.log('NATIVE_RETIRED_VIDEO_IDS_HIDDEN_EXPLICIT_SELECTION_NO_PRICING_REMAP_OR_TASK_REPLAY_OK');
+        console.log('NATIVE_MISSING_VIDEO_IDS_RETAINED_DISABLED_NO_FALSE_RETIREMENT_OR_TASK_REPLAY_OK');
         await js('showModelCanvas()');
         await wait('window.modelNodeTest && document.querySelector("[data-node-id=config] [role=combobox]")');
         for (const [scale, x, y, dark] of [[1, 40, 40, false], [0.5, 650, 580, true], [1.8, 10, 20, false], [1, 650, 40, true]]) {
@@ -242,7 +316,7 @@ app.whenReady().then(async () => {
             const bounds = await js(`(()=>{const popup=document.querySelector('[role=listbox]'),viewport=popup.querySelector('[data-radix-select-viewport]'),rect=popup.getBoundingClientRect(),inside=viewport.getBoundingClientRect();return {popup:rect.toJSON(),viewport:inside.toJSON(),width:innerWidth,height:innerHeight,z:getComputedStyle(popup).zIndex};})()`);
             assert.ok(bounds.popup.left >= 0 && bounds.popup.right <= bounds.width && bounds.popup.top >= 0 && bounds.popup.bottom <= bounds.height, 'model list must stay inside the window');
             assert.ok(bounds.viewport.right <= bounds.popup.right && bounds.viewport.left >= bounds.popup.left, 'scaled model trigger must not force the list viewport outside its popup');
-            const textBounds = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>{const text=option.lastElementChild.lastElementChild.lastElementChild;return {text:text.textContent,right:text.getBoundingClientRect().left+text.scrollWidth,height:text.clientHeight,scrollHeight:text.scrollHeight};})');
+            const textBounds = await js('Array.from(document.querySelectorAll("[role=option] [data-model-name], [role=option] [data-model-information]")).map(text=>({text:text.textContent,right:text.getBoundingClientRect().left+text.scrollWidth,height:text.clientHeight,scrollHeight:text.scrollHeight}))');
             assert.ok(textBounds.every(text=>text.right<=bounds.viewport.right && text.scrollHeight<=text.height), 'full model versions must wrap without hidden text: '+JSON.stringify(textBounds));
             const wheel = { x: Math.round(bounds.viewport.x + bounds.viewport.width / 2), y: Math.round(bounds.viewport.y + bounds.viewport.height / 2) };
             const beforeScroll = await js('document.querySelector("[data-radix-select-viewport]").scrollTop');
@@ -257,7 +331,7 @@ app.whenReady().then(async () => {
             }
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'End' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'End' });
-            await wait('document.activeElement === Array.from(document.querySelectorAll("[role=option]")).at(-1)');
+            await wait('document.activeElement === Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).at(-1)');
             const target = await js(`(()=>{const item=document.activeElement,r=item.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),visible:item.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),model:item.getAttribute('data-model-id'),text:item.textContent.trim()};})()`);
             assert.equal(target.visible, true, 'last model must be clickable above neighboring nodes');
             assert.notEqual((await js('modelNodeTest.state()')).metadata.model, target.model);
@@ -311,6 +385,17 @@ app.whenReady().then(async () => {
         await wait(`(()=>{const r=${toolbarLayout};return r?.visible&&r.separate&&r.inside})()`);
         console.log('NATIVE_CONFIG_TOOLBAR_ACTUAL_GEOMETRY_ZOOM_COPY_EDGES_SIDEBAR_THEME_STOP_AND_CLICK_OK');
         console.log('NATIVE_MODEL_CATALOG_AUTO_SYNC_CACHE_DEFAULTS_ERRORS_AND_DRAFTS_OK');
+        await js("modelNodeTest.video('default::wan3.0-video',true)");
+        await wait('document.querySelector("[data-node-id=status-video] [data-video-model-status=retired]")');
+        assert.equal(await js('document.querySelector("[data-node-id=status-video] [role=alert]").nextElementSibling.disabled'), false, 'a retired model receipt remains recoverable');
+        await js('document.querySelector("[data-node-id=status-video] [role=alert]").nextElementSibling.click()');
+        assert.equal(await js('modelNodeTest.actions().at(-1)'), 'retry');
+        if (!process.env.CI) await writeFile('.secrets/qa-model-retired-canvas.png', (await win.webContents.capturePage()).toPNG());
+        await js("modelNodeTest.video('default::wan3.0-video',false)");
+        await wait('document.querySelector("[data-node-id=status-video] [role=alert]").nextElementSibling.disabled');
+        assert.equal(await js('document.querySelector("[data-node-toolbar] button[aria-label=\\"重试生成\\"]")?.disabled ?? true'), true);
+        console.log('NATIVE_RETIRED_CANVAS_BADGE_RECEIPT_RETRY_ALLOWED_NEW_GENERATION_DISABLED_OK');
+        await js('modelTest.feedReset();modelTest.feedSync()');
         await js('showMentionPreferences()');
         await wait('window.mentionTest && document.getElementById("auto-refresh-mention-images")');
         assert.equal(await js('modelTest.state().config.autoRefreshMentionImages'), false, 'existing behavior remains the default');

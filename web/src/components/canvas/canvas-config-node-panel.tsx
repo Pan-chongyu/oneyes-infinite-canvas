@@ -4,7 +4,8 @@ import { Button, Segmented } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, isModelUnavailable, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -28,6 +29,7 @@ type CanvasConfigNodePanelProps = {
 };
 
 export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInputs, onConfigChange, onGenerate, onStop, onComposerToggle }: CanvasConfigNodePanelProps) {
+    useVideoCatalogStore(state => state.catalog);
     const { t } = useTranslation();
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -37,7 +39,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoInpu
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
-    const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
+    const canGenerate = (hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput)) && (mode !== 'video' || !isModelUnavailable(config, config.model));
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>

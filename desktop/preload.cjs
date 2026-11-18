@@ -34,7 +34,7 @@ contextBridge.exposeInMainWorld('oneYesDesktop', {
         },
     },
     proxy: { test: config => ipcRenderer.invoke('proxy:test', config) },
-    models: { list: (apiKey, details) => ipcRenderer.invoke('models:list', apiKey, details) },
+    models: { list: (apiKey, details) => ipcRenderer.invoke('models:list', apiKey, details), videoCatalog: () => ipcRenderer.invoke('models:videoCatalog') },
     account: { call: (operation, args) => ipcRenderer.invoke('account:call', operation, args) },
     agent: { call: operation => ipcRenderer.invoke('agent:call', operation) },
     updates: {

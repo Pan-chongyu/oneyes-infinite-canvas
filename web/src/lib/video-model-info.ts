@@ -4,6 +4,8 @@ import { videoModelCatalog, type VideoModelInfo } from "./video-model-catalog";
 import { modelInformationPriority, splitModelInformation } from './model-information';
 import { videoDisplayText } from './video-display-text';
 import displaySnapshot from './video-model-display-catalog.json';
+import { videoModelMetadata } from './video-model-status';
+import type { VideoCatalog } from '@/stores/use-video-catalog-store';
 const displayCatalog = displaySnapshot.data;
 
 /** The audited OneYes bridge prices must not label another provider or a script. */
@@ -41,7 +43,7 @@ export function videoModelOptions(config: AiConfig, options: string[], current?:
     return modelPickerOptions(config, options, current).map(option => option.value);
 }
 
-export function modelPickerOptions(config: AiConfig, options: string[], _current?: string) {
+export function modelPickerOptions(config: AiConfig, options: string[], current?: string, catalog?: VideoCatalog) {
     const groups = new Map<string, string[]>();
     const raw = (value: string) => value.includes('::') ? value.slice(value.indexOf('::') + 2) : value;
     for (const value of options) {
@@ -61,14 +63,19 @@ export function modelPickerOptions(config: AiConfig, options: string[], _current
         try { oneYesEndpoint = ['oneyes.ai', 'api.oneyes.ai'].includes(new URL(channel?.baseUrl || config.baseUrl).hostname); } catch { /* No site metadata for an invalid endpoint. */ }
         const videoGroup = oneYesEndpoint && (channel?.id === 'oneyes-minimax' || channel?.oneYes?.platform === 'grok');
         const priced = candidates.filter(candidate => modelInformationPriority(raw(candidate)) === 2);
-        if (videoGroup && !priced.length) return [];
+        const authorized = candidates.filter(value => !channel?.models.find(model => model.name === raw(value))?.unavailable);
+        const choices = authorized.length ? authorized : candidates;
+        const metadata = choices.map(value => videoModelMetadata(config, value, catalog)).find(Boolean);
+        const historical = candidates.some(value => channel?.models.find(model => model.name === raw(value))?.unavailable) || metadata && ['retired', 'unavailable'].includes(metadata.status);
+        const metadataPriced = metadata?.has_price !== false && modelInformationPriority(`model [${metadata?.model_info || ''}]`) === 2;
+        if (videoGroup && (!priced.length && !metadataPriced || metadata?.has_price === false) && !historical) return [];
         // Only recommend an audited ID actually returned by this Key. Unknown
         // prices retain server order, never infer the cheapest or a request ID.
         const canonical = splitModelInformation(raw(candidates[0])).name;
-        const recommended = oneYesEndpoint && displayCatalog.find(model => model.id === canonical)?.request_id;
-        const preferred = priced.find(candidate => raw(candidate) === recommended) || candidates.reduce((best, candidate) => modelInformationPriority(raw(candidate)) > modelInformationPriority(raw(best)) ? candidate : best);
+        const recommended = metadata?.recommended_request_id || oneYesEndpoint && displayCatalog.find(model => model.id === canonical)?.request_id;
+        const preferred = choices.find(candidate => raw(candidate) === recommended) || choices.reduce((best, candidate) => modelInformationPriority(raw(candidate)) > modelInformationPriority(raw(best)) ? candidate : best);
         const value = preferred;
-        const label = videoDisplayText(videoModelOptionName(config, preferred))
+        const label = videoDisplayText(metadata?.model_info ? `${metadata.model_name} [${metadata.model_info}]` : videoModelOptionName(config, preferred))
             .replace(/https?:\/\/[^\s\]】,，;；]+/gi, '')
             .replace(/(?:余额|剩余额度|balance|quota|credits?)\s*[:：=]?\s*[¥￥$]?\s*\d+(?:\.\d+)?\s*元?/gi, '').replace(/\s{2,}/g, ' ').trim();
         return [{ value, label, ...splitModelInformation(label) }];

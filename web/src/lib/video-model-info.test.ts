@@ -6,6 +6,8 @@ import { modelInformationPriority, splitModelInformation } from './model-informa
 import displaySnapshot from './video-model-display-catalog.json';
 import type { AiConfig } from "@/stores/use-config-store";
 import { minimumVideoModelDefaults, videoModelDefaults, videoModelDefaultsKey, videoModelNodePatch } from './video-model-defaults';
+import { parseVideoCatalog } from '../../../desktop/video-catalog.mjs';
+import { videoModelMetadata, videoModelState } from './video-model-status';
 
 const displayCatalog = displaySnapshot.data;
 const config = {
@@ -29,6 +31,30 @@ test('priced metadata needs a complete amount and unit; explicit zero is valid',
     for (const information of ['¥0/秒', '￥0.0/条', '2.178元/条', '¥13.2/百万Token起']) assert.equal(modelInformationPriority(`视频 [${information}]`), 2);
     for (const information of ['价格待定', '720p 5s', '¥2', '￥/秒', '元/条', '¥2/unknown']) assert.notEqual(modelInformationPriority(`视频 [${information}]`), 2);
     assert.equal(modelInformationPriority('视频 [¥1/秒] incomplete'), 0);
+});
+
+test('dynamic state decorates only exact authorized IDs, preserves old aliases and never grants feed-only models', () => {
+    const old = 'veo-3.1-fast [720p 8s ¥0.165/秒]', current = 'veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]';
+    const input = { schema_version: 1, generated_at: '2026-11-18T00:00:00Z', check: { stale: false }, data: [{ id: 'veo-3.1-fast', model_name: 'veo-3.1-fast', model_info: '最新价格参数 ￥0.165/秒起', request_ids: ['veo-3.1-fast', old, current], recommended_request_id: current, status: 'retired', new_tasks_enabled: false, stale: false, price_stale: true, parameters_stale: true }] };
+    const catalog = parseVideoCatalog(input), options = ['oneyes-minimax::' + old];
+    assert.equal(modelPickerOptions(config, options, options[0], catalog)[0].value, options[0], 'public recommendations cannot add an unreturned request ID');
+    assert.equal(modelPickerOptions(config, options, options[0], catalog)[0].information, '最新价格参数 ￥0.165/秒起');
+    assert.equal(videoModelState(config, options[0], catalog).status, 'retired');
+    assert.equal(videoModelState(config, options[0], catalog).disabled, true);
+    assert.equal(videoModelState(config, options[0], catalog).priceStale, true);
+    assert.equal(videoModelState(config, options[0], catalog).parametersStale, true);
+    assert.equal(videoModelMetadata(config, 'oneyes-minimax::veo-3.1-fast-unknown', catalog), undefined);
+    assert.equal(videoModelMetadata({ ...config, channels: [{ ...config.channels[0], baseUrl: 'https://other.invalid' }] }, options[0], catalog), undefined);
+    assert.deepEqual(modelPickerOptions(config, [], undefined, catalog), []);
+    const before = JSON.stringify(config);
+    for (const [status, enabled, disabled] of [['active', true, false], ['unknown', true, false], ['unavailable', true, true], ['retired', true, true], ['active', false, true]] as const) {
+        input.data[0].status = status; input.data[0].new_tasks_enabled = enabled; input.check.stale = true;
+        assert.equal(videoModelState(config, options[0], parseVideoCatalog(input)).disabled, disabled);
+    }
+    assert.equal(JSON.stringify(config), before);
+    assert.equal(videoModelState(config, options[0]).disabled, false, 'missing metadata is not evidence of retirement');
+    const withoutPrice = parseVideoCatalog({ ...input, data: [{ ...input.data[0], status: 'active', new_tasks_enabled: true, has_price: false }] });
+    assert.deepEqual(modelPickerOptions(config, options, undefined, withoutPrice), [], 'unpriced public entries cannot become new Video choices');
 });
 
 test('per-model defaults share exact aliases, stay isolated, and map atomically to node metadata', () => {

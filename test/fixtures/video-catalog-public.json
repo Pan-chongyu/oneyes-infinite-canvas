@@ -1,0 +1,516 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-18T03:50:05Z",
+  "refresh_after_seconds": 300,
+  "check": {
+    "checked_at": "2026-11-18T03:50:05Z",
+    "stale": false
+  },
+  "data": [
+    {
+      "id": "doubao-seedance-2.0",
+      "request_ids": [
+        "doubao-seedance-2.0",
+        "doubao-seedance-2.0 [480p-4k 4-15s ¥13.2/百万Token起]"
+      ],
+      "recommended_request_id": "doubao-seedance-2.0 [480p-4k 4-15s ¥13.2/百万Token起]",
+      "model_name": "doubao-seedance-2.0",
+      "model_info": "480p-4k 4-15s ¥13.2/百万Token起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "doubao-seedance-2.5",
+      "request_ids": [
+        "doubao-seedance-2.5",
+        "doubao-seedance-2.5 [480-1080p 4-30s ¥34.65/百万Token起]"
+      ],
+      "recommended_request_id": "doubao-seedance-2.5 [480-1080p 4-30s ¥34.65/百万Token起]",
+      "model_name": "doubao-seedance-2.5",
+      "model_info": "480-1080p 4-30s ¥34.65/百万Token起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "gemini-omni-flash-1.1",
+      "request_ids": [
+        "gemini-omni-flash-1.1",
+        "gemini-omni-flash-1.1 [720p-4k 3-10s ¥0.22/秒起]"
+      ],
+      "recommended_request_id": "gemini-omni-flash-1.1 [720p-4k 3-10s ¥0.22/秒起]",
+      "model_name": "gemini-omni-flash-1.1",
+      "model_info": "720p-4k 3-10s ¥0.22/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "gemini-omni-flash-1.2",
+      "request_ids": [
+        "gemini-omni-flash-1.2",
+        "gemini-omni-flash-1.2 [720p-4k 3-15s ¥0.22/秒起]"
+      ],
+      "recommended_request_id": "gemini-omni-flash-1.2 [720p-4k 3-15s ¥0.22/秒起]",
+      "model_name": "gemini-omni-flash-1.2",
+      "model_info": "720p-4k 3-15s ¥0.22/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "grok-imagine-video",
+      "request_ids": [
+        "grok-imagine-video",
+        "grok-imagine-video [480/720p 1-15s ¥0.11/秒]"
+      ],
+      "recommended_request_id": "grok-imagine-video [480/720p 1-15s ¥0.11/秒]",
+      "model_name": "grok-imagine-video",
+      "model_info": "480/720p 1-15s ¥0.11/秒",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "grok-imagine-video-1.5",
+      "request_ids": [
+        "grok-imagine-video-1.5",
+        "grok-imagine-video-1.5 [480-1080p 1-15s ¥0.088/秒起]"
+      ],
+      "recommended_request_id": "grok-imagine-video-1.5 [480-1080p 1-15s ¥0.088/秒起]",
+      "model_name": "grok-imagine-video-1.5",
+      "model_info": "480-1080p 1-15s ¥0.088/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "kling-3.0",
+      "request_ids": [
+        "kling-3.0",
+        "kling-3.0 [720/1080p 3-15s ¥0.55/秒起]"
+      ],
+      "recommended_request_id": "kling-3.0 [720/1080p 3-15s ¥0.55/秒起]",
+      "model_name": "kling-3.0",
+      "model_info": "720/1080p 3-15s ¥0.55/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "kling-3.0-motion-control",
+      "request_ids": [
+        "kling-3.0-motion-control",
+        "kling-3.0-motion-control [720p 3-30s ¥0.979/秒]"
+      ],
+      "recommended_request_id": "kling-3.0-motion-control [720p 3-30s ¥0.979/秒]",
+      "model_name": "kling-3.0-motion-control",
+      "model_info": "720p 3-30s ¥0.979/秒",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "kling-3.0-omni",
+      "request_ids": [
+        "kling-3.0-omni",
+        "kling-3.0-omni [720/1080p 3-15s ¥0.55/秒起]"
+      ],
+      "recommended_request_id": "kling-3.0-omni [720/1080p 3-15s ¥0.55/秒起]",
+      "model_name": "kling-3.0-omni",
+      "model_info": "720/1080p 3-15s ¥0.55/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "minimax-h3",
+      "request_ids": [
+        "minimax-h3",
+        "minimax-h3 [768p/1080p/2k 4-15s ¥0.165/秒起]"
+      ],
+      "recommended_request_id": "minimax-h3 [768p/1080p/2k 4-15s ¥0.165/秒起]",
+      "model_name": "minimax-h3",
+      "model_info": "768p/1080p/2k 4-15s ¥0.165/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "veo-3.1",
+      "request_ids": [
+        "veo-3.1",
+        "veo-3.1 [720p-4k 4/6/8s ¥0.275/秒起]"
+      ],
+      "recommended_request_id": "veo-3.1 [720p-4k 4/6/8s ¥0.275/秒起]",
+      "model_name": "veo-3.1",
+      "model_info": "720p-4k 4/6/8s ¥0.275/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "veo-3.1-fast",
+      "request_ids": [
+        "veo-3.1-fast",
+        "veo-3.1-fast [720p 8s ¥0.165/秒]",
+        "veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]"
+      ],
+      "recommended_request_id": "veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]",
+      "model_name": "veo-3.1-fast",
+      "model_info": "720p-4k 4/6/8s ¥0.165/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "wan3.0-video",
+      "request_ids": [
+        "wan3.0-video",
+        "wan3.0-video [480-1080p 2-30s ¥0.385/秒起]"
+      ],
+      "recommended_request_id": "wan3.0-video [480-1080p 2-30s ¥0.385/秒起]",
+      "model_name": "wan3.0-video",
+      "model_info": "480-1080p 2-30s ¥0.385/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "wan3.0-video-prime",
+      "request_ids": [
+        "wan3.0-video-prime",
+        "wan3.0-video-prime [480-1080p 2-30s ¥0.66/秒起]"
+      ],
+      "recommended_request_id": "wan3.0-video-prime [480-1080p 2-30s ¥0.66/秒起]",
+      "model_name": "wan3.0-video-prime",
+      "model_info": "480-1080p 2-30s ¥0.66/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "SD-特价",
+      "request_ids": [
+        "SD-特价",
+        "SD-特价 [1080p 5-30s ¥2.178/条]"
+      ],
+      "recommended_request_id": "SD-特价 [1080p 5-30s ¥2.178/条]",
+      "model_name": "SD-特价",
+      "model_info": "1080p 5-30s ¥2.178/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "sd-2.5-fullblood",
+      "request_ids": [
+        "sd-2.5-fullblood",
+        "sd-2.5-fullblood [720p 5-30s ¥6.028/条]"
+      ],
+      "recommended_request_id": "sd-2.5-fullblood [720p 5-30s ¥6.028/条]",
+      "model_name": "sd-2.5-fullblood",
+      "model_info": "720p 5-30s ¥6.028/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "sd-2.5-fullblood-line2",
+      "request_ids": [
+        "sd-2.5-fullblood-line2",
+        "sd-2.5-fullblood-line2 [720p 5-30s ¥4.378/条]"
+      ],
+      "recommended_request_id": "sd-2.5-fullblood-line2 [720p 5-30s ¥4.378/条]",
+      "model_name": "sd-2.5-fullblood-line2",
+      "model_info": "720p 5-30s ¥4.378/条",
+      "status": "retired",
+      "stale": false,
+      "price_stale": true,
+      "parameters_stale": false,
+      "new_tasks_enabled": false,
+      "has_price": false,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:50:05Z"
+    },
+    {
+      "id": "sd-2.5-fullblood-line3",
+      "request_ids": [
+        "sd-2.5-fullblood-line3",
+        "sd-2.5-fullblood-line3 [720p 1-30s ¥5.258/条]"
+      ],
+      "recommended_request_id": "sd-2.5-fullblood-line3 [720p 1-30s ¥5.258/条]",
+      "model_name": "sd-2.5-fullblood-line3",
+      "model_info": "720p 1-30s ¥5.258/条",
+      "status": "retired",
+      "stale": false,
+      "price_stale": true,
+      "parameters_stale": false,
+      "new_tasks_enabled": false,
+      "has_price": false,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:50:05Z"
+    },
+    {
+      "id": "seedance-2.0-fast-official",
+      "request_ids": [
+        "seedance-2.0-fast-official",
+        "seedance-2.0-fast-official [720p 5-15s ¥0.209/秒;参考视频x2]"
+      ],
+      "recommended_request_id": "seedance-2.0-fast-official [720p 5-15s ¥0.209/秒;参考视频x2]",
+      "model_name": "seedance-2.0-fast-official",
+      "model_info": "720p 5-15s ¥0.209/秒;参考视频x2",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.0-official",
+      "request_ids": [
+        "seedance-2.0-official",
+        "seedance-2.0-official [720p 5-15s ¥0.528/秒;参考视频x2]"
+      ],
+      "recommended_request_id": "seedance-2.0-official [720p 5-15s ¥0.528/秒;参考视频x2]",
+      "model_name": "seedance-2.0-official",
+      "model_info": "720p 5-15s ¥0.528/秒;参考视频x2",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.5-dedicated-line1",
+      "request_ids": [
+        "seedance-2.5-dedicated-line1",
+        "seedance-2.5-dedicated-line1 [5-30s 480p ¥0.429/秒;720p ¥0.539/秒]"
+      ],
+      "recommended_request_id": "seedance-2.5-dedicated-line1 [5-30s 480p ¥0.429/秒;720p ¥0.539/秒]",
+      "model_name": "seedance-2.5-dedicated-line1",
+      "model_info": "5-30s 480p ¥0.429/秒;720p ¥0.539/秒",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.5-official",
+      "request_ids": [
+        "seedance-2.5-official",
+        "seedance-2.5-official [720p 5-30s ¥0.418/秒起]"
+      ],
+      "recommended_request_id": "seedance-2.5-official [720p 5-30s ¥0.418/秒起]",
+      "model_name": "seedance-2.5-official",
+      "model_info": "720p 5-30s ¥0.418/秒起",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "wan3.0",
+      "request_ids": [
+        "wan3.0",
+        "wan3.0 [5-30s 720p/1080p ¥0.319/秒]"
+      ],
+      "recommended_request_id": "wan3.0 [5-30s 720p/1080p ¥0.319/秒]",
+      "model_name": "wan3.0",
+      "model_info": "5-30s 720p/1080p ¥0.319/秒",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.0-mini-discount",
+      "request_ids": [
+        "seedance-2.0-mini-discount",
+        "seedance-2.0-mini-discount [720p 4-15s ¥0.858/条]"
+      ],
+      "recommended_request_id": "seedance-2.0-mini-discount [720p 4-15s ¥0.858/条]",
+      "model_name": "seedance-2.0-mini-discount",
+      "model_info": "720p 4-15s ¥0.858/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.0-fast-discount",
+      "request_ids": [
+        "seedance-2.0-fast-discount",
+        "seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]"
+      ],
+      "recommended_request_id": "seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]",
+      "model_name": "seedance-2.0-fast-discount",
+      "model_info": "720p 4-15s ¥1.078/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.0-discount",
+      "request_ids": [
+        "seedance-2.0-discount",
+        "seedance-2.0-discount [720p 4-15s ¥1.738/条]"
+      ],
+      "recommended_request_id": "seedance-2.0-discount [720p 4-15s ¥1.738/条]",
+      "model_name": "seedance-2.0-discount",
+      "model_info": "720p 4-15s ¥1.738/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.5-discount2",
+      "request_ids": [
+        "seedance-2.5-discount2",
+        "seedance-2.5-discount2 [720p 4-30s ¥3.938/条]"
+      ],
+      "recommended_request_id": "seedance-2.5-discount2 [720p 4-30s ¥3.938/条]",
+      "model_name": "seedance-2.5-discount2",
+      "model_info": "720p 4-30s ¥3.938/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    },
+    {
+      "id": "seedance-2.5-discount",
+      "request_ids": [
+        "seedance-2.5-discount",
+        "seedance-2.5-discount [720p 4-30s ¥5.478/条]"
+      ],
+      "recommended_request_id": "seedance-2.5-discount [720p 4-30s ¥5.478/条]",
+      "model_name": "seedance-2.5-discount",
+      "model_info": "720p 4-30s ¥5.478/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "checked_at": "2026-11-18T03:50:05Z",
+      "status_updated_at": "2026-11-18T03:38:34Z"
+    }
+  ]
+}

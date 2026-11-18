@@ -23,6 +23,8 @@ export const videoErrorMessages = {
     model_not_allowed: '当前 API Key 无权调用该模型，请刷新模型列表并检查官网 Key 分组权限；不会自动换 Key、分组或放宽模型权限。',
     model_missing: '当前 API Key 的可用模型列表不包含所选模型，请刷新模型列表并检查官网分组权限；不会自动换 Key、分组或付费模型。',
     model_unavailable: '当前视频模型暂不可用，请刷新模型列表或选择其他可用模型。',
+    model_retired: '该视频模型已下架，不能新建或重新生成；已提交的任务仍可查询和取回，请选择其他可用模型开始新任务。',
+    model_paused: '该视频模型已暂停新建任务；已有任务仍可查询和取回，请选择其他可用模型开始新任务。',
     task_missing: '找不到任务（404），请核对官网任务和用量并联系支持；原记录已保留，请不要反复生成。',
     task_expired: '原视频任务已过期（410），请核对官网任务和用量并联系支持；不会自动重新生成。',
     not_found: '视频接口或任务暂不可用（404），请检查所选模型、Key 分组和官网任务记录；不会自动重新生成。',
@@ -76,6 +78,8 @@ export function videoErrorText(value, context = {}) {
     else if (context.state === 'throttled') kind = 'throttled';
     else if (code === 'model_not_allowed' || /model[_ ]not[_ ]allowed|模型.*(?:未获准|无权限|未允许)/i.test(text)) kind = 'model_not_allowed';
     else if (/可用模型列表不包含/.test(text)) kind = 'model_missing';
+    else if (code === 'model_retired') kind = 'model_retired';
+    else if (code === 'model_paused') kind = 'model_paused';
     else if (code === 'model_unavailable' || /(?:model|模型).{0,40}(?:temporarily unavailable|is not available|暂(?:时)?不可用)/i.test(text)) kind = 'model_unavailable';
     else if (code === 'content_policy' || /moderation|content.?policy|可识别人物|真人|未通过.*审核/i.test(text)) kind = 'content_policy';
     else if (code === 'inline_text_too_large') kind = code;

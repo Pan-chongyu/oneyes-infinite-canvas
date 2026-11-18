@@ -35,7 +35,7 @@ declare global {
                 call(operation: 'state' | 'host' | 'join' | 'update' | 'snapshot' | 'leave' | 'presence' | 'saved' | 'reconnect' | 'profile', args?: { name?: string; nickname?: string; invite?: string; data?: string; projectId?: string;presence?:import('./stores/canvas/use-collaboration-store').CollaborationPresence }): Promise<import('./stores/canvas/use-collaboration-store').CollaborationState & { data?: string }>;
                 subscribe(callback: (event: { kind: 'state' | 'update' | 'ended' | 'presence' | 'error'; message?: string; data?: string;peers?:import('./stores/canvas/use-collaboration-store').CollaborationPeer[] } & import('./stores/canvas/use-collaboration-store').CollaborationState) => void): () => void;
             };
-            models: { list(apiKey: string, details?: boolean): Promise<{ data?: (string | { id: string; reference_file_max_bytes?: unknown })[]; error?: string }> };
+            models: { list(apiKey: string, details?: boolean): Promise<{ data?: (string | { id: string; reference_file_max_bytes?: unknown })[]; error?: string }>; videoCatalog?(): Promise<{ data?: unknown; error?: string }> };
             proxy: { test(config: import('./services/api/local-proxy').ProxySettings): Promise<{ data?: { status: number }; error?: string }> };
             agent: { call(operation: 'status' | 'setup' | 'restore'): Promise<{ data?: { configured: boolean; url?: string; token?: string }; error?: string }> };
             storage: { getItem(name: string): Promise<string | null>; setItem(name: string, value: string): Promise<void>; removeItem(name: string): Promise<void> };
