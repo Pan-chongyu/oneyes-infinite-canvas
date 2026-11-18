@@ -285,6 +285,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     const title = (
         <div className="flex items-center justify-between gap-4 pr-12">
             <span>{t("canvas.nodeToolbar.nodeInfo")}</span>
+            {node?.type === CanvasNodeType.Video ? <button type="button" className="px-2 py-1.5 text-xs font-normal transition-colors hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline focus-visible:outline-2" onClick={() => copyText(diagnosticReport(), '诊断信息已复制')} aria-label="复制视频诊断信息">复制诊断信息</button> : null}
             <Segmented
                 size="small"
                 value={view}
@@ -312,7 +313,6 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             {batchCount > 1 ? <InfoRow label={t("canvas.nodeToolbar.imageGroup")} value={t("canvas.configNode.images", { count: batchCount })} /> : null}
                             {node.metadata?.prompt ? <InfoRow label={t("canvas.configNode.prompt")} value={node.metadata.prompt} /> : null}
                             {job?.diagnosticId || node.metadata?.videoDiagnosticId ? <InfoRow label="本机记录编号" value={job?.diagnosticId || node.metadata!.videoDiagnosticId!} /> : null}
-                            {node.type === CanvasNodeType.Video ? <button type="button" className="px-2 py-1.5 text-xs transition-colors hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline focus-visible:outline-2" onClick={() => copyText(diagnosticReport(), '诊断信息已复制')} aria-label="复制视频诊断信息">复制诊断信息</button> : null}
                             {imageBytes ? <InfoRow label={t("canvas.nodeToolbar.imageSize")} value={formatBytes(imageBytes)} /> : null}
                             {node.metadata?.errorDetails ? (
                                 <div className="rounded-lg border p-3 text-red-400" style={{ borderColor: theme.node.stroke }}>

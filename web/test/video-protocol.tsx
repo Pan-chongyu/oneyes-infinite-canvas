@@ -60,7 +60,6 @@ Object.assign(window, { videoErrorDisplayTest: async () => {
         const copied = document.querySelector('pre')!.textContent!;
         check(!forbidden.test(copied) && !copied.includes('upstream-private-task'), 'ordinary JSON selection/copy contains safe details only');
         check(copied.includes(videoErrorText(raw)), 'details retain the actionable fixed message');
-        flushSync(() => [...document.querySelectorAll<HTMLElement>('.ant-segmented-item-label')].find(item => item.textContent === '信息')!.click()); await settled();
         const command = document.execCommand;
         let diagnosticCopy = '';
         document.execCommand = name => { if (name === 'copy') diagnosticCopy = window.getSelection()?.toString() || ''; return true; };
