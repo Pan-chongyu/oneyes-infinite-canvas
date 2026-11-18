@@ -216,6 +216,7 @@ test('concurrent attempts to submit the same local receipt permit exactly one PO
 
 test('large-material busy permits only the same durable key and exact body after Retry-After', async t => {
     const f = await fixture(t), manager = createVideoTasks({ directory: f.directory, vault: createVault(f.directory, 'video-tasks'), fetcher: fetch, probe: async () => ({}), credentials: async () => [], interval: 10000 });
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
     try {
         const key = await manager.prepare({ site: f.base, apiKey: 'fixture-key', channelId: 'fixture', model: 'fixture', provider: 'openai', retryLargeMaterial: true });
         const url = f.base + '/v1/videos', headers = { Authorization: 'Bearer fixture-key', 'Content-Type': 'application/json', 'Idempotency-Key': key }, body = JSON.stringify({ model: 'fixture', duration: 5 });
@@ -223,7 +224,9 @@ test('large-material busy permits only the same durable key and exact body after
         f.state.mode = 'busy'; await send();
         const job = (await manager.list())[0]; assert.equal(job.state, 'throttled'); assert.equal(job.idempotencyKey, key); assert.equal(f.state.accepted, 0);
         await assert.rejects(manager.beforeSubmit(key, url, headers, body), /重试时间/);
-        await new Promise(resolve => setTimeout(resolve, Math.max(0, job.retryAt - Date.now())));
+        t.mock.timers.setTime(job.retryAt - 1);
+        await assert.rejects(manager.beforeSubmit(key, url, headers, body), /重试时间/);
+        t.mock.timers.setTime(job.retryAt);
         await assert.rejects(manager.beforeSubmit(key, url, { ...headers, 'Idempotency-Key': 'another' }, body), /幂等键/);
         await assert.rejects(manager.beforeSubmit(key, url, headers, body + ' '), /停止重复提交/);
         await assert.rejects(manager.beforeSubmit(key, url + '/generations', headers, body), /停止重复提交/);

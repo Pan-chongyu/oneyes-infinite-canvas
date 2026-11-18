@@ -21,6 +21,10 @@ test('bridge IDs are exact, separate from task IDs and accepted only from the ac
     assert.equal(diagnostic.gatewayRequestId, gateway); assert.equal(diagnostic.errorCode, 'invalid_reference_format');
     assert.doesNotMatch(diagnostic.message, /private|prompt-secret/);
     assert.deepEqual(safeVideoDiagnostics({ arbitrary: diagnostic, poll: { ...diagnostic, bridgeRequestId: secret, apiKey: secret } }).poll.bridgeRequestId, undefined);
+    for (const model of ['video sk-private', 'video [api key sk-private]', 'C:\\private\\image.png', 'https://private.invalid']) {
+        const report = JSON.parse(videoDiagnosticReport({ model, taskId: 'sk-private' }));
+        assert.equal(report.modelId, undefined); assert.equal(report.taskId, undefined);
+    }
 });
 
 async function fixture(t, fetcher) {
@@ -51,6 +55,7 @@ test('creation, latest query and binary download diagnostics survive restart wit
     const report = videoDiagnosticReport(job), copy = JSON.parse(report);
     assert.equal(copy.taskId, task); assert.equal(copy.jobId, job.diagnosticId); assert.notEqual(copy.jobId, f.key);
     assert.equal(copy.modelId, 'seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]');
+    assert.equal(copy.requests.submit.stage, 'submit'); assert.ok(copy.requests.submit.localTime); assert.ok(copy.timeZone);
     assert.doesNotMatch(report, /sk-private|prompt-secret|private.invalid|private\\|idempotency|credential|parameters|reference|fixture::/);
     assert.ok(!report.includes(f.key));
     const restored = f.manager(); t.after(() => restored.close());

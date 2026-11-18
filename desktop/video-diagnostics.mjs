@@ -4,7 +4,9 @@ const phases = ['submit', 'poll', 'download'];
 const bridgeId = value => typeof value === 'string' && /^br_[a-f0-9]{32}$/.test(value) ? value : undefined;
 const gatewayId = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value) ? value : undefined;
 const publicCode = value => typeof value === 'string' && Object.hasOwn(videoErrorMessages, value) ? value : undefined;
+const privateIdentifier = value => /\b(?:sk[-_]|Bearer\s|api[-_ ]?key|access[_-]?token)/i.test(value);
 const time = value => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+const localTime = value => time(value) && Number.isFinite(new Date(value).getTime()) ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : undefined;
 function json(value) { if (typeof value !== 'string') return value; try { return JSON.parse(value); } catch { return undefined; } }
 
 /** Keep only the latest response per phase; never retain request/response bodies.
@@ -39,12 +41,12 @@ export function safeVideoDiagnostics(value) {
 /** A deliberately separate whitelist from ordinary node/project JSON. @param {any} job */
 export function videoDiagnosticReport(job) {
     const model = typeof job.model === 'string' ? job.model.split('::').at(-1) : '';
-    const modelId = !/^sk[-_]/i.test(model) && /^[\p{L}\p{N}_. -]+(?: [\[【][\p{L}\p{N} ._:¥￥$\/;；×–—-]+[\]】])?$/u.test(model) ? model : undefined;
+    const modelId = !privateIdentifier(model) && /^[\p{L}\p{N}_. -]+(?: [\[【][\p{L}\p{N} ._:¥￥$\/;；×–—-]+[\]】])?$/u.test(model) ? model : undefined;
     return JSON.stringify({
         jobId: typeof job.diagnosticId === 'string' && /^[a-f0-9-]{36}$/.test(job.diagnosticId) && job.diagnosticId !== job.key && job.diagnosticId !== job.idempotencyKey ? job.diagnosticId : undefined,
-        taskId: typeof job.taskId === 'string' && /^[A-Za-z0-9_-]+$/.test(job.taskId) ? job.taskId : undefined,
-        modelId, createdAt: time(job.createdAt), updatedAt: time(job.updatedAt),
+        taskId: typeof job.taskId === 'string' && !privateIdentifier(job.taskId) && /^[A-Za-z0-9_-]+$/.test(job.taskId) ? job.taskId : undefined,
+        modelId, createdAt: time(job.createdAt), updatedAt: time(job.updatedAt), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         errorCode: publicCode(job.errorCode), message: job.reason ? videoErrorText(job.reason, { state: job.state }) : undefined,
-        requests: safeVideoDiagnostics(job.diagnostics),
+        requests: Object.fromEntries(Object.entries(safeVideoDiagnostics(job.diagnostics)).map(([stage, item]) => [stage, { ...item, stage, localTime: localTime(item.at) }])),
     }, null, 2);
 }
