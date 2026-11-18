@@ -1,0 +1,623 @@
+{
+  "checked_at": "2026-11-18T01:43:12.556945+00:00",
+  "data": [
+    {
+      "id": "minimax-h3",
+      "request_id": "minimax-h3 [768p/1080p/2k 4-15s ¥0.165/秒起]",
+      "model_name": "minimax-h3",
+      "model_info": "768p/1080p/2k 4-15s ¥0.165/秒起",
+      "display_name": "minimax-h3 [768p/1080p/2k 4-15s ¥0.165/秒起]",
+      "prices": [
+        {
+          "variant": "768p",
+          "amount_cny": "0.165",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080p",
+          "amount_cny": "0.22",
+          "unit": "per_second"
+        },
+        {
+          "variant": "2k",
+          "amount_cny": "0.275",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "768p/1080p/2k；4–15秒；六种比例；支持首尾帧、最多9张参考图和3段参考音频，音频须配参考图；2k为超分增强，不支持480p/4k。",
+      "price_description": "768p ¥0.165/秒；1080p ¥0.22/秒；2k ¥0.275/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "kling-3.0-omni",
+      "request_id": "kling-3.0-omni [720/1080p 3-15s ¥0.55/秒起]",
+      "model_name": "kling-3.0-omni",
+      "model_info": "720/1080p 3-15s ¥0.55/秒起",
+      "display_name": "kling-3.0-omni [720/1080p 3-15s ¥0.55/秒起]",
+      "prices": [
+        {
+          "variant": "720P 参考视频",
+          "amount_cny": "0.825",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080P 参考视频",
+          "amount_cny": "1.111",
+          "unit": "per_second"
+        },
+        {
+          "variant": "720P 有声",
+          "amount_cny": "0.869",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080P 有声",
+          "amount_cny": "1.089",
+          "unit": "per_second"
+        },
+        {
+          "variant": "720P 无声",
+          "amount_cny": "0.55",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080P 无声",
+          "amount_cny": "0.737",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "720p/1080p；3–15秒，默认5秒；16:9/1:1/9:16；最多8张参考图或首尾帧，最多1段参考视频；默认无声，有声/参考视频单独计价；不支持参考音频。",
+      "price_description": "720P 参考视频 ¥0.825/秒；1080P 参考视频 ¥1.111/秒；720P 有声 ¥0.869/秒；1080P 有声 ¥1.089/秒；720P 无声 ¥0.55/秒；1080P 无声 ¥0.737/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "doubao-seedance-2.0",
+      "request_id": "doubao-seedance-2.0 [480p-4k 4-15s ¥13.2/百万Token起]",
+      "model_name": "doubao-seedance-2.0",
+      "model_info": "480p-4k 4-15s ¥13.2/百万Token起",
+      "display_name": "doubao-seedance-2.0 [480p-4k 4-15s ¥13.2/百万Token起]",
+      "prices": [
+        {
+          "variant": "480p_with_video",
+          "amount_cny": "23.1",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "480p_without_video",
+          "amount_cny": "37.95",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "720p_with_video",
+          "amount_cny": "23.1",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "720p_without_video",
+          "amount_cny": "37.95",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "1080p_with_video",
+          "amount_cny": "25.575",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "1080p_without_video",
+          "amount_cny": "42.075",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "4k_with_video",
+          "amount_cny": "13.2",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "4k_without_video",
+          "amount_cny": "21.45",
+          "unit": "per_million_tokens"
+        }
+      ],
+      "capabilities": "480p/720p/1080p/4k；4–15秒；文生视频、首尾帧、最多9张参考图/3段参考视频/3段参考音频；默认720p、生成音频，不支持取消。",
+      "price_description": "480p 有参考视频 ¥23.1/百万Token；480p 无参考视频 ¥37.95/百万Token；720p 有参考视频 ¥23.1/百万Token；720p 无参考视频 ¥37.95/百万Token；1080p 有参考视频 ¥25.575/百万Token；1080p 无参考视频 ¥42.075/百万Token；4k 有参考视频 ¥13.2/百万Token；4k 无参考视频 ¥21.45/百万Token；按实际计费Token结算，参考视频和输出分辨率适用对应档位；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "grok-imagine-video-1.5",
+      "request_id": "grok-imagine-video-1.5 [480-1080p 1-15s ¥0.088/秒起]",
+      "model_name": "grok-imagine-video-1.5",
+      "model_info": "480-1080p 1-15s ¥0.088/秒起",
+      "display_name": "grok-imagine-video-1.5 [480-1080p 1-15s ¥0.088/秒起]",
+      "prices": [
+        {
+          "variant": "480p",
+          "amount_cny": "0.088",
+          "unit": "per_second"
+        },
+        {
+          "variant": "720p",
+          "amount_cny": "0.176",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080p",
+          "amount_cny": "0.242",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "480p/720p/1080p；1–15秒，默认8秒；七种比例；文生视频或最多1张首帧，结果含音轨；不支持参考视频/音频。",
+      "price_description": "480p ¥0.088/秒；720p ¥0.176/秒；1080p ¥0.242/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "veo-3.1",
+      "request_id": "veo-3.1 [720p-4k 4/6/8s ¥0.275/秒起]",
+      "model_name": "veo-3.1",
+      "model_info": "720p-4k 4/6/8s ¥0.275/秒起",
+      "display_name": "veo-3.1 [720p-4k 4/6/8s ¥0.275/秒起]",
+      "prices": [
+        {
+          "variant": "720p",
+          "amount_cny": "0.275",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080p",
+          "amount_cny": "0.33",
+          "unit": "per_second"
+        },
+        {
+          "variant": "4k",
+          "amount_cny": "0.4125",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "720p/1080p/4k；4/6/8秒，默认8秒；16:9/9:16；支持文生视频、首帧/首尾帧、1–3张参考图（参考图模式固定8秒）及每次新增7秒的视频延长；默认带音频。",
+      "price_description": "720p ¥0.275/秒；1080p ¥0.33/秒；4k ¥0.4125/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "wan3.0-video",
+      "request_id": "wan3.0-video [480-1080p 2-30s ¥0.385/秒起]",
+      "model_name": "wan3.0-video",
+      "model_info": "480-1080p 2-30s ¥0.385/秒起",
+      "display_name": "wan3.0-video [480-1080p 2-30s ¥0.385/秒起]",
+      "prices": [
+        {
+          "variant": "480P",
+          "amount_cny": "0.385",
+          "unit": "per_second"
+        },
+        {
+          "variant": "720P",
+          "amount_cny": "0.66",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080P",
+          "amount_cny": "0.99",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "480p/720p/1080p；2–30秒或智能时长；支持文/图生视频、首尾帧及图/视频/音频参考；计费时长为输入视频与输出视频之和，无参考视频只计输出。",
+      "price_description": "480P ¥0.385/秒；720P ¥0.66/秒；1080P ¥0.99/秒；有参考视频时按输入视频和输出视频的总秒数计费；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "gemini-omni-flash-1.2",
+      "request_id": "gemini-omni-flash-1.2 [720p-4k 3-15s ¥0.22/秒起]",
+      "model_name": "gemini-omni-flash-1.2",
+      "model_info": "720p-4k 3-15s ¥0.22/秒起",
+      "display_name": "gemini-omni-flash-1.2 [720p-4k 3-15s ¥0.22/秒起]",
+      "prices": [
+        {
+          "variant": "720p",
+          "amount_cny": "0.22",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080p",
+          "amount_cny": "0.275",
+          "unit": "per_second"
+        },
+        {
+          "variant": "4k",
+          "amount_cny": "0.385",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "720p/1080p/4k；3–15秒；16:9/9:16；最多10张参考图、3段参考视频；支持编辑、多轮续接和延长，不支持参考音频；参考视频MP4/MOV/WebM、单文件64MiB内。",
+      "price_description": "720p ¥0.22/秒；1080p ¥0.275/秒；4k ¥0.385/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "kling-3.0-motion-control",
+      "request_id": "kling-3.0-motion-control [720p 3-30s ¥0.979/秒]",
+      "model_name": "kling-3.0-motion-control",
+      "model_info": "720p 3-30s ¥0.979/秒",
+      "display_name": "kling-3.0-motion-control [720p 3-30s ¥0.979/秒]",
+      "prices": [
+        {
+          "variant": "720P",
+          "amount_cny": "0.979",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "仅720p；需1张人物图和1段3–30秒动作参考视频；成片时长跟随动作视频并保留原声；无需传时长/比例。",
+      "price_description": "720P ¥0.979/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "wan3.0-video-prime",
+      "request_id": "wan3.0-video-prime [480-1080p 2-30s ¥0.66/秒起]",
+      "model_name": "wan3.0-video-prime",
+      "model_info": "480-1080p 2-30s ¥0.66/秒起",
+      "display_name": "wan3.0-video-prime [480-1080p 2-30s ¥0.66/秒起]",
+      "prices": [
+        {
+          "variant": "480P",
+          "amount_cny": "0.66",
+          "unit": "per_second"
+        },
+        {
+          "variant": "720P",
+          "amount_cny": "0.88",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080P",
+          "amount_cny": "1.76",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "480p/720p/1080p；2–30秒或智能时长；支持文/图生视频、首尾帧及图/视频/音频参考；计费时长为输入视频与输出视频之和，无参考视频只计输出。",
+      "price_description": "480P ¥0.66/秒；720P ¥0.88/秒；1080P ¥1.76/秒；有参考视频时按输入视频和输出视频的总秒数计费；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "gemini-omni-flash-1.1",
+      "request_id": "gemini-omni-flash-1.1 [720p-4k 3-10s ¥0.22/秒起]",
+      "model_name": "gemini-omni-flash-1.1",
+      "model_info": "720p-4k 3-10s ¥0.22/秒起",
+      "display_name": "gemini-omni-flash-1.1 [720p-4k 3-10s ¥0.22/秒起]",
+      "prices": [
+        {
+          "variant": "720p",
+          "amount_cny": "0.22",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080p",
+          "amount_cny": "0.275",
+          "unit": "per_second"
+        },
+        {
+          "variant": "4k",
+          "amount_cny": "0.385",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "720p/1080p/4k；3–10秒；16:9/9:16；最多10张参考图、3段参考视频；支持编辑和延长，不支持参考音频；参考视频MP4/MOV/WebM、单文件64MiB内。",
+      "price_description": "720p ¥0.22/秒；1080p ¥0.275/秒；4k ¥0.385/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "kling-3.0",
+      "request_id": "kling-3.0 [720/1080p 3-15s ¥0.55/秒起]",
+      "model_name": "kling-3.0",
+      "model_info": "720/1080p 3-15s ¥0.55/秒起",
+      "display_name": "kling-3.0 [720/1080p 3-15s ¥0.55/秒起]",
+      "prices": [
+        {
+          "variant": "720P 有声",
+          "amount_cny": "0.979",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080P 有声",
+          "amount_cny": "1.309",
+          "unit": "per_second"
+        },
+        {
+          "variant": "720P 无声",
+          "amount_cny": "0.55",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080P 无声",
+          "amount_cny": "0.737",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "720p/1080p；3–15秒，默认5秒；16:9/1:1/9:16；最多6张参考图或首尾帧；默认无声，有声单独计价；不支持参考视频/音频。",
+      "price_description": "720P 有声 ¥0.979/秒；1080P 有声 ¥1.309/秒；720P 无声 ¥0.55/秒；1080P 无声 ¥0.737/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "grok-imagine-video",
+      "request_id": "grok-imagine-video [480/720p 1-15s ¥0.11/秒]",
+      "model_name": "grok-imagine-video",
+      "model_info": "480/720p 1-15s ¥0.11/秒",
+      "display_name": "grok-imagine-video [480/720p 1-15s ¥0.11/秒]",
+      "prices": [
+        {
+          "variant": "base",
+          "amount_cny": "0.11",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "480p/720p；1–15秒，默认8秒；七种比例；文生视频或最多1张首帧，结果含音轨。",
+      "price_description": "480p/720p ¥0.11/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "veo-3.1-fast",
+      "request_id": "veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]",
+      "model_name": "veo-3.1-fast",
+      "model_info": "720p-4k 4/6/8s ¥0.165/秒起",
+      "display_name": "veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]",
+      "prices": [
+        {
+          "variant": "720p",
+          "amount_cny": "0.165",
+          "unit": "per_second"
+        },
+        {
+          "variant": "1080p",
+          "amount_cny": "0.22",
+          "unit": "per_second"
+        },
+        {
+          "variant": "4k",
+          "amount_cny": "0.33",
+          "unit": "per_second"
+        }
+      ],
+      "capabilities": "720p/1080p/4k；4/6/8秒，默认8秒；16:9/9:16；支持文生视频、首帧/首尾帧、1–3张参考图（参考图模式固定8秒）及每次新增7秒的视频延长；默认带音频。",
+      "price_description": "720p ¥0.165/秒；1080p ¥0.22/秒；4k ¥0.33/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "doubao-seedance-2.5",
+      "request_id": "doubao-seedance-2.5 [480-1080p 4-30s ¥34.65/百万Token起]",
+      "model_name": "doubao-seedance-2.5",
+      "model_info": "480-1080p 4-30s ¥34.65/百万Token起",
+      "display_name": "doubao-seedance-2.5 [480-1080p 4-30s ¥34.65/百万Token起]",
+      "prices": [
+        {
+          "variant": "480p_with_video",
+          "amount_cny": "34.65",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "480p_without_video",
+          "amount_cny": "57.75",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "720p_with_video",
+          "amount_cny": "34.65",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "720p_without_video",
+          "amount_cny": "57.75",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "1080p_with_video",
+          "amount_cny": "37.95",
+          "unit": "per_million_tokens"
+        },
+        {
+          "variant": "1080p_without_video",
+          "amount_cny": "63.525",
+          "unit": "per_million_tokens"
+        }
+      ],
+      "capabilities": "480p/720p/1080p；4–30秒或智能时长；文生视频、首尾帧、视频编辑/延长、最多30张参考图/10段参考视频/10段参考音频；默认720p、生成音频，不支持取消。",
+      "price_description": "480p 有参考视频 ¥34.65/百万Token；480p 无参考视频 ¥57.75/百万Token；720p 有参考视频 ¥34.65/百万Token；720p 无参考视频 ¥57.75/百万Token；1080p 有参考视频 ¥37.95/百万Token；1080p 无参考视频 ¥63.525/百万Token；按实际计费Token结算，参考视频和输出分辨率适用对应档位；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "SD-特价",
+      "request_id": "SD-特价 [1080p 5-30s ¥2.178/条]",
+      "model_name": "SD-特价",
+      "model_info": "1080p 5-30s ¥2.178/条",
+      "display_name": "SD-特价 [1080p 5-30s ¥2.178/条]",
+      "prices": [
+        {
+          "resolution": "1080p",
+          "amount_cny": "2.178",
+          "unit": "per_generation"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "1080p 5-30s；最多9张参考图片；不支持参考视频；最多3段参考音频。",
+      "price_description": "1080p ¥2.178/条；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "sd-2.5-fullblood",
+      "request_id": "sd-2.5-fullblood [720p 5-30s ¥6.028/条]",
+      "model_name": "sd-2.5-fullblood",
+      "model_info": "720p 5-30s ¥6.028/条",
+      "display_name": "sd-2.5-fullblood [720p 5-30s ¥6.028/条]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "6.028",
+          "unit": "per_generation"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "720p 5-30s；最多30张参考图片；最多10段参考视频；最多10段参考音频。",
+      "price_description": "720p ¥6.028/条；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "wan3.0",
+      "request_id": "wan3.0 [5-30s 720p/1080p ¥0.319/秒]",
+      "model_name": "wan3.0",
+      "model_info": "5-30s 720p/1080p ¥0.319/秒",
+      "display_name": "wan3.0 [5-30s 720p/1080p ¥0.319/秒]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "0.319",
+          "unit": "per_second"
+        },
+        {
+          "resolution": "1080p",
+          "amount_cny": "0.319",
+          "unit": "per_second"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "720p 5-30s；1080p 5-30s；最多10张参考图片；最多5段参考视频；最多5段参考音频。",
+      "price_description": "720p ¥0.319/秒；1080p ¥0.319/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.0-official",
+      "request_id": "seedance-2.0-official [720p 5-15s ¥0.528/秒;参考视频x2]",
+      "model_name": "seedance-2.0-official",
+      "model_info": "720p 5-15s ¥0.528/秒;参考视频x2",
+      "display_name": "seedance-2.0-official [720p 5-15s ¥0.528/秒;参考视频x2]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "0.528",
+          "unit": "per_second"
+        }
+      ],
+      "reference_video_multiplier": 2,
+      "capabilities": "720p 5-15s；最多9张参考图片；最多3段参考视频；最多3段参考音频。图片单文件最多16 MiB；视频单文件最多64 MiB；音频单文件最多64 MiB。",
+      "price_description": "720p ¥0.528/秒；有参考视频时以上单价×2；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.0-fast-official",
+      "request_id": "seedance-2.0-fast-official [720p 5-15s ¥0.209/秒;参考视频x2]",
+      "model_name": "seedance-2.0-fast-official",
+      "model_info": "720p 5-15s ¥0.209/秒;参考视频x2",
+      "display_name": "seedance-2.0-fast-official [720p 5-15s ¥0.209/秒;参考视频x2]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "0.209",
+          "unit": "per_second"
+        }
+      ],
+      "reference_video_multiplier": 2,
+      "capabilities": "720p 5-15s；最多9张参考图片；最多3段参考视频；最多3段参考音频。图片单文件最多16 MiB；视频单文件最多64 MiB；音频单文件最多64 MiB。",
+      "price_description": "720p ¥0.209/秒；有参考视频时以上单价×2；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.5-official",
+      "request_id": "seedance-2.5-official [720p 5-30s ¥0.418/秒起]",
+      "model_name": "seedance-2.5-official",
+      "model_info": "720p 5-30s ¥0.418/秒起",
+      "display_name": "seedance-2.5-official [720p 5-30s ¥0.418/秒起]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "0.418",
+          "unit": "per_second"
+        }
+      ],
+      "reference_video_multiplier": 2,
+      "capabilities": "720p 5-30s；最多30张参考图片；最多10段参考视频；最多10段参考音频。图片单文件最多16 MiB；视频单文件最多64 MiB；音频单文件最多64 MiB。",
+      "price_description": "720p ¥0.418/秒；有参考视频时以上单价×2；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.0-mini-discount",
+      "request_id": "seedance-2.0-mini-discount [720p 4-15s ¥0.858/条]",
+      "model_name": "seedance-2.0-mini-discount",
+      "model_info": "720p 4-15s ¥0.858/条",
+      "display_name": "seedance-2.0-mini-discount [720p 4-15s ¥0.858/条]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "0.858",
+          "unit": "per_generation"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "720p 4-15s；最多9张参考图片；不支持参考视频；不支持参考音频。图片单文件最多30 MiB。不支持取消。",
+      "price_description": "720p ¥0.858/条；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.0-fast-discount",
+      "request_id": "seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]",
+      "model_name": "seedance-2.0-fast-discount",
+      "model_info": "720p 4-15s ¥1.078/条",
+      "display_name": "seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "1.078",
+          "unit": "per_generation"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "720p 4-15s；最多9张参考图片；不支持参考视频；不支持参考音频。图片单文件最多30 MiB。不支持取消。",
+      "price_description": "720p ¥1.078/条；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.0-discount",
+      "request_id": "seedance-2.0-discount [720p 4-15s ¥1.738/条]",
+      "model_name": "seedance-2.0-discount",
+      "model_info": "720p 4-15s ¥1.738/条",
+      "display_name": "seedance-2.0-discount [720p 4-15s ¥1.738/条]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "1.738",
+          "unit": "per_generation"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "720p 4-15s；最多9张参考图片；不支持参考视频；不支持参考音频。图片单文件最多30 MiB。不支持取消。",
+      "price_description": "720p ¥1.738/条；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.5-discount2",
+      "request_id": "seedance-2.5-discount2 [720p 4-30s ¥3.938/条]",
+      "model_name": "seedance-2.5-discount2",
+      "model_info": "720p 4-30s ¥3.938/条",
+      "display_name": "seedance-2.5-discount2 [720p 4-30s ¥3.938/条]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "3.938",
+          "unit": "per_generation"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "720p 4-30s；最多9张参考图片；不支持参考视频；不支持参考音频。图片单文件最多30 MiB。参考图片支持已上传文件或公开HTTPS链接。不支持取消。",
+      "price_description": "720p ¥3.938/条；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.5-discount",
+      "request_id": "seedance-2.5-discount [720p 4-30s ¥5.478/条]",
+      "model_name": "seedance-2.5-discount",
+      "model_info": "720p 4-30s ¥5.478/条",
+      "display_name": "seedance-2.5-discount [720p 4-30s ¥5.478/条]",
+      "prices": [
+        {
+          "resolution": "720p",
+          "amount_cny": "5.478",
+          "unit": "per_generation"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "720p 4-30s；最多9张参考图片；不支持参考视频；不支持参考音频。图片单文件最多30 MiB。参考图片支持已上传文件或公开HTTPS链接。不支持取消。",
+      "price_description": "720p ¥5.478/条；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    },
+    {
+      "id": "seedance-2.5-dedicated-line1",
+      "request_id": "seedance-2.5-dedicated-line1 [5-30s 480p ¥0.429/秒;720p ¥0.539/秒]",
+      "model_name": "seedance-2.5-dedicated-line1",
+      "model_info": "5-30s 480p ¥0.429/秒;720p ¥0.539/秒",
+      "display_name": "seedance-2.5-dedicated-line1 [5-30s 480p ¥0.429/秒;720p ¥0.539/秒]",
+      "prices": [
+        {
+          "resolution": "480p",
+          "amount_cny": "0.429",
+          "unit": "per_second"
+        },
+        {
+          "resolution": "720p",
+          "amount_cny": "0.539",
+          "unit": "per_second"
+        }
+      ],
+      "reference_video_multiplier": null,
+      "capabilities": "480p 5-30s；720p 5-30s；最多30张参考图片；最多10段参考视频；最多10段参考音频。",
+      "price_description": "480p ¥0.429/秒；720p ¥0.539/秒；展示价格已含加价10%，最终按成功任务已验证实际费用结算。"
+    }
+  ]
+}

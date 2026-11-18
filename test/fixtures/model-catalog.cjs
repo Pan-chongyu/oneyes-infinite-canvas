@@ -99,13 +99,12 @@ app.whenReady().then(async () => {
             await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-            await wait('document.querySelectorAll("[role=option]").length === 6');
-            const labels = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent.trim())');
-            for (const variant of variants.slice(0, 2)) assert.ok(labels.some(label => label.startsWith(variant + ' [') && label.endsWith(']') && !label.includes('OneYes Grok')), variant);
-            assert.ok(labels.every(label => !/sdxl|gpt-5/.test(label)));
-            await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.getAttribute('data-model-id')===${JSON.stringify(`oneyes-minimax::${name}`)}).focus()`);
-            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
-            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+            await wait('document.querySelectorAll("[role=option]").length === 5');
+            const labels = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({name:option.querySelector("[data-model-name]").textContent,information:option.querySelector("[data-model-information]")?.textContent,label:option.textContent}))');
+            for (const variant of variants.slice(0, 2)) assert.ok(labels.some(label => label.name === variant && /720p.*¥/.test(label.information)), variant);
+            assert.ok(labels.every(label => !/sdxl|gpt-5|OneYes Grok/.test(label.label)));
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
             await wait(`modelTest.state().config.videoModel === ${JSON.stringify(`oneyes-minimax::${name}`)} && !document.querySelector("[role=listbox]")`);
             const request = await js('modelTest.request()');
             assert.equal(request.model, name);
@@ -116,9 +115,84 @@ app.whenReady().then(async () => {
         assert.equal(await js('modelTest.state().config.videoModel'), `oneyes-minimax::${variants[3]}`);
         assert.equal(JSON.parse(stored).state.config.videoModel, `oneyes-minimax::${variants[3]}`);
         console.log('NATIVE_VIDEO_MODEL_VARIANTS_PICKER_EXACT_IDS_AND_GROUP_RESTORE_OK');
+        const beforeDisplay = await js('modelTest.state().config'), variantsNames = names;
+        const displayModels = require('../../web/src/lib/video-model-display-catalog.json').data;
+        names = [...displayModels.flatMap(model => [model.id, model.request_id]), 'veo-3.1-fast [720p 8s ¥0.165/秒]', 'gpt-5.5', 'gpt-image-2'];
+        await js('modelTest.expire();modelTest.sync()');
+        await wait('!modelTest.state().syncing && modelTest.state().config.models.includes("oneyes-minimax::SD-特价")');
+        const oldId = 'oneyes-minimax::veo-3.1-fast [720p 8s ¥0.165/秒]';
+        for (const model of displayModels) {
+            for (const id of [model.id, model.request_id]) {
+                await js(`modelTest.selectVideo(${JSON.stringify('oneyes-minimax::' + id)})`);
+                assert.equal((await js('modelTest.request()')).model, id, 'request IDs must retain every character');
+            }
+        }
+        await js(`modelTest.selectVideo(${JSON.stringify(oldId)});modelTest.restore()`);
+        assert.equal((await js('modelTest.request()')).model, oldId.split('::')[1]);
+        for (const theme of ['light', 'dark']) {
+            if (theme === 'dark') {
+                await new Promise(resolve => { win.once('resize', resolve); win.setSize(420, 780); });
+                await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+                win.focus(); await wait('document.hasFocus()');
+            }
+            await js(`setRecoveryTheme(${JSON.stringify(theme)});document.querySelector('[data-testid=video-picker] [role=combobox]').focus()`);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('document.querySelectorAll("[role=option]").length === 52');
+            const rows = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>{const name=option.querySelector("[data-model-name]"),info=option.querySelector("[data-model-information]");return {id:option.getAttribute("data-model-id"),name:name.textContent,info:info?.textContent,separate:info&&info.getBoundingClientRect().top>=name.getBoundingClientRect().bottom}})');
+            assert.ok(rows.every(row => row.separate && /¥/.test(row.info)), 'every video model must have its information on a second line');
+            const bounds = await js('(()=>{const r=document.querySelector("[role=listbox]").getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth}})()');
+            assert.ok(bounds.left >= 0 && bounds.right <= bounds.width, 'two-line model list must fit narrow windows');
+            assert.equal(new Set(rows.filter(row => row.id.startsWith('oneyes-minimax::')).map(row => row.name)).size, 26);
+            const recommended = 'oneyes-minimax::veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]';
+            assert.equal(rows.find(row => row.id === recommended).info, '720p-4k 4/6/8s ¥0.165/秒起');
+            assert.ok(!rows.some(row => row.id === oldId), 'compatibility aliases are not new choices');
+            assert.equal(await js('document.querySelector("[data-state=checked][role=option]").getAttribute("data-model-id")'), recommended);
+            assert.equal((await js('modelTest.request()')).model, oldId.split('::')[1], 'opening the menu cannot rewrite a saved request ID');
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+            await wait('document.activeElement?.querySelector("[data-model-name]")?.textContent.toLowerCase().startsWith("s")');
+            if (!process.env.CI) {
+                await mkdir('.secrets', { recursive: true });
+                await writeFile(`.secrets/qa-model-information-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            }
+            await js(`document.querySelector('[aria-label="搜索视频模型"]').focus()`);
+            await win.webContents.insertText('4/6/8s');
+            await wait('document.querySelectorAll("[role=option]").length === 4');
+            assert.ok((await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent)')).every(label => label.includes('4/6/8s')));
+            for (const query of ['SD-特价', '¥0.165']) {
+                await js('document.querySelector("input[type=search]").focus();document.querySelector("input[type=search]").select()');
+                await win.webContents.insertText(query);
+                await wait(`document.querySelectorAll("[role=option]").length === ${query === 'SD-特价' ? 2 : 4}`);
+                assert.ok((await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent)')).every(label => label.includes(query)));
+            }
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await wait('!document.querySelector("[role=listbox]")');
+        }
+        await new Promise(resolve => { win.once('resize', resolve); win.setSize(1000, 780); });
+        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        win.focus(); await wait('document.hasFocus()');
+        await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+        await wait('Boolean(document.querySelector("[role=listbox]"))');
+        await js('document.querySelector("[role=option][data-state=checked]").focus()');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        await wait('!document.querySelector("[role=listbox]") && modelTest.state().config.videoModel === "oneyes-minimax::veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]"');
+        assert.equal((await js('modelTest.request()')).model, 'veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]', 'only explicit selection adopts a recommended request ID');
+        for (const kind of ['text', 'image']) {
+            await js(`document.querySelector('[data-testid=${kind}-picker] [role=combobox]').focus()`);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('Boolean(document.querySelector("[role=listbox]"))');
+            const ids = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.getAttribute("data-model-id"))');
+            assert.ok(ids.includes(kind === 'text' ? 'default::gpt-5.5' : 'default::gpt-image-2'), 'price filtering cannot hide text/image models');
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await wait('!document.querySelector("[role=listbox]")');
+        }
+        assert.equal(recoveryRetries, 0);
+        await js(`modelTest.replace(${JSON.stringify(beforeDisplay)})`); names = variantsNames;
+        await js('modelTest.expire();modelTest.sync()'); await wait('!modelTest.state().syncing');
+        console.log('NATIVE_MODEL_INFORMATION_26_CANONICAL_TWO_LINES_THEMES_TYPEAHEAD_EXACT_OLD_IDS_AND_TEXT_IMAGE_VISIBILITY_OK');
         const beforeRetirement = await js('modelTest.state().config'), originalNames = names;
         const legacyVideos = ['seedance-2.0', 'doubao-seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0 [720p ¥1/秒]'];
-        const activeVideos = ['doubao-seedance-2.0', 'doubao-seedance-2.5'];
+        const activeVideos = displayModels.filter(model => ['doubao-seedance-2.0', 'doubao-seedance-2.5'].includes(model.id)).map(model => model.request_id);
         names = [...legacyVideos, ...activeVideos];
         await js('modelTest.expire();modelTest.sync()');
         await wait('!modelTest.state().syncing && modelTest.state().config.models.includes("oneyes-minimax::seedance-2.0")');
@@ -136,11 +210,11 @@ app.whenReady().then(async () => {
         await wait('Boolean(document.querySelector("[role=listbox]"))');
         const offered = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.getAttribute("data-model-id"))');
         assert.ok(offered.every(id => !legacyVideos.some(name => id === 'default::' + name || id === 'oneyes-minimax::' + name)));
-        assert.ok(offered.includes('oneyes-minimax::doubao-seedance-2.0'));
-        await js('Array.from(document.querySelectorAll("[role=option]")).find(option=>option.getAttribute("data-model-id")==="oneyes-minimax::doubao-seedance-2.0").focus()');
+        assert.ok(offered.includes('oneyes-minimax::' + activeVideos[0]));
+        await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.getAttribute("data-model-id")===${JSON.stringify('oneyes-minimax::' + activeVideos[0])}).focus()`);
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
-        await wait('!document.querySelector("[role=listbox]") && modelTest.state().config.videoModel === "oneyes-minimax::doubao-seedance-2.0"');
-        assert.equal((await js('modelTest.request()')).model, 'doubao-seedance-2.0');
+        await wait(`!document.querySelector("[role=listbox]") && modelTest.state().config.videoModel === ${JSON.stringify('oneyes-minimax::' + activeVideos[0])}`);
+        assert.equal((await js('modelTest.request()')).model, activeVideos[0]);
         assert.equal(recoveryRetries, 0, 'model refresh cannot retry or resubmit any previous task');
         await js(`modelTest.replace(${JSON.stringify(beforeRetirement)})`); names = originalNames;
         await js('modelTest.expire();modelTest.sync()');

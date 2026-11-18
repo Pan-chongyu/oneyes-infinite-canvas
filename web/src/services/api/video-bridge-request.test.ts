@@ -69,6 +69,24 @@ test("Google uses native image mode/video fields and does not silently choose ed
     assert.throws(() => buildVideoBridgeRequest(veo, config(veo.id), veo.id, "fixture", { ...empty(), imageDataUrls: ["data:image/webp;base64,AAAA"] }), /仅接受 PNG \/ JPEG/);
 });
 
+test('Veo Fast new capabilities keep exact request IDs in JSON and binary reference requests', () => {
+    const model = info('veo-3.1-fast'), id = model.aliases[0];
+    for (const vquality of ['720', '1080', '4k']) for (const videoSeconds of ['4', '6', '8']) {
+        const selected = { ...config(model.id), vquality, videoSeconds, videoMode: 'frames' };
+        const before = JSON.stringify(selected);
+        const request = buildVideoBridgeRequest(model, selected, id, 'fixture', empty());
+        assert.equal((request.body as Record<string, unknown>).model, id);
+        assert.equal((request.body as Record<string, unknown>).duration, Number(videoSeconds));
+        assert.equal(JSON.stringify(selected), before);
+    }
+    for (const imageDataUrls of [[imageUrl], []]) {
+        const images = imageDataUrls.length ? [] : [new File(['original'], 'ref.png', { type: 'image/png' })];
+        assert.throws(() => buildVideoBridgeRequest(model, { ...config(model.id), videoMode: 'reference', videoSeconds: '6' }, id, 'fixture', { ...empty(), images, imageDataUrls }), /固定.*8 秒/);
+        const valid = buildVideoBridgeRequest(model, { ...config(model.id), vquality: '4k', videoMode: 'reference', videoSeconds: '8' }, id, 'fixture', { ...empty(), images, imageDataUrls });
+        assert.equal(valid.body instanceof FormData ? valid.body.get('model') : valid.body.model, id);
+    }
+});
+
 test("reference videos are never disguised as inline files or credential-bearing URLs", () => {
     for (const value of [undefined, "blob:local-video", "data:video/mp4;base64,AAAA", "file:///clip.mp4", "http://cdn.example/clip.mp4", "https://user:secret@cdn.example/clip.mp4"]) assert.throws(() => videoBridgeMediaUrl(value, "视频"), /公开 HTTPS/);
     assert.equal(videoBridgeMediaUrl("https://cdn.example/clip.mp4?signature=fixture", "视频"), "https://cdn.example/clip.mp4?signature=fixture");

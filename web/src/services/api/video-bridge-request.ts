@@ -92,7 +92,7 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
         else {
             if (info.id === 'veo-3.1' && media.images.some(image => !['image/png', 'image/jpeg'].includes(image.type))) throw Error('Veo 3.1 仅接受 PNG / JPEG，请重新读取图片；原图与画质不变。');
             if (info.id.startsWith('veo-') && media.videos.length) throw Error('Veo 通用生成不支持参考视频；不会自动切换视频扩展任务。');
-            if (info.id === 'veo-3.1' && mode === 'reference' && duration !== 8) throw Error('Veo 参考图片模式固定 8 秒，请主动调整。');
+            if (info.id.startsWith('veo-3.1') && mode === 'reference' && duration !== 8) throw Error('Veo 参考图片模式固定 8 秒，请主动调整。');
             body.append('metadata', JSON.stringify({ video_mode: mode }));
             if (info.id === 'veo-3.1') body.append('generate_audio', String(config.videoGenerateAudio !== 'false'));
         }

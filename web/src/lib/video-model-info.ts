@@ -1,6 +1,10 @@
 import type { AiConfig } from "@/stores/use-config-store";
 import { inferVideoRatio, parseVideoResolution, parsePixelSize, parseAspectRatio } from "./media-size";
 import { videoModelCatalog, type VideoModelInfo } from "./video-model-catalog";
+import { modelInformationPriority, splitModelInformation } from './model-information';
+import { videoDisplayText } from './video-display-text';
+import displaySnapshot from './video-model-display-catalog.json';
+const displayCatalog = displaySnapshot.data;
 
 /** The audited OneYes bridge prices must not label another provider or a script. */
 export function getVideoModelInfo(config: AiConfig, value = config.model || config.videoModel): VideoModelInfo | undefined {
@@ -25,20 +29,49 @@ export function getVideoModelInfo(config: AiConfig, value = config.model || conf
 }
 
 export function videoModelOptionName(config: AiConfig, value: string) {
+    const name = value.includes('::') ? value.slice(value.indexOf('::') + 2) : value;
+    if (splitModelInformation(name).information) return name;
     const info = getVideoModelInfo(config, value);
-    if (!info) return value.includes("::") ? value.slice(value.indexOf("::") + 2) : value;
+    if (!info) return name;
     return `${info.id} [${info.summary}]`;
 }
 
 /** Display one entry per channel/model while preserving the exact selected ID. */
 export function videoModelOptions(config: AiConfig, options: string[], current?: string) {
-    return options.filter((value) => {
-        const info = getVideoModelInfo(config, value);
-        if (!info) return true;
-        const channel = value.includes("::") ? value.slice(0, value.indexOf("::") + 2) : "";
-        const candidates = options.filter(item => item.startsWith(channel) && getVideoModelInfo(config, item)?.id === info.id);
-        const preferred = candidates.includes(current || "") ? current : candidates.find(item => item === `${channel}${info.id}`) || candidates[0];
-        return value === preferred;
+    return modelPickerOptions(config, options, current).map(option => option.value);
+}
+
+export function modelPickerOptions(config: AiConfig, options: string[], _current?: string) {
+    const groups = new Map<string, string[]>();
+    const raw = (value: string) => value.includes('::') ? value.slice(value.indexOf('::') + 2) : value;
+    for (const value of options) {
+        const channel = value.includes('::') ? value.slice(0, value.indexOf('::') + 2) : '';
+        const model = config.channels.find(entry => channel === entry.id + '::')?.models.find(entry => entry.name === raw(value));
+        const key = model && model.capability !== 'video' ? value : channel + (getVideoModelInfo(config, value)?.id || splitModelInformation(raw(value)).name);
+        groups.set(key, [...groups.get(key) || [], value]);
+    }
+    return [...groups.values()].flatMap(candidates => {
+        const channel = config.channels.find(channel => candidates[0].startsWith(channel.id + '::'));
+        const model = channel?.models.find(model => model.name === raw(candidates[0]));
+        if (model && model.capability !== 'video') {
+            const label = raw(candidates[0]) + (channel ? `（${channel.name}）` : '');
+            return [{ value: candidates[0], label, name: label, information: '' }];
+        }
+        let oneYesEndpoint = false;
+        try { oneYesEndpoint = ['oneyes.ai', 'api.oneyes.ai'].includes(new URL(channel?.baseUrl || config.baseUrl).hostname); } catch { /* No site metadata for an invalid endpoint. */ }
+        const videoGroup = oneYesEndpoint && (channel?.id === 'oneyes-minimax' || channel?.oneYes?.platform === 'grok');
+        const priced = candidates.filter(candidate => modelInformationPriority(raw(candidate)) === 2);
+        if (videoGroup && !priced.length) return [];
+        // Only recommend an audited ID actually returned by this Key. Unknown
+        // prices retain server order, never infer the cheapest or a request ID.
+        const canonical = splitModelInformation(raw(candidates[0])).name;
+        const recommended = oneYesEndpoint && displayCatalog.find(model => model.id === canonical)?.request_id;
+        const preferred = priced.find(candidate => raw(candidate) === recommended) || candidates.reduce((best, candidate) => modelInformationPriority(raw(candidate)) > modelInformationPriority(raw(best)) ? candidate : best);
+        const value = preferred;
+        const label = videoDisplayText(videoModelOptionName(config, preferred))
+            .replace(/https?:\/\/[^\s\]】,，;；]+/gi, '')
+            .replace(/(?:余额|剩余额度|balance|quota|credits?)\s*[:：=]?\s*[¥￥$]?\s*\d+(?:\.\d+)?\s*元?/gi, '').replace(/\s{2,}/g, ' ').trim();
+        return [{ value, label, ...splitModelInformation(label) }];
     });
 }
 
@@ -80,7 +113,7 @@ export function videoModelParametersError(info: VideoModelInfo, config: Pick<AiC
     if (info.id === "grok-imagine-video" && mode === "reference" && inputs.imageCount && seconds > 10) return "Grok 参考图片模式最多支持 10 秒，请调整时长。";
     if (info.id === "grok-imagine-video" && mode === "frames" && inputs.imageCount > 1) return "该 Grok 模型不支持尾帧，请选择参考模式或移除尾帧。";
     if (info.id === "grok-imagine-video-1.5" && mode === "frames" && inputs.imageCount > 1 && resolution === "1080") return "Grok 1.5 尾帧仅支持 480p / 720p，请主动调整。";
-    if (info.id === "veo-3.1" && mode === "reference" && inputs.imageCount && seconds !== 8) return "Veo 参考图片模式固定 8 秒，请主动调整时长。";
+    if (info.id.startsWith('veo-3.1') && mode === "reference" && inputs.imageCount && seconds !== 8) return "Veo 参考图片模式固定 8 秒，请主动调整时长。";
     if (info.id === "kling-3.0-motion-control" && (inputs.imageCount !== 1 || inputs.videoCount !== 1)) return "动作控制需要一张人物图片与一段 3–30 秒动作视频；成片时长跟随动作视频。";
     if (info.id === "kling-3.0-omni" && inputs.videoCount && config.videoGenerateAudio !== "false") return "Kling 参考视频模式仅支持无声，请主动关闭生成音频。";
     if (info.id === "grok-imagine-video-1.5" && (mode === "reference" && inputs.imageCount || inputs.audioCount || inputs.imageCount > 2) && resolution === "1080") return "Grok 1.5 多参考素材仅支持 480p / 720p，请主动调整分辨率。";

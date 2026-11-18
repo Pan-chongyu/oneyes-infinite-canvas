@@ -279,17 +279,17 @@ export const videoModelCatalog: VideoModelInfo[] = [
     },
     {
         "id": "veo-3.1-fast",
-        "aliases": ["veo-3.1-fast [720p 8s ¥0.165/秒]"],
+        "aliases": ["veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]", "veo-3.1-fast [720p 8s ¥0.165/秒]"],
         "provider": "88api",
-        "summary": "720p · 8 秒 · ¥0.165/秒",
+        "summary": "720p / 1080p / 4K · 4/6/8 秒 · ¥0.165/秒 起",
         "resolutions": [
-            "720"
+            "720", "1080", "4k"
         ],
         "duration": {
-            "min": 8,
+            "min": 4,
             "max": 8,
             "values": [
-                8
+                4, 6, 8
             ]
         },
         "ratios": [
@@ -308,12 +308,12 @@ export const videoModelCatalog: VideoModelInfo[] = [
             "audios": 0
         },
         "priceLines": [
-            "720p：¥0.165/秒"
+            "720p：¥0.165/秒", "1080p：¥0.22/秒", "4K：¥0.33/秒"
         ],
         "notes": [
-            "实际固定输出 720p、8 秒、有声；其他分辨率、时长和关闭音频参数在上游被忽略。",
+            "时长支持 4、6、8 秒；参考图片模式固定 8 秒，默认带音频。",
             "参考图片最多 3 张；首尾帧与普通参考图片互斥，尾帧需要首帧。",
-            "不支持参考视频、参考音频、扩展、seed 或 negative_prompt。"
+            "当前面板不提供视频延长；不支持普通参考视频、参考音频、seed 或 negative_prompt。"
         ],
         "audio": "required"
     },
