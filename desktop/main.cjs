@@ -252,6 +252,24 @@ app.whenReady().then(async () => {
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
                 await require('./clipboard-smoke.cjs').smokeClipboard(window);
+                if (process.platform === 'darwin') {
+                    if (!tray) throw new Error('Native macOS tray was not created');
+                    const assert = require('node:assert/strict'), image = tray.image;
+                    assert.equal(image.isTemplateImage(), true);
+                    assert.deepEqual(image.getSize(), { width: 16, height: 16 });
+                    for (const scaleFactor of [1, 2]) {
+                        assert.ok(image.getScaleFactors().includes(scaleFactor), 'Menu bar Retina representation missing');
+                        const pixels = image.toBitmap({ scaleFactor });
+                        assert.equal(pixels.length, (16 * scaleFactor) ** 2 * 4);
+                        let ink = 0;
+                        for (let i = 0; i < pixels.length; i += 4) {
+                            assert.equal(pixels[i] + pixels[i + 1] + pixels[i + 2], 0, 'Menu bar image must contain black and alpha only');
+                            ink += pixels[i + 3];
+                        }
+                        assert.ok(ink > 0 && ink < pixels.length / 4 * 255 / 2, 'Menu bar image must show a glyph without an app-icon tile');
+                    }
+                    console.log('MACOS_MONOCHROME_TEMPLATE_TRAY_RETINA_OK');
+                }
                 if (tray) {
                     const smokeWindow = window;
                     smokeWindow.show();

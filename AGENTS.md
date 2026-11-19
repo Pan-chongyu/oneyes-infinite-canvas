@@ -98,6 +98,7 @@
 
 ## 项目注意事项
 
+- macOS 菜单栏只用独立的黑色＋透明通道 Template 图标，提供 16px／32px @2x 资源并保留模板标记，由系统适配深浅菜单栏；不能复用带彩色底板的应用／Dock 图标，也不要缩放丢失 Retina 表示。安装包冒烟须核验模板、逻辑尺寸和两种倍率的实际像素。
 - Windows ICO 的圆角底板应与 OneYes 主客户端占比一致，裁掉源图透明外边后铺满各尺寸帧，不再叠加 macOS 风格留白；同步用于可执行文件、安装／卸载和窗口图标，保留小尺寸与高 DPI 帧。
 - Windows 安装／OTA 后须更新已有 Canvas 快捷方式的图标缓存地址并通知 Shell；用原生 IShellLinkW／IPersistFile 读写 Unicode 路径，不用会在非中文系统漏读目标的 WScript.Shell。用系统 GetLongPathName 统一 8.3 短路径／长路径后，只处理目标为本次安装 EXE 的链接，保留启动参数和固定状态，不重建已删除入口、不重启 Explorer 或删除全局图标缓存。必须用实际 NSIS 和 Windows Shell 链接验证，不能只验证源 ICO。
 

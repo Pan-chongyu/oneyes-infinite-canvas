@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.185",
+  "version": "0.20.186",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -55,6 +55,7 @@
       "desktop/**/*.sh",
       "desktop/resources/icon.png",
       "desktop/resources/icon.ico",
+      "desktop/resources/trayTemplate*.png",
       "node_modules/bsdiff-wasm/**/*",
       "node_modules/electron-updater/**/*",
       "canvas-proxy/transport.js",
