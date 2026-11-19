@@ -526,9 +526,14 @@ app.whenReady().then(async () => {
         const closeCanvasMenu = () => js('window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))');
         const openPasteMenu = async () => {
             await closeCanvasMenu();
+            win.focus();
+            await wait('document.hasFocus()');
+            await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
             const point = await js(`(() => {
                 const surface=document.querySelector('[data-canvas-surface]'), rect=surface.getBoundingClientRect();
-                for(let y=rect.bottom-6;y>rect.top+80;y-=30) for(let x=rect.right-6;x>rect.left+80;x-=30){
+                window.pasteContextEvent=null;
+                surface.addEventListener('contextmenu',event=>{const bounds=surface.getBoundingClientRect();window.pasteContextEvent={x:event.clientX,y:event.clientY,left:bounds.left,top:bounds.top}}, {once:true,capture:true});
+                for(let y=Math.floor(rect.bottom)-6;y>rect.top+80;y-=30) for(let x=Math.floor(rect.right)-6;x>rect.left+80;x-=30){
                     const target=document.elementFromPoint(x,y);
                     if(!target || !surface.contains(target) || target.closest('[data-node-id],button,input,textarea,[contenteditable=true]'))continue;
                     return {x,y,left:rect.left,top:rect.top};
@@ -537,10 +542,11 @@ app.whenReady().then(async () => {
             })()`);
             win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'right', clickCount: 1 });
             win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'right', clickCount: 1 });
-            await wait('document.querySelector("[aria-label=画布粘贴菜单] button")');
+            try { await wait('document.querySelector("[aria-label=画布粘贴菜单] button")'); }
+            catch (error) { throw Error(`Paste menu did not open: ${JSON.stringify({ point, event: await js('pasteContextEvent') })}`, { cause: error }); }
             assert.equal(await js('document.activeElement?.textContent'), '粘贴图片或文字');
             assert.equal(await js(`(() => {const r=document.querySelector('[aria-label=画布粘贴菜单]').getBoundingClientRect();return r.left>=0 && r.top>=0 && r.right<=innerWidth && r.bottom<=innerHeight})()`), true, 'edge menu stays inside the window');
-            return point;
+            return await js('pasteContextEvent');
         };
         let count = restored.nodes.length;
         for (const [theme, kind] of [['light', 'text'], ['dark', 'image']]) {
@@ -556,8 +562,8 @@ app.whenReady().then(async () => {
             assert.equal(clipboardReads, reads + 1, 'one explicit click reads once');
             const node = (await js('clipboardTest.state()')).nodes.at(-1);
             assert.equal(node.type, kind);
-            assert.ok(Math.abs(node.position.x + node.width / 2 - (point.x - point.left - viewport.x) / viewport.k) < 0.01);
-            assert.ok(Math.abs(node.position.y + node.height / 2 - (point.y - point.top - viewport.y) / viewport.k) < 0.01);
+            assert.ok(Math.abs(node.position.x + node.width / 2 - (point.x - point.left - viewport.x) / viewport.k) < 0.01, JSON.stringify({ point, viewport, position: node.position, width: node.width }));
+            assert.ok(Math.abs(node.position.y + node.height / 2 - (point.y - point.top - viewport.y) / viewport.k) < 0.01, JSON.stringify({ point, viewport, position: node.position, height: node.height }));
             if (kind === 'text') assert.equal(node.metadata.content, clipboardText);
             else {
                 assert.equal(node.metadata.naturalWidth, 16); assert.equal(node.metadata.naturalHeight, 8);
