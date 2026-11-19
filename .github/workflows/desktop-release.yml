@@ -3,12 +3,37 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      windows_icons_only:
+        description: Run only the native Windows installer and shortcut regression
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
   group: canvas-release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  windows-icons:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_icons_only
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: node scripts/build-resource-relay.mjs start "${{ runner.temp }}/canvas-build-relay.json"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: npm ci
+      - run: node --test test/windows-update.test.mjs
+      - if: always()
+        run: node scripts/build-resource-relay.mjs stop "${{ runner.temp }}/canvas-build-relay.json"
   ota-base:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
@@ -29,6 +54,7 @@ jobs:
           path: release-base/*
           if-no-files-found: error
   build:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_icons_only
     strategy:
       fail-fast: false
       matrix:

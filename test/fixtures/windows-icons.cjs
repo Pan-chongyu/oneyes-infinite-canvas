@@ -23,7 +23,8 @@ app.whenReady().then(async () => {
     const rootsFile = join(root, 'icon-roots.json'); await fs.writeFile(rootsFile, JSON.stringify(directories));
     const script = join(root, 'refresh.ps1');
     const ps = value => "'" + value.replaceAll("'", "''") + "'";
-    await fs.writeFile(script, '\ufeff' + `[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    await fs.writeFile(script, '\ufeff' + `$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 . ${ps(resolve('desktop/refresh-windows-icons.ps1'))}
 $directories = Get-Content -LiteralPath ${ps(rootsFile)} -Raw -Encoding UTF8 | ConvertFrom-Json
 $provided = (New-Object -ComObject Scripting.FileSystemObject).GetFile(${ps(executable)}).ShortPath
@@ -41,7 +42,9 @@ try {
 } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($probe) }
 `);
     const refresh = async expected => {
-        const state = JSON.parse((await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true })).stdout);
+        const output = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true });
+        assert.ok(output.stdout.trim(), output.stderr || 'PowerShell returned no icon refresh result');
+        const state = JSON.parse(output.stdout);
         assert.deepEqual(state.result, expected, JSON.stringify(state));
     };
     await refresh({ updated: paths.length, failed: 0 });
