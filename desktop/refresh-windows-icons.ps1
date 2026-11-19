@@ -6,7 +6,29 @@ function Update-CanvasIcons {
     # Installer parents can inherit a PowerShell 7 module path; use Windows' own modules.
     Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop
     Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop
-    $executablePath = [IO.Path]::GetFullPath($Executable)
+    if (!('CanvasIconNotification' -as [type])) {
+        Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class CanvasIconNotification {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern uint GetLongPathName(string path, StringBuilder output, uint size);
+    [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
+    static extern void SHChangeNotify(uint eventId, uint flags, string path, IntPtr unused);
+    public static string LongPath(string path) {
+        uint size = GetLongPathName(path, null, 0);
+        if (size == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var output = new StringBuilder((int)size);
+        if (GetLongPathName(path, output, size) == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        return output.ToString();
+    }
+    public static void Item(string path) { SHChangeNotify(0x2000, 0x2005, path, IntPtr.Zero); }
+    public static void Icons() { SHChangeNotify(0x08000000, 0x2000, null, IntPtr.Zero); }
+}
+'@
+    }
+    $executablePath = [CanvasIconNotification]::LongPath([IO.Path]::GetFullPath($Executable))
     if (!(Test-Path -LiteralPath $executablePath -PathType Leaf)) { throw 'Canvas executable is missing' }
     $hash = (Get-FileHash -LiteralPath $IconSource -Algorithm SHA256).Hash.ToLowerInvariant()
     $iconDirectory = Join-Path (Split-Path -LiteralPath $executablePath) 'resources'
@@ -14,18 +36,6 @@ function Update-CanvasIcons {
     $iconPath = Join-Path $iconDirectory ('oneyes-canvas-' + $hash + '.ico')
     if (!(Test-Path -LiteralPath $iconPath) -or (Get-FileHash -LiteralPath $iconPath -Algorithm SHA256).Hash -ne $hash) {
         Copy-Item -LiteralPath $IconSource -Destination $iconPath -Force
-    }
-    if (!('CanvasIconNotification' -as [type])) {
-        Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public static class CanvasIconNotification {
-    [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
-    static extern void SHChangeNotify(uint eventId, uint flags, string path, IntPtr unused);
-    public static void Item(string path) { SHChangeNotify(0x2000, 0x2005, path, IntPtr.Zero); }
-    public static void Icons() { SHChangeNotify(0x08000000, 0x2000, null, IntPtr.Zero); }
-}
-'@
     }
     $menus = @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('CommonPrograms'))
     if (!$ShortcutDirectories) {
@@ -46,7 +56,9 @@ public static class CanvasIconNotification {
                 $shortcut = $null
                 try {
                     $shortcut = $shell.CreateShortcut($file.FullName)
-                    if (!$shortcut.TargetPath -or ![string]::Equals([IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($shortcut.TargetPath)), $executablePath, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                    if (!$shortcut.TargetPath -or !(Test-Path -LiteralPath $shortcut.TargetPath -PathType Leaf)) { continue }
+                    $target = [CanvasIconNotification]::LongPath([IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($shortcut.TargetPath)))
+                    if (![string]::Equals($target, $executablePath, [StringComparison]::OrdinalIgnoreCase)) { continue }
                     $location = $iconPath + ',0'
                     if ($shortcut.IconLocation -ne $location) {
                         $shortcut.IconLocation = $location

@@ -1,6 +1,6 @@
 # OneYes Canvas OTA 发布规则
 
-Windows 安装器 `customInstall` 必须在替换程序后部署按 ICO 内容 SHA-256 命名的图标，更新当前用户／公共桌面、开始菜单和已有固定任务栏中目标精确匹配本次安装 EXE 的链接，并通过 SHChangeNotify 通知更新。保留参数、工作目录、名称和 AppUserModelID，不重建删除入口、不操作其他安装、不重启 Explorer 或删除全局缓存；刷新失败不阻止新版打开，安装器详细日志保留结果。原生 PowerShell 明确使用系统模块，避免继承 PowerShell 7 环境导致命令不可用。Windows x64／ARM64 的 `test/windows-update.test.mjs` 通过实际配置的 NSIS hook、中文／空格目录、真实 Electron Shell 链接和任务栏应用标识核验，重复刷新不改链接；六平台签名、公钥及增量规则不变。
+Windows 安装器 `customInstall` 必须在替换程序后部署按 ICO 内容 SHA-256 命名的图标，更新当前用户／公共桌面、开始菜单和已有固定任务栏中目标经 Windows GetLongPathName 统一 8.3 短路径／长路径后精确匹配本次安装 EXE 的链接，并通过 SHChangeNotify 通知更新。保留参数、工作目录、名称和 AppUserModelID，不重建删除入口、不操作其他安装、不重启 Explorer 或删除全局缓存；刷新失败不阻止新版打开，安装器详细日志保留结果。原生 PowerShell 明确使用系统模块，避免继承 PowerShell 7 环境导致命令不可用。Windows x64／ARM64 的 `test/windows-update.test.mjs` 通过实际配置的 NSIS hook、中文／空格目录、真实 Electron Shell 链接和任务栏应用标识核验，重复刷新不改链接；六平台签名、公钥及增量规则不变。
 
 Windows 图标尺寸调整须核对 ICO 的全部 16–256 像素帧，圆角底板铺满边界且透明角保留，占比与 OneYes 主客户端一致；不能给已裁边图案再次添加透明外边。EXE、安装／卸载和窗口共用此资源，沿用 NSIS 的 Shell 图标刷新；macOS 的图标留白独立保留。
 

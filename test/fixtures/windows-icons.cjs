@@ -26,11 +26,12 @@ app.whenReady().then(async () => {
     await fs.writeFile(script, '\ufeff' + `[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 . ${ps(resolve('desktop/refresh-windows-icons.ps1'))}
 $directories = Get-Content -LiteralPath ${ps(rootsFile)} -Raw -Encoding UTF8 | ConvertFrom-Json
-Update-CanvasIcons -Executable ${ps(executable)} -IconSource ${ps(source)} -ShortcutDirectories $directories | ConvertTo-Json -Compress
+$provided = (New-Object -ComObject Scripting.FileSystemObject).GetFile(${ps(executable)}).ShortPath
+Update-CanvasIcons -Executable $provided -IconSource ${ps(source)} -ShortcutDirectories $directories | ConvertTo-Json -Compress
 `);
     const refresh = async () => JSON.parse((await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true })).stdout);
     assert.deepEqual(await refresh(), { updated: paths.length, failed: 0 });
-    const iconPath = join(root, 'resources', 'oneyes-canvas-' + createHash('sha256').update(await fs.readFile(source)).digest('hex') + '.ico');
+    const iconPath = join(await fs.realpath(root), 'resources', 'oneyes-canvas-' + createHash('sha256').update(await fs.readFile(source)).digest('hex') + '.ico');
     for (let i = 0; i < paths.length; i++) {
         const after = shell.readShortcutLink(paths[i]);
         assert.equal(after.icon, iconPath);
