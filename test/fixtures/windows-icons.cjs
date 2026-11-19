@@ -29,17 +29,7 @@ app.whenReady().then(async () => {
 $directories = Get-Content -LiteralPath ${ps(rootsFile)} -Raw -Encoding UTF8 | ConvertFrom-Json
 $provided = (New-Object -ComObject Scripting.FileSystemObject).GetFile(${ps(executable)}).ShortPath
 $result = Update-CanvasIcons -Executable $provided -IconSource ${ps(source)} -ShortcutDirectories $directories
-$probe = New-Object -ComObject WScript.Shell
-try {
-    $links = @(foreach ($directory in $directories) {
-        foreach ($file in (Get-ChildItem -LiteralPath $directory -Filter '*.lnk' -File)) {
-            $link = $probe.CreateShortcut($file.FullName)
-            try { @{ path = $file.FullName; target = $link.TargetPath; exists = (Test-Path -LiteralPath $link.TargetPath); icon = $link.IconLocation } }
-            finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) }
-        }
-    })
-    @{ result = $result; provided = $provided; executable = [CanvasIconNotification]::LongPath($provided); directories = $directories; links = $links } | ConvertTo-Json -Depth 4 -Compress
-} finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($probe) }
+@{ result = $result; provided = $provided; executable = [CanvasIconNotification]::LongPath($provided); directories = $directories } | ConvertTo-Json -Depth 4 -Compress
 `);
     const refresh = async expected => {
         const output = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true });
