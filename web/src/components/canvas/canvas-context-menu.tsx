@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { BetweenHorizontalStart, GalleryHorizontalEnd, GalleryHorizontal, Group, Plus, Settings2, Sparkles, Trash2, Ungroup } from "lucide-react";
+import { BetweenHorizontalStart, ClipboardPaste, GalleryHorizontalEnd, GalleryHorizontal, Group, Plus, Settings2, Sparkles, Trash2, Ungroup } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -8,9 +8,17 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import type { ContextMenuState } from "@/types/canvas";
 import type { VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 
-export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, canUngroup, onClose, onCaptureVideoFrame, onReverseVideoPrompt, onCreateVideoConfig, onDuplicate, onGroup, onUngroup, onDelete }: { menu: ContextMenuState; canCaptureVideoFrame: boolean; canGroup?: boolean; canUngroup?: boolean; onClose: () => void; onCaptureVideoFrame: (position: VideoFramePosition) => void; onReverseVideoPrompt?: () => void; onCreateVideoConfig?: () => void; onDuplicate: () => void; onGroup?: () => void; onUngroup?: () => void; onDelete: () => void }) {
+export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, canUngroup, onClose, onPaste, onCaptureVideoFrame, onReverseVideoPrompt, onCreateVideoConfig, onDuplicate, onGroup, onUngroup, onDelete }: { menu: ContextMenuState; canCaptureVideoFrame: boolean; canGroup?: boolean; canUngroup?: boolean; onClose: () => void; onPaste?: () => void; onCaptureVideoFrame: (position: VideoFramePosition) => void; onReverseVideoPrompt?: () => void; onCreateVideoConfig?: () => void; onDuplicate: () => void; onGroup?: () => void; onUngroup?: () => void; onDelete: () => void }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const ref = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        const element = ref.current;
+        if (!element || menu.type !== "canvas") return;
+        element.style.left = `${Math.max(0, Math.min(menu.x, window.innerWidth - element.offsetWidth))}px`;
+        element.style.top = `${Math.max(0, Math.min(menu.y, window.innerHeight - element.offsetHeight))}px`;
+        element.querySelector("button")?.focus({ preventScroll: true });
+    }, [menu]);
 
     useEffect(() => {
         const close = (event: PointerEvent) => {
@@ -24,10 +32,16 @@ export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, ca
 
     return (
         <div
+            ref={ref}
+            role="menu"
+            aria-label={menu.type === "canvas" ? "画布粘贴菜单" : "节点操作"}
             className="fixed z-[80] min-w-44 overflow-hidden rounded-xl border py-1 shadow-2xl"
             style={{ left: menu.x, top: menu.y, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onPointerDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+            onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}
         >
+            {menu.type === "canvas" ? <MenuButton icon={<ClipboardPaste className="size-4" />} label="粘贴图片或文字" onClick={onPaste} /> : <>
             {canCaptureVideoFrame ? (
                 <>
                     {onReverseVideoPrompt ? <MenuButton icon={<Sparkles className="size-4" />} label={t("canvas.videoWorkflow.reverse")} onClick={onReverseVideoPrompt} /> : null}
@@ -42,6 +56,7 @@ export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, ca
             {menu.type === "node" && canUngroup ? <MenuButton icon={<Ungroup className="size-4" />} label={t("canvas.nodeToolbar.ungroup")} onClick={onUngroup} /> : null}
             {menu.type === "node" ? <MenuButton icon={<Plus className="size-4" />} label={t("canvas.controls.duplicate")} onClick={onDuplicate} /> : null}
             <MenuButton icon={<Trash2 className="size-4" />} label={t("canvas.controls.delete")} onClick={onDelete} danger />
+            </>}
         </div>
     );
 }
@@ -50,7 +65,7 @@ function MenuButton({ icon, label, onClick, danger = false }: { icon: ReactNode;
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
-        <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:opacity-80" style={{ color: danger ? "#f87171" : theme.node.text }} onClick={onClick}>
+        <button type="button" role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:opacity-80" style={{ color: danger ? "#f87171" : theme.node.text }} onClick={onClick}>
             {icon}
             <span>{label}</span>
         </button>

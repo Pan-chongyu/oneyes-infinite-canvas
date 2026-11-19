@@ -1,4 +1,13 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
+const { readClipboard } = require('../../desktop/clipboard.cjs');
+let clipboardValue = 'text', clipboardReads = 0, resolveClipboard;
+const clipboardText = '  中文提示词\n第二行  ';
+ipcMain.handle('clipboard:read', () => {
+    clipboardReads++;
+    if (clipboardValue === 'denied') throw Error('fixture clipboard failure');
+    if (clipboardValue === 'pending') return new Promise(resolve => { resolveClipboard = resolve; });
+    return readClipboard({ readImage: () => clipboardValue === 'image' ? nativeImage.createFromBitmap(Buffer.alloc(16 * 8 * 4, 255), { width: 16, height: 8 }) : nativeImage.createEmpty(), readText: () => clipboardValue === 'empty' ? '' : clipboardText });
+});
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');
 const { mkdir, writeFile } = require('node:fs/promises');
@@ -514,7 +523,78 @@ app.whenReady().then(async () => {
         assert.deepEqual(stableNodes(restored.nodes), stableNodes(saved.nodes)); assert.deepEqual(restored.connections, saved.connections);
         for (const [id, images] of contexts) assert.deepEqual((await js(`clipboardTest.context(${JSON.stringify(id)})`)).referenceImages, images, 'reopened references must load the same original bytes via new blob URLs');
         console.log('NATIVE_CANVAS_BULK_COPY_MENTIONS_MULTI_IMAGE_ORDER_GROUP_SHARED_INPUTS_REPEAT_PASTE_AND_RESTORE_OK');
+        const closeCanvasMenu = () => js('window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))');
+        const openPasteMenu = async () => {
+            await closeCanvasMenu();
+            const point = await js(`(() => {
+                const surface=document.querySelector('[data-canvas-surface]'), rect=surface.getBoundingClientRect();
+                for(let y=rect.bottom-6;y>rect.top+80;y-=30) for(let x=rect.right-6;x>rect.left+80;x-=30){
+                    const target=document.elementFromPoint(x,y);
+                    if(!target || !surface.contains(target) || target.closest('[data-node-id],button,input,textarea,[contenteditable=true]'))continue;
+                    return {x,y,left:rect.left,top:rect.top};
+                }
+                throw Error('No blank canvas point');
+            })()`);
+            win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'right', clickCount: 1 });
+            win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'right', clickCount: 1 });
+            await wait('document.querySelector("[aria-label=画布粘贴菜单] button")');
+            assert.equal(await js('document.activeElement?.textContent'), '粘贴图片或文字');
+            assert.equal(await js(`(() => {const r=document.querySelector('[aria-label=画布粘贴菜单]').getBoundingClientRect();return r.left>=0 && r.top>=0 && r.right<=innerWidth && r.bottom<=innerHeight})()`), true, 'edge menu stays inside the window');
+            return point;
+        };
+        let count = restored.nodes.length;
+        for (const [theme, kind] of [['light', 'text'], ['dark', 'image']]) {
+            await js(`setRecoveryTheme(${JSON.stringify(theme)})`);
+            clipboardValue = kind;
+            const reads = clipboardReads, point = await openPasteMenu();
+            assert.equal(clipboardReads, reads, 'opening a menu must not inspect the clipboard');
+            await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            if (!process.env.CI) await writeFile(`.secrets/qa-canvas-paste-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            const viewport = (await js('clipboardTest.state()')).viewport;
+            await js('document.querySelector("[aria-label=画布粘贴菜单] button").click()');
+            await wait(`clipboardTest.state().nodes.length === ${++count}`);
+            assert.equal(clipboardReads, reads + 1, 'one explicit click reads once');
+            const node = (await js('clipboardTest.state()')).nodes.at(-1);
+            assert.equal(node.type, kind);
+            assert.ok(Math.abs(node.position.x + node.width / 2 - (point.x - point.left - viewport.x) / viewport.k) < 0.01);
+            assert.ok(Math.abs(node.position.y + node.height / 2 - (point.y - point.top - viewport.y) / viewport.k) < 0.01);
+            if (kind === 'text') assert.equal(node.metadata.content, clipboardText);
+            else {
+                assert.equal(node.metadata.naturalWidth, 16); assert.equal(node.metadata.naturalHeight, 8);
+                assert.ok(node.metadata.storageKey, 'pasted original must be persisted');
+                assert.equal(node.width / node.height, 2, 'original aspect ratio is preserved');
+            }
+        }
+        for (const [kind, notice] of [['empty', '剪贴板中没有可粘贴'], ['denied', '粘贴失败']]) {
+            clipboardValue = kind;
+            await openPasteMenu();
+            await js('document.querySelector("[aria-label=画布粘贴菜单] button").click()');
+            await wait(`document.querySelector('.ant-message')?.textContent.includes(${JSON.stringify(notice)})`);
+            assert.equal((await js('clipboardTest.state()')).nodes.length, count, 'failed or empty reads must not create empty nodes');
+        }
+        const beforeDismiss = clipboardReads;
+        await openPasteMenu(); await closeCanvasMenu();
+        assert.equal(await js('!!document.querySelector("[aria-label=画布粘贴菜单]")'), false);
+        assert.equal(clipboardReads, beforeDismiss);
+        await js(`document.querySelector('[data-node-id=first]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:200,button:2}))`);
+        await wait('document.querySelector("[aria-label=节点操作]")');
+        assert.equal(await js('document.querySelector("[aria-label=节点操作]").textContent.includes("粘贴图片或文字")'), false, 'node menu retains node actions');
+        await closeCanvasMenu();
+        await js('clipboardTest.flush()');
+        await win.loadURL(process.argv[2]); await wait('Boolean(window.showClipboardCanvas)'); await js('showClipboardCanvas()');
+        await wait(`document.querySelectorAll('[data-node-id]').length === ${count}`);
+        const reopened = (await js('clipboardTest.state()')).nodes.slice(-2);
+        assert.equal(reopened[0].metadata.content, clipboardText);
+        assert.ok(reopened[1].metadata.content.startsWith('blob:'), 'pasted image reloads from persisted original');
+        clipboardValue = 'pending';
+        await openPasteMenu();
+        await js('document.querySelector("[aria-label=画布粘贴菜单] button").click()');
+        assert.ok(resolveClipboard);
         await js('showVideoRecovery()');
+        resolveClipboard({ text: 'must not append after leaving canvas' });
+        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        assert.equal((await js('clipboardTest.state()')).nodes.length, count, 'late clipboard result must not modify a closed canvas');
+        console.log('NATIVE_CANVAS_RIGHT_CLICK_PASTE_IMAGE_TEXT_POSITION_THEMES_EMPTY_FAILURE_DISMISS_REOPEN_AND_UNMOUNT_OK');
         await wait('document.querySelector(".ant-modal-body")?.textContent.includes("等待恢复凭据")');
         const recovery = await js('document.querySelector(".ant-modal-body").textContent');
         assert.match(recovery, /提交待核实/); assert.match(recovery, /不会重新生成、重复付费/); assert.match(recovery, /记录编号：11111111-1111-1111-1111-111111111111/);

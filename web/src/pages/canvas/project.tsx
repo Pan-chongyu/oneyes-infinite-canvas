@@ -33,6 +33,7 @@ import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
+import { readSystemClipboard } from "@/lib/canvas/system-clipboard";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
@@ -265,6 +266,12 @@ function InfiniteCanvasPage() {
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
     const projectLoaded = loadedProjectId === projectId;
+    const clipboardScope = useRef<object | null>(null);
+    const pastingClipboard = useRef(false);
+    useEffect(() => {
+        clipboardScope.current = {};
+        return () => { clipboardScope.current = null; };
+    }, [projectId]);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -1630,8 +1637,9 @@ function InfiniteCanvasPage() {
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
-    const createImageFileNode = useCallback(async (file: File, position: Position) => {
+    const createImageFileNode = useCallback(async (file: File, position: Position, isCurrent: () => boolean = () => true) => {
         const image = await uploadImage(file);
+        if (!isCurrent()) return false;
         const size = fitNodeSize(image.width, image.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newNode: CanvasNodeData = {
@@ -1648,6 +1656,7 @@ function InfiniteCanvasPage() {
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
+        return true;
     }, []);
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
@@ -1692,12 +1701,12 @@ function InfiniteCanvasPage() {
     }, []);
 
     const createTextNodeFromClipboard = useCallback(
-        (text: string) => {
+        (text: string, position: Position) => {
             const trimmed = text.trim();
             if (!trimmed) return false;
 
             const node = {
-                ...createCanvasNode(CanvasNodeType.Text, getCanvasCenter(), { content: trimmed, status: NODE_STATUS_SUCCESS }),
+                ...createCanvasNode(CanvasNodeType.Text, position, { content: text, status: NODE_STATUS_SUCCESS }),
                 title: trimmed.slice(0, 32) || t("canvas.projectPage.clipboardText"),
             };
 
@@ -1708,27 +1717,31 @@ function InfiniteCanvasPage() {
             setDialogNodeId(node.id);
             return true;
         },
-        [getCanvasCenter, t],
+        [t],
     );
 
-    const pasteSystemClipboard = useCallback(async () => {
-        if (!navigator.clipboard) return;
-
-        const items = await navigator.clipboard.read();
-        const imageItem = items.find((item) => item.types.some((type) => type.startsWith("image/")));
-        if (imageItem) {
-            const imageType = imageItem.types.find((type) => type.startsWith("image/"));
-            if (!imageType) return;
-            const blob = await imageItem.getType(imageType);
-            const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
-            message.success(t("canvas.projectPage.clipboardImageAdded"));
-            return;
+    const pasteSystemClipboard = useCallback(async (position = getCanvasCenter()) => {
+        if (!projectLoaded || pastingClipboard.current) return;
+        const scope = clipboardScope.current;
+        const isCurrent = () => scope !== null && scope === clipboardScope.current;
+        pastingClipboard.current = true;
+        setContextMenu(null);
+        try {
+            const data = await readSystemClipboard();
+            if (!isCurrent()) return;
+            if (data instanceof File) {
+                if (await createImageFileNode(data, position, isCurrent)) message.success(t("canvas.projectPage.clipboardImageAdded"));
+            } else if (typeof data === "string" && createTextNodeFromClipboard(data, position)) {
+                message.success(t("canvas.projectPage.clipboardTextAdded"));
+            } else {
+                message.info("剪贴板中没有可粘贴的图片或文字");
+            }
+        } catch {
+            if (isCurrent()) message.error("粘贴失败，请重新复制图片或文字，并允许读取剪贴板后重试");
+        } finally {
+            pastingClipboard.current = false;
         }
-
-        const text = await navigator.clipboard.readText();
-        if (createTextNodeFromClipboard(text)) message.success(t("canvas.projectPage.clipboardTextAdded"));
-    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, t]);
+    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, projectLoaded, t]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -2484,11 +2497,13 @@ function InfiniteCanvasPage() {
         setTitleEditing(false);
     }, [projectId, renameProject, titleDraft]);
 
-    const preventCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
-        if ((event.target as HTMLElement).closest("[data-node-id]")) return;
+    const handleCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
+        if ((event.target as Element).closest("[data-node-id],input,textarea,select,button,[contenteditable='true'],[data-canvas-no-zoom]")) return;
         event.preventDefault();
-        setContextMenu(null);
-    }, []);
+        if (!projectLoaded || referencePickerNodeId) return;
+        setNodeCreatePosition(null);
+        setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY) });
+    }, [projectLoaded, referencePickerNodeId, screenToCanvas]);
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -3380,7 +3395,7 @@ function InfiniteCanvasPage() {
                         setContextMenu(null);
                         setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
                     }}
-                    onContextMenu={preventCanvasContextMenu}
+                    onContextMenu={handleCanvasContextMenu}
                     onDrop={handleDrop}
                 >
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
@@ -3581,6 +3596,7 @@ function InfiniteCanvasPage() {
                         onReverseVideoPrompt={() => { if (contextMenuNode) createVideoWorkflow(contextMenuNode, "reverse"); }}
                         onCreateVideoConfig={() => { if (contextMenuNode) createVideoWorkflow(contextMenuNode, "generate"); }}
                         onClose={() => setContextMenu(null)}
+                        onPaste={() => { if (contextMenu.type === "canvas") void pasteSystemClipboard(contextMenu.position); }}
                         onCaptureVideoFrame={(position) => {
                             if (contextMenu.type !== "node") return;
                             void captureVideoNodeFrame(contextMenu.nodeId, position);
@@ -3595,7 +3611,7 @@ function InfiniteCanvasPage() {
                         onDelete={() => {
                             if (contextMenu.type === "node") {
                                 deleteNodes(new Set([contextMenu.nodeId]));
-                            } else {
+                            } else if (contextMenu.type === "connection") {
                                 deleteConnection(contextMenu.connectionId);
                             }
                             setContextMenu(null);
