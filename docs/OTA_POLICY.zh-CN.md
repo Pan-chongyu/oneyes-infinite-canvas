@@ -1,5 +1,7 @@
 # OneYes Canvas OTA 发布规则
 
+Windows 安装器 `customInstall` 必须在替换程序后部署按 ICO 内容 SHA-256 命名的图标，更新当前用户／公共桌面、开始菜单和已有固定任务栏中目标精确匹配本次安装 EXE 的链接，并通过 SHChangeNotify 通知更新。保留参数、工作目录、名称和 AppUserModelID，不重建删除入口、不操作其他安装、不重启 Explorer 或删除全局缓存；刷新失败不阻止新版打开，安装器详细日志保留结果。原生 PowerShell 明确使用系统模块，避免继承 PowerShell 7 环境导致命令不可用。Windows x64／ARM64 的 `test/windows-update.test.mjs` 通过实际配置的 NSIS hook、中文／空格目录、真实 Electron Shell 链接和任务栏应用标识核验，重复刷新不改链接；六平台签名、公钥及增量规则不变。
+
 Windows 图标尺寸调整须核对 ICO 的全部 16–256 像素帧，圆角底板铺满边界且透明角保留，占比与 OneYes 主客户端一致；不能给已裁边图案再次添加透明外边。EXE、安装／卸载和窗口共用此资源，沿用 NSIS 的 Shell 图标刷新；macOS 的图标留白独立保留。
 
 剪贴板改动必须覆盖当前 Electron 的真实异步 API：安装包冒烟通过系统剪贴板写入文字和 PNG／文字混合内容，再经生产受信主窗口 IPC 读取，在 renderer 中解码图片、核对尺寸与 MIME；测试结束恢复原剪贴板。只模拟旧 `readImage()` / 同步 `readText()` 的测试不能作为兼容性验收。浏览器权限不得代替桌面原生通道；失败诊断不含剪贴板内容。

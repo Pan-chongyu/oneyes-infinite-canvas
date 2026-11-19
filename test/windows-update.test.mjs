@@ -71,7 +71,8 @@ if($Capture){[WindowProbe]::Capture([IntPtr]$Handle,$Capture)}
         const folder = join(root, '更新 缓存 ' + scenario), destination = join(root, '安装 目录 ' + scenario), executable = join(destination, 'OneYes Canvas.exe');
         await mkdir(folder); await mkdir(destination); await copyFile(old, executable);
         const file = join(folder, 'setup.exe'), nsi = join(folder, 'fixture.nsi');
-        await writeFile(nsi, '\ufeff' + `Unicode true\nName "Canvas OTA isolated test"\nOutFile ${quote(file)}\nRequestExecutionLevel user\nSilentInstall silent\nSection\n${scenario === 'success' ? `FileOpen $0 ${quote(join(folder, 'installer-running'))} w\nFileClose $0\nwaiting:\nIfFileExists ${quote(join(folder, 'allow-install'))} install\nSleep 10\nGoto waiting\ninstall:\n` : ''}${scenario === 'installer' ? 'SetErrorLevel 2' : scenario === 'version' ? '' : `SetOutPath "$INSTDIR"\nFile "/oname=OneYes Canvas.exe" ${quote(next)}`}\nSectionEnd\n`);
+        const iconHook = scenario === 'success' ? `!define PROJECT_DIR ${quote(resolve('.'))}\n!define BUILD_RESOURCES_DIR ${quote(resolve('desktop/resources'))}\n!define APP_EXECUTABLE_FILENAME "OneYes Canvas.exe"\n!include ${quote(resolve(require('../package.json').build.nsis.include))}\n` : '';
+        await writeFile(nsi, '\ufeff' + `Unicode true\nName "Canvas OTA isolated test"\nOutFile ${quote(file)}\nRequestExecutionLevel user\nSilentInstall silent\n${iconHook}Section\n${scenario === 'success' ? `FileOpen $0 ${quote(join(folder, 'installer-running'))} w\nFileClose $0\nwaiting:\nIfFileExists ${quote(join(folder, 'allow-install'))} install\nSleep 10\nGoto waiting\ninstall:\n` : ''}${scenario === 'installer' ? 'SetErrorLevel 2' : scenario === 'version' ? '' : `SetOutPath "$INSTDIR"\nFile "/oname=OneYes Canvas.exe" ${quote(next)}`}\n${scenario === 'success' ? '!insertmacro customInstall\n' : ''}SectionEnd\n`);
         await run(nsis.path, ['/V2', nsi], { env: { ...process.env, ...nsis.env }, windowsHide: true });
         if (scenario === 'success') {
             const baseFile = join(folder, 'base-setup.exe'), baseNsi = join(folder, 'base.nsi');
@@ -155,6 +156,11 @@ if($Capture){[WindowProbe]::Capture([IntPtr]$Handle,$Capture)}
                 assert.equal(await readFile(join(destination, 'opened.txt'), 'utf8'), '--oneyes-updated');
                 assert.deepEqual(await readFile(executable), await readFile(next));
                 assert.equal(await exists(join(folder, 'install-error.txt')), false);
+                const icon = await readFile('desktop/resources/icon.ico'), hash = createHash('sha256').update(icon).digest('hex');
+                assert.deepEqual(await readFile(join(destination, 'resources', `oneyes-canvas-${hash}.ico`)), icon, 'real OTA installer must run the icon refresh hook');
+                const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+                await run(require('electron'), [resolve('test/fixtures/windows-icons.cjs'), destination], { env, windowsHide: true });
+                assert.equal(JSON.parse(await readFile(join(destination, 'icons-verified.json'), 'utf8')).verified, true);
             } else {
                 await wait(() => exists(join(folder, 'install-error.txt')));
                 assert.equal((await readFile(join(folder, 'install-error.txt'), 'utf8')).trim(), 'windows-' + scenario);
