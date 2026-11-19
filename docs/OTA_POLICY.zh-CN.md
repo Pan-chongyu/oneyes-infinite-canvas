@@ -1,5 +1,7 @@
 # OneYes Canvas OTA 发布规则
 
+Windows 图标尺寸调整须核对 ICO 的全部 16–256 像素帧，圆角底板铺满边界且透明角保留，占比与 OneYes 主客户端一致；不能给已裁边图案再次添加透明外边。EXE、安装／卸载和窗口共用此资源，沿用 NSIS 的 Shell 图标刷新；macOS 的图标留白独立保留。
+
 剪贴板改动必须覆盖当前 Electron 的真实异步 API：安装包冒烟通过系统剪贴板写入文字和 PNG／文字混合内容，再经生产受信主窗口 IPC 读取，在 renderer 中解码图片、核对尺寸与 MIME；测试结束恢复原剪贴板。只模拟旧 `readImage()` / 同步 `readText()` 的测试不能作为兼容性验收。浏览器权限不得代替桌面原生通道；失败诊断不含剪贴板内容。
 
 OneYes Grok 本地图片发布须在桥已部署确认后启用。六平台 `test:videos` 回归精确裸名／价格别名、首帧／参考模式、Worker 原尺寸无损编码、公开 HTTPS 与本地图顺序、当前 Key 目录准入及第三方原生行为；本机可用 `ONEYES_BRIDGE_TEST_DIRECTORY` 指向已部署版本的本地适配器，验证真实 renderer builder→bridge normalizer→受信上传计划，不发起网络上传或收费创建。原任务、幂等和未知提交不得因能力开放而重放。
