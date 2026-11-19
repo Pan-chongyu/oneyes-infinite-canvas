@@ -220,6 +220,42 @@ app.whenReady().then(async () => {
             win.webContents.invalidate();
             writeFileSync(process.env.CANVAS_UPDATE_SCREENSHOT.replace('.png', '-dark.png'), (await win.webContents.capturePage()).toPNG());
         }
-        console.log('OTA_UI_OK: version prompt, background progress, busy guard, save before install, compact panel'); app.exit(0);
+        await js('updateTest.canvas()');
+        await wait('document.querySelector("[data-canvas-top-bar] [data-canvas-update] button")');
+        await wait('!document.querySelector(".ant-message-notice")');
+        const trigger = '[data-canvas-update] button[aria-label="软件更新"]';
+        for (const [width, dark] of [[1280, false], [860, true]]) {
+            win.setSize(width, 720);
+            await js(`updateTest.theme(${dark});updateTest.status('ready')`);
+            await js(`document.querySelector('${trigger}').click()`);
+            await wait(`document.querySelector('${trigger}').getAttribute('aria-expanded') === 'true' && document.querySelector('section[aria-label="软件更新"]')`);
+            await wait(`(() => { const panel = document.querySelector('.ant-popover'); return panel && getComputedStyle(panel).opacity === '1' && panel.getAnimations({subtree:true}).every(animation => animation.playState !== 'running'); })()`);
+            await js('new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            const bounds = await js(`(() => { const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON(); return { top:rect('[data-canvas-top-bar]'), trigger:rect('${trigger}'), panel:rect('section[aria-label="软件更新"]'), width:innerWidth, count:document.querySelectorAll('button[aria-label="软件更新"]').length }; })()`);
+            assert.equal(bounds.count, 1, 'canvas has one update entry and no duplicate bottom overlay');
+            assert.ok(bounds.trigger.top >= bounds.top.top && bounds.trigger.bottom <= bounds.top.bottom, 'update belongs to top toolbar');
+            assert.ok(bounds.panel.top >= bounds.trigger.bottom && bounds.panel.left >= 0 && bounds.panel.right <= bounds.width, 'panel opens below toolbar and stays in viewport');
+            const items = await js(`Array.from(document.querySelector('[data-canvas-top-bar]').firstElementChild.children, item => item.getBoundingClientRect().toJSON())`);
+            for (let index = 1; index < items.length; index++) assert.ok(items[index - 1].right <= items[index].left, 'project title and status do not overlap');
+            assert.ok(items.at(-1).right <= bounds.trigger.left, 'project title yields space to update controls');
+            assert.equal(await js(`getComputedStyle(document.querySelector('[data-canvas-top-bar]').firstElementChild.children[2].querySelector('span')).overflow`), 'hidden', 'long title is visually clipped');
+            assert.ok((await contrast()).ratio >= 4.5);
+            if (process.env.CANVAS_UPDATE_SCREENSHOT) {
+                win.showInactive(); win.webContents.invalidate();
+                await js('new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+                writeFileSync(process.env.CANVAS_UPDATE_SCREENSHOT.replace('.png', `-canvas-${dark ? 'dark' : 'light'}.png`), (await win.webContents.capturePage()).toPNG());
+            }
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+            await wait(`document.querySelector('${trigger}').getAttribute('aria-expanded') === 'false'`);
+            assert.equal(await js(`document.activeElement === document.querySelector('${trigger}')`), true);
+            await js(`document.querySelector('${trigger}').click()`);
+            await wait(`document.querySelector('${trigger}').getAttribute('aria-expanded') === 'true'`);
+            const outside = await js('document.querySelector("[data-update-outside]").getBoundingClientRect().toJSON()');
+            const point = { x: Math.round(outside.left + 5), y: Math.round(outside.top + 5), button: 'left', clickCount: 1 };
+            win.webContents.sendInputEvent({ type: 'mouseDown', ...point }); win.webContents.sendInputEvent({ type: 'mouseUp', ...point });
+            await wait(`document.querySelector('${trigger}').getAttribute('aria-expanded') === 'false'`);
+        }
+        console.log('OTA_UI_OK: version prompt, background progress, busy guard, save before install, compact top toolbar panel, viewport bounds, Escape and outside dismissal'); app.exit(0);
     } catch (error) { console.error(error); app.exit(1); }
 });

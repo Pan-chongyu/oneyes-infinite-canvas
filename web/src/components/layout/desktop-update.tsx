@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Download, RefreshCw, RotateCw, X } from "lucide-react";
-import { App } from "antd";
+import { App, Popover } from "antd";
 import { desktopUpdate, useDesktopUpdateStore } from "@/stores/use-desktop-update-store";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { flushCanvasStorage } from "@/stores/canvas/use-canvas-store";
 
-export function DesktopUpdate() {
+export function DesktopUpdate({ variant = 'default' }: { variant?: 'default' | 'canvas' }) {
     const state = useDesktopUpdateStore();
     const [open, setOpen] = useState(false);
+    const triggerRef = useRef<HTMLButtonElement>(null);
     const [saving, setSaving] = useState(false), installing = useRef(false);
     const { message } = App.useApp();
     useEffect(() => {
@@ -17,6 +18,12 @@ export function DesktopUpdate() {
         void api.call('state').then(next => useDesktopUpdateStore.setState(next)).catch(() => useDesktopUpdateStore.setState({ status: 'error', error: '无法读取更新状态，请重试' }));
         return unsubscribe;
     }, []);
+    useEffect(() => {
+        if (!open) return;
+        const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); event.stopPropagation(); } };
+        document.addEventListener('keydown', close, true);
+        return () => document.removeEventListener('keydown', close, true);
+    }, [open]);
     if (!window.oneYesDesktop?.updates) return null;
     const busy = saving || ['checking', 'downloading', 'installing'].includes(state.status);
     const ready = state.status === 'ready';
@@ -37,8 +44,7 @@ export function DesktopUpdate() {
             await desktopUpdate('install');
         } finally { installing.current = false; setSaving(false); }
     };
-    return <div className="fixed bottom-3 left-3 z-[1300] max-w-[calc(100vw-24px)] text-foreground" data-canvas-no-zoom>
-        {open ? <section aria-label="软件更新" className="mb-2 w-[280px] max-w-full rounded-xl border border-border bg-popover p-3 shadow-lg">
+    const panel = <section aria-label="软件更新" className="w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-border bg-popover p-3 text-foreground shadow-lg" style={{ maxHeight: 'calc(100dvh - 100px)' }} data-canvas-no-zoom>
             <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">软件更新</span><button onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="关闭更新面板"><X className="size-3.5" /></button></div>
             <p className="mb-0 mt-2 text-[13px] font-medium" aria-live="polite">{ready ? `新版本 v${state.version} 已下载完成` : label}</p>
             <p className="mb-0 mt-1 text-[11px] text-muted-foreground">当前 v{state.currentVersion}{state.version && (busy || ready) ? ` → v${state.version}` : ''}</p>
@@ -50,9 +56,10 @@ export function DesktopUpdate() {
             {busy ? <div className="mt-3 flex items-center gap-2"><div className="h-1 flex-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={determinate ? state.progress : undefined} aria-valuemin={0} aria-valuemax={100} aria-valuetext={determinate ? `${label} ${state.progress}%` : label} aria-label={state.status === 'downloading' ? '更新下载进度' : '更新准备进度'}><div className={`h-full bg-foreground ${determinate ? 'transition-[width] motion-reduce:transition-none' : 'animate-pulse motion-reduce:animate-none'}`} style={{ width: determinate ? `${state.progress}%` : '100%', opacity: determinate ? 1 : 0.4 }} /></div>{determinate ? <span className="text-[10px] tabular-nums text-muted-foreground">{state.progress}%</span> : null}</div> : null}
             {ready ? <p className="mb-0 mt-3 text-xs text-muted-foreground">点击后安装并重新打开应用；请先结束正在运行的生成任务。</p> : null}
             <button type="button" disabled={busy || !state.supported} aria-busy={busy || undefined} onClick={() => ready ? void install() : void desktopUpdate('check')} style={{ color: 'var(--primary-foreground)' }} className="mt-3 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-medium disabled:cursor-default disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Icon className={`size-3 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} />{busy ? label : ready ? '更新并重启' : state.status === 'error' ? '重试更新' : '检查更新'}</button>
-        </section> : null}
-        <button onClick={() => setOpen(!open)} aria-expanded={open} title={ready ? `v${state.version} 已就绪，点击更新` : '软件更新'} className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${ready ? 'bg-popover text-foreground shadow-sm' : 'text-muted-foreground'}`}>
-            <Icon className={`size-3 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /><span aria-live="polite">{label}</span>{ready ? <span className="size-1.5 rounded-full bg-emerald-500" /> : null}
-        </button>
-    </div>;
+        </section>;
+    const button = <button ref={triggerRef} type="button" onClick={variant === 'canvas' ? undefined : () => setOpen(!open)} aria-label="软件更新" aria-expanded={open} title={ready ? `v${state.version} 已就绪，点击更新` : label} className={`flex h-7 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${variant === 'canvas' ? 'hover:bg-black/5 dark:hover:bg-white/10' : 'hover:bg-accent'} ${ready ? variant === 'canvas' ? 'text-foreground' : 'bg-popover text-foreground shadow-sm' : 'text-muted-foreground'}`}>
+        <Icon className={`size-3 shrink-0 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`} /><span className="max-w-36 truncate" aria-live="polite">{label}</span>{ready ? <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" /> : null}
+    </button>;
+    if (variant === 'canvas') return <div className="shrink-0" data-canvas-update data-canvas-no-zoom><Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottomRight" arrow={false} zIndex={1300} destroyOnHidden styles={{ container: { padding: 0, background: 'transparent', boxShadow: 'none' } }} content={panel}>{button}</Popover></div>;
+    return <div className="fixed bottom-3 left-3 z-[1300] max-w-[calc(100vw-24px)] text-foreground" data-canvas-no-zoom>{open ? <div className="mb-2">{panel}</div> : null}{button}</div>;
 }

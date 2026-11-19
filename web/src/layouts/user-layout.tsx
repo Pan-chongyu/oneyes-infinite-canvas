@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 
 import { AgentPanel } from "@/components/agent/agent-panel";
 import { AppTopNav } from "@/components/layout/app-top-nav";
@@ -8,6 +9,7 @@ import { DesktopTitlebar } from "@/components/layout/desktop-titlebar";
 import { VideoRecovery } from '@/components/layout/video-recovery';
 
 export default function UserLayout({ children }: { children: ReactNode }) {
+    const { pathname } = useLocation();
     return (
         <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
             <DesktopTitlebar />
@@ -19,7 +21,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 <AgentPanel />
             </div>
             <OneYesSetupDialog />
-            <DesktopUpdate />
+            {!/^\/canvas\/[^/]+/.test(pathname) ? <DesktopUpdate /> : null}
             <VideoRecovery />
         </div>
     );
