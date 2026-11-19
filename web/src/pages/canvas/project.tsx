@@ -34,6 +34,7 @@ import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
 import { readSystemClipboard } from "@/lib/canvas/system-clipboard";
+import { reportError } from "@/services/diagnostics";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
@@ -1726,18 +1727,23 @@ function InfiniteCanvasPage() {
         const isCurrent = () => scope !== null && scope === clipboardScope.current;
         pastingClipboard.current = true;
         setContextMenu(null);
+        let stage: "request" | "save" = "request";
         try {
             const data = await readSystemClipboard();
             if (!isCurrent()) return;
             if (data instanceof File) {
+                stage = "save";
                 if (await createImageFileNode(data, position, isCurrent)) message.success(t("canvas.projectPage.clipboardImageAdded"));
             } else if (typeof data === "string" && createTextNodeFromClipboard(data, position)) {
                 message.success(t("canvas.projectPage.clipboardTextAdded"));
             } else {
                 message.info("剪贴板中没有可粘贴的图片或文字");
             }
-        } catch {
-            if (isCurrent()) message.error("粘贴失败，请重新复制图片或文字，并允许读取剪贴板后重试");
+        } catch (error) {
+            reportError(stage === "save" ? "image" : "app", stage, error);
+            if (isCurrent()) message.error(stage === "save"
+                ? "图片粘贴未完成，请确认图片完整且本地存储可用后重试"
+                : window.oneYesDesktop ? "粘贴失败，无法读取剪贴板，请重新复制图片或文字后重试" : "粘贴失败，请允许浏览器读取剪贴板后重试，也可使用 Ctrl / ⌘ + V");
         } finally {
             pastingClipboard.current = false;
         }

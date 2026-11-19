@@ -29,6 +29,13 @@ test("clipboard prioritizes images, preserves text and supports native and brows
         await assert.rejects(readSystemClipboard);
         bridge.oneYesDesktop = { clipboard: { read: async () => ({ text }) } };
         assert.equal(await readSystemClipboard(), text, "native read needs no browser clipboard permission");
+        bridge.oneYesDesktop = { clipboard: { read: async () => ({ image: new Uint8Array([1, 2, 3]), type: "image/webp", text }) } };
+        const nativeImage = await readSystemClipboard();
+        assert.ok(nativeImage instanceof File);
+        assert.equal(nativeImage.type, "image/webp");
+        assert.deepEqual(new Uint8Array(await nativeImage.arrayBuffer()), new Uint8Array([1, 2, 3]));
+        bridge.oneYesDesktop = { clipboard: { read: async () => { throw denied; } } };
+        await assert.rejects(readSystemClipboard, error => error === denied);
     } finally {
         for (const [index, key] of ["window", "navigator"].entries()) {
             const descriptor = originals[index];

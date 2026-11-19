@@ -6,7 +6,7 @@ ipcMain.handle('clipboard:read', () => {
     clipboardReads++;
     if (clipboardValue === 'denied') throw Error('fixture clipboard failure');
     if (clipboardValue === 'pending') return new Promise(resolve => { resolveClipboard = resolve; });
-    return readClipboard({ readImage: () => clipboardValue === 'image' ? nativeImage.createFromBitmap(Buffer.alloc(16 * 8 * 4, 255), { width: 16, height: 8 }) : nativeImage.createEmpty(), readText: () => clipboardValue === 'empty' ? '' : clipboardText });
+    return readClipboard({ read: async () => clipboardValue === 'empty' ? [] : [{ types: clipboardValue === 'image' ? ['image/png', 'text/plain'] : ['text/plain'], getType: async type => type === 'image/png' ? new Blob([nativeImage.createFromBitmap(Buffer.alloc(16 * 8 * 4, 255), { width: 16, height: 8 }).toPNG()], { type }) : new Blob([clipboardText], { type }) }] });
 });
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');

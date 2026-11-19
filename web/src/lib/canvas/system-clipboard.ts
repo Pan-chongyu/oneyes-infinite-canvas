@@ -3,7 +3,7 @@ export async function readSystemClipboard(): Promise<File | string | null> {
     if (window.oneYesDesktop?.clipboard) {
         const data = await window.oneYesDesktop.clipboard.read();
         return data.image?.length
-            ? new File([new Uint8Array(data.image).buffer], "clipboard-image.png", { type: "image/png" })
+            ? new File([new Uint8Array(data.image).buffer], data.type && data.type !== "image/png" ? "clipboard-image" : "clipboard-image.png", { type: data.type || "image/png" })
             : data.text || null;
     }
     const clipboard = navigator.clipboard;

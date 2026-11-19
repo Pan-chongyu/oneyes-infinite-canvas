@@ -251,6 +251,7 @@ app.whenReady().then(async () => {
                     const observer = new MutationObserver(ready); observer.observe(document.body, {attributes:true}); ready();
                 })`);
                 if (info.protocol !== 'oneyes-canvas:' || !info.bridge || !info.title.includes('OneYes')) throw new Error('Desktop boot smoke failed');
+                await require('./clipboard-smoke.cjs').smokeClipboard(window);
                 if (tray) {
                     const smokeWindow = window;
                     smokeWindow.show();
