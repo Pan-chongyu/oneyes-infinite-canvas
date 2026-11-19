@@ -27,10 +27,24 @@ app.whenReady().then(async () => {
 . ${ps(resolve('desktop/refresh-windows-icons.ps1'))}
 $directories = Get-Content -LiteralPath ${ps(rootsFile)} -Raw -Encoding UTF8 | ConvertFrom-Json
 $provided = (New-Object -ComObject Scripting.FileSystemObject).GetFile(${ps(executable)}).ShortPath
-Update-CanvasIcons -Executable $provided -IconSource ${ps(source)} -ShortcutDirectories $directories | ConvertTo-Json -Compress
+$result = Update-CanvasIcons -Executable $provided -IconSource ${ps(source)} -ShortcutDirectories $directories
+$probe = New-Object -ComObject WScript.Shell
+try {
+    $links = @(foreach ($directory in $directories) {
+        foreach ($file in (Get-ChildItem -LiteralPath $directory -Filter '*.lnk' -File)) {
+            $link = $probe.CreateShortcut($file.FullName)
+            try { @{ path = $file.FullName; target = $link.TargetPath; exists = (Test-Path -LiteralPath $link.TargetPath); icon = $link.IconLocation } }
+            finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) }
+        }
+    })
+    @{ result = $result; provided = $provided; executable = [CanvasIconNotification]::LongPath($provided); directories = $directories; links = $links } | ConvertTo-Json -Depth 4 -Compress
+} finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($probe) }
 `);
-    const refresh = async () => JSON.parse((await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true })).stdout);
-    assert.deepEqual(await refresh(), { updated: paths.length, failed: 0 });
+    const refresh = async expected => {
+        const state = JSON.parse((await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true })).stdout);
+        assert.deepEqual(state.result, expected, JSON.stringify(state));
+    };
+    await refresh({ updated: paths.length, failed: 0 });
     const iconPath = join(await fs.realpath(root), 'resources', 'oneyes-canvas-' + createHash('sha256').update(await fs.readFile(source)).digest('hex') + '.ico');
     for (let i = 0; i < paths.length; i++) {
         const after = shell.readShortcutLink(paths[i]);
@@ -39,9 +53,9 @@ Update-CanvasIcons -Executable $provided -IconSource ${ps(source)} -ShortcutDire
         for (const key of ['target', 'args', 'cwd', 'description', 'appUserModelId', 'toastActivatorClsid']) assert.equal(after[key], before[i][key], key);
     }
     assert.deepEqual(await fs.readFile(otherLink), otherBytes, 'same-name shortcuts for other installations must stay unchanged');
-    assert.deepEqual(await refresh(), { updated: 0, failed: 0 }, 'same icon must not rewrite links');
+    await refresh({ updated: 0, failed: 0 });
     await fs.unlink(paths[0]);
-    assert.deepEqual(await refresh(), { updated: 0, failed: 0 });
+    await refresh({ updated: 0, failed: 0 });
     await assert.rejects(fs.access(paths[0]), { code: 'ENOENT' });
     await fs.writeFile(join(root, 'icons-verified.json'), JSON.stringify({ verified: true }));
     console.log('WINDOWS_NATIVE_SHORTCUT_ICON_REFRESH_METADATA_PINNED_IDENTITY_OTHER_INSTALLATION_IDEMPOTENCE_OK');
