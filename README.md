@@ -4,6 +4,10 @@
 
 <h1 align="center">OneYes Canvas · 无限画布</h1>
 
+<p align="center">
+  <strong>简体中文</strong> · <a href="README.en.md">English</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
+</p>
+
 <p align="center">把灵感、素材、AI 生成、三维预演和视频剪辑连接在同一张画布上。</p>
 
 <p align="center">
