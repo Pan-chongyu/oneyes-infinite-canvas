@@ -14,7 +14,7 @@ test('Electron 44 async clipboard keeps image bytes and MIME before mixed text o
 test('Electron 44 text is awaited, empty and HTML-only clipboard stay empty, failures propagate', async () => {
     const text = '  中文提示词\n第二行  ';
     assert.deepEqual(await readClipboard({ read: async () => [item({ 'text/html': '<b>ignored</b>' }), item({ 'text/plain': text })] }), { text });
-    for (const items of [[], [item({ 'text/html': '<script>ignored</script>' })]]) assert.deepEqual(await readClipboard({ read: async () => items }), {});
+    for (const items of [[], [item({})], [item({ 'text/html': '<script>ignored</script>' })]]) assert.deepEqual(await readClipboard({ read: async () => items }), {});
     const error = new Error('clipboard unavailable');
     await assert.rejects(readClipboard({ read: async () => { throw error; } }), value => value === error);
     await assert.rejects(readClipboard({ read: async () => [{ types: ['image/png'], getType: async () => { throw error; } }] }), value => value === error);
