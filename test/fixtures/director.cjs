@@ -248,7 +248,7 @@ app.whenReady().then(async()=>{
   assert.match(call.prompt,/按参考布景/);assert.match(call.prompt,/两人在雨夜街道面对面/);assert.equal(call.references.length,1);assert.match(call.references[0],/^data:image\//);
   const dimensions=await js('createImageBitmap(new Blob([Uint8Array.from(atob(directorTest.ai().at(-1).references[0].split(",")[1]),c=>c.charCodeAt(0))])).then(image=>{const size=[image.width,image.height];image.close();return size;})');assert.deepEqual(dimensions,[37,23],'references retain original dimensions');
   assert.equal((await js('directorTest.events()')).drag,0,'generating in a node cannot initiate a canvas drag');
-  await js('directorTest.resolveAi()');await wait('directorTest.state().nodes[0].metadata.directorScene.camera.lens===70 && document.querySelector("[data-director-node-preview] canvas")');
+  await js('directorTest.resolveAi()');await wait('directorTest.state().nodes[0].metadata.directorScene?.camera.lens===70 && document.querySelector("[data-director-node-preview] canvas")');
   assert.equal(await js('directorTest.state().nodes[0].metadata.directorAssistant.mode'),'scene','quick generation exits a previously saved video reverse mode');
   const built=await js('directorTest.state().nodes[0].metadata.directorScene');assert.equal(built.objects.length,requested.当前场景.objects.length+1);assert.equal(built.objects.at(-1).name,'AI 布景桌');assert.deepEqual([built.width,built.height],[requested.固定输出画幅.width,requested.固定输出画幅.height]);
   assert.equal(await js('document.querySelector("[data-director-editor]")'),null,'validated scene is applied directly to the current node without opening a modal');assert.equal(await js('document.querySelector("[data-director-node] details").open'),false);
