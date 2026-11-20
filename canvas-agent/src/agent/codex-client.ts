@@ -8,7 +8,7 @@ import { CONFIG_DIR, VERSION, loadConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { field, type JsonRecord } from "../utils/value.js";
 import { codexEventHistory, type CodexEventHistory } from "./codex-event-history.js";
-import type { CodexMcpStartupStatus, CodexNotificationParams, CodexPlanUpdate, CodexReasoningEffort, CodexRequestMethod, CodexRequestParams, CodexRequestResult, CodexSkillSelector, CodexTurnInput } from "./codex-protocol.js";
+import type { CodexMcpStartupStatus, CodexNotificationParams, CodexPlanUpdate, CodexReasoningEffort, CodexRequestMethod, CodexRequestParams, CodexRequestResult, CodexSkillSelector, CodexTurn, CodexTurnInput } from "./codex-protocol.js";
 import type { AgentEmit, AgentPermissionMode } from "./types.js";
 import { prepareWindowsMcp, type WindowsMcpSettings } from "./windows-mcp.js";
 
@@ -24,6 +24,7 @@ const canvasAgentMcp = canvasAgentMcpCommand();
 const require = createRequire(import.meta.url);
 const STREAM_UPDATE_INTERVAL_MS = 40;
 const supplementalItemTypes = new Set(["agent_message", "reasoning", "plan", "mcp_tool_call", "command_execution", "file_change", "dynamic_tool_call", "collab_tool_call", "web_search", "image_view", "image_generation", "context_compaction"]);
+const paginatedHistoryError = /paginated threads do not support thread\/read\(includeTurns=true\)/i;
 const SKILL_DRAFT_INSTRUCTIONS = "你只负责根据已提供的对话或画布快照生成可编辑的 Codex Skill 草稿。不要调用任何工具，不要执行命令，不要读取文件，不要访问网络，不要修改任何状态。严格按 outputSchema 返回结果，并排除凭证、密钥、Token、本地路径、临时错误、调试日志和一次性结果。";
 
 /** 表示错误已经通过 app-server 终态或进程事件通知过网页。 */
@@ -237,9 +238,33 @@ export class CodexAppClient {
         return this.request("thread/list", params);
     }
 
-    /** 读取指定 Codex 线程。 */
-    readThread(threadId: string, includeTurns = true) {
-        return this.request("thread/read", { threadId, includeTurns });
+    /** 按线程兼容 Codex 的旧历史和分页历史。 */
+    async readThread(threadId: string, includeTurns = true) {
+        try {
+            return await this.request("thread/read", { threadId, includeTurns });
+        } catch (error) {
+            if (!includeTurns || !(error instanceof Error) || !paginatedHistoryError.test(error.message)) throw error;
+        }
+
+        const turns = new Map<string, CodexTurn>();
+        const cursors = new Set<string>();
+        let cursor: string | null = null;
+        do {
+            const page: CodexRequestResult<"thread/turns/list"> = await this.request("thread/turns/list", {
+                threadId,
+                sortDirection: "asc",
+                itemsView: "full",
+                ...(cursor ? { cursor } : {}),
+            });
+            for (const turn of page.data) turns.set(turn.id, turn);
+            cursor = page.nextCursor;
+            if (cursor !== null) {
+                if (typeof cursor !== "string" || !cursor || cursors.has(cursor)) throw new Error("Codex 对话历史分页异常，请重试");
+                cursors.add(cursor);
+            }
+        } while (cursor !== null);
+        const { thread } = await this.request("thread/read", { threadId, includeTurns: false });
+        return { thread: { ...thread, turns: [...turns.values()] } };
     }
 
     /** 归档指定 Codex 线程。 */
@@ -465,7 +490,8 @@ export class CodexAppClient {
         if (message.error && this.pending.has(id)) {
             const error = String(field(message.error, "message") || "Codex request failed");
             if (!this.pending.get(id)?.silent) {
-                if (/not materialized yet.*includeTurns/i.test(error)) logger.debug("Codex thread has no messages yet", { id });
+                if (paginatedHistoryError.test(error)) logger.debug("Codex thread requires paginated history", { id });
+                else if (/not materialized yet.*(?:includeTurns|thread\/turns\/list)/i.test(error)) logger.debug("Codex thread has no messages yet", { id });
                 else logger.warn("Codex request failed", { id, error });
             }
             return this.reject(id, message.error);

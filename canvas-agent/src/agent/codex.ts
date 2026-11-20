@@ -454,17 +454,21 @@ async function loadCodexHistory(emit: AgentEmit, threadId: string, cwd?: string)
     try {
         return { thread: await loadCodexThread(emit, threadId, cwd, true), historyReady: true };
     } catch (error) {
-        if (/not materialized yet.*includeTurns/i.test(errorMessage(error))) return { thread: await loadCodexThread(emit, threadId, cwd, false), historyReady: false };
+        if (isUnmaterializedCodexHistory(error)) return { thread: await loadCodexThread(emit, threadId, cwd, false), historyReady: false };
         if (!isRecoverableThreadError(error)) throw error;
         const app = await getCodexApp(emit);
         const thread = await resumeLoadedThread(app, threadId, cwd, "request", false);
         try {
             return { thread: await loadCodexThread(emit, threadId, cwd, true), historyReady: true };
         } catch (historyError) {
-            if (/not materialized yet.*includeTurns/i.test(errorMessage(historyError))) return { thread, historyReady: false };
+            if (isUnmaterializedCodexHistory(historyError)) return { thread, historyReady: false };
             throw historyError;
         }
     }
+}
+
+function isUnmaterializedCodexHistory(error: unknown) {
+    return /not materialized yet.*(?:includeTurns|thread\/turns\/list)/i.test(errorMessage(error));
 }
 
 /** 恢复线程并统一校验工作空间与进程内活动线程。 */

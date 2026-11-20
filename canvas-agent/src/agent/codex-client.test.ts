@@ -57,6 +57,55 @@ test("model discovery follows every cursor and rejects incomplete repeated-curso
     assert.equal(writes.some((item) => item.method === "turn/start"), false);
 });
 
+test("paginated history restores full turns in order while preserving legacy and unrelated errors", async () => {
+    const writes: Array<{ id: number; method: string; params: unknown }> = [];
+    const child = { stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } };
+    const client = Reflect.construct(CodexAppClient, [child, () => {}, emptyEventHistory]) as CodexAppClient;
+    const native = client as unknown as TestClient;
+    const respond = (result: unknown) => native.handle({ id: writes.at(-1)!.id, result });
+    const fail = (message: string) => native.handle({ id: writes.at(-1)!.id, error: { code: -32600, message } });
+    const tick = () => new Promise(resolve => setImmediate(resolve));
+    const legacyRejected = "paginated threads do not support thread/read(includeTurns=true)";
+
+    const paginated = client.readThread("page-thread");
+    fail(legacyRejected);
+    await tick();
+    assert.equal(writes.at(-1)!.method, "thread/turns/list");
+    assert.deepEqual(writes.at(-1)!.params, { threadId: "page-thread", sortDirection: "asc", itemsView: "full" });
+    const first = { id: "first", items: [{ id: "question", type: "userMessage", content: [{ type: "text", text: "第一条消息" }] }] };
+    const second = { id: "second", items: [{ id: "answer", type: "agentMessage", text: "第二条消息" }] };
+    respond({ data: [first], nextCursor: "cursor-2" });
+    await tick();
+    assert.deepEqual(writes.at(-1)!.params, { threadId: "page-thread", cursor: "cursor-2", sortDirection: "asc", itemsView: "full" });
+    respond({ data: [second], nextCursor: null });
+    await tick();
+    assert.deepEqual(writes.at(-1)!.params, { threadId: "page-thread", includeTurns: false });
+    const summary = { id: "page-thread", cwd: "/workspace", turns: [], historyMode: "paginated" };
+    respond({ thread: summary });
+    assert.deepEqual(await paginated, { thread: { ...summary, turns: [first, second] } });
+
+    const legacy = client.readThread("legacy-thread");
+    const legacyThread = { id: "legacy-thread", cwd: "/workspace", turns: [first] };
+    assert.deepEqual(writes.at(-1)!.params, { threadId: "legacy-thread", includeTurns: true });
+    respond({ thread: legacyThread });
+    assert.deepEqual(await legacy, { thread: legacyThread });
+
+    const failed = client.readThread("other-thread");
+    const requestsBeforeFailure = writes.length;
+    fail("permission denied");
+    await assert.rejects(failed, /permission denied/);
+    assert.equal(writes.length, requestsBeforeFailure);
+
+    const repeated = client.readThread("page-thread");
+    fail(legacyRejected);
+    await tick();
+    respond({ data: [first], nextCursor: "stalled" });
+    await tick();
+    respond({ data: [], nextCursor: "stalled" });
+    await assert.rejects(repeated, /分页异常/);
+    assert.ok(writes.every(({ method }) => method === "thread/read" || method === "thread/turns/list"));
+});
+
 test("effective workspace model is offered without inventing capabilities or exposing config secrets", async () => {
     for (const configured of ["custom-oneyes-model", "advertised-model", null]) {
         const writes: Array<Record<string, unknown>> = [];
