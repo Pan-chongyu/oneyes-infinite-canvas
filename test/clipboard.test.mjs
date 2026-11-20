@@ -25,7 +25,8 @@ test('copied image files retain original names, bytes and order without reading 
         ] });
         assert.ok(!JSON.stringify(result).includes(dir), 'renderer only receives bytes and basename');
         assert.deepEqual(await readClipboard({ read: async () => [item({ 'text/plain': first })] }), { text: first });
-        assert.deepEqual(await readClipboard({ read: async () => [item({ 'text/uri-list': 'https://example.com/image.png', 'text/plain': 'not image files' })] }), {});
+        assert.deepEqual(await readClipboard({ read: async () => [item({ 'text/uri-list': 'https://example.com/image.png', 'text/plain': 'copied link text' })] }), { text: 'copied link text' });
+        assert.deepEqual(await readClipboard({ read: async () => [item({ 'text/uri-list': pathToFileURL(join(dir, 'not-image.txt')).href, 'text/plain': 'file path is not text content' })] }), {});
         await assert.rejects(readClipboard({ read: async () => [item({ 'text/uri-list': pathToFileURL(join(dir, 'deleted.png')).href })] }), error => /无法读取.*图片文件/.test(error.message) && !error.message.includes(dir));
     } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -35,6 +36,7 @@ test('Electron 44 async clipboard keeps image bytes and MIME before mixed text o
     const clipboard = { read: async () => [item({ 'text/plain': 'mixed text', 'text/html': '<b>text</b>' }), item({ 'image/webp': bytes, 'image/png': bytes })] };
     assert.deepEqual(await readClipboard(clipboard), { image: bytes, type: 'image/png' });
     assert.deepEqual(await readClipboard({ read: async () => [item({ 'image/jpeg': bytes })] }), { image: bytes, type: 'image/jpeg' });
+    assert.deepEqual(await readClipboard({ read: async () => [item({ 'text/uri-list': 'https://example.com/photo.png', 'text/plain': 'copied image link', 'image/png': bytes })] }), { image: bytes, type: 'image/png' });
 });
 
 test('Electron 44 text is awaited, empty and HTML-only clipboard stay empty, failures propagate', async () => {

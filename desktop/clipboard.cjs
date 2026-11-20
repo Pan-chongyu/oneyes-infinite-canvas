@@ -9,6 +9,7 @@ async function readClipboard(clipboard) {
     const fileItems = items.filter(item => item.types.includes('text/uri-list'));
     if (fileItems.length) {
         const files = [], seen = new Set();
+        let hasLocalFiles = false;
         for (const item of fileItems) for (const line of (await (await item.getType('text/uri-list')).text()).split(/\r?\n/)) {
             let path;
             try {
@@ -16,6 +17,7 @@ async function readClipboard(clipboard) {
                 if (url.protocol !== 'file:' || (url.hostname && url.hostname !== 'localhost') || url.search || url.hash) continue;
                 path = fileURLToPath(url);
             } catch { continue; }
+            hasLocalFiles = true;
             const type = imageTypes[extname(path).toLowerCase()];
             const key = process.platform === 'win32' ? path.toLowerCase() : path;
             if (!type || seen.has(key)) continue;
@@ -25,7 +27,7 @@ async function readClipboard(clipboard) {
                 files.push({ name: basename(path), image: new Uint8Array(await readFile(path)), type });
             } catch { throw new Error('无法读取剪贴板中的图片文件，请确认文件仍在本机且可访问'); }
         }
-        return files.length ? { files } : {};
+        if (hasLocalFiles) return files.length ? { files } : {};
     }
     for (const item of items) {
         const type = item.types.includes('image/png') ? 'image/png' : item.types.find(type => type.startsWith('image/'));
