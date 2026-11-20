@@ -6,11 +6,15 @@ ipcMain.handle('clipboard:read', () => {
     clipboardReads++;
     if (clipboardValue === 'denied') throw Error('fixture clipboard failure');
     if (clipboardValue === 'pending') return new Promise(resolve => { resolveClipboard = resolve; });
+    if (clipboardValue === 'files') return readClipboard({ read: async () => [{
+        types: ['text/uri-list'],
+        getType: async () => new Blob([['本地 原图#1.PNG', '第二张.png'].map(name => require('node:url').pathToFileURL(join(app.getPath('userData'), name)).href).join('\r\n')]),
+    }] });
     return readClipboard({ read: async () => clipboardValue === 'empty' ? [] : [{ types: clipboardValue === 'image' ? ['image/png', 'text/plain'] : ['text/plain'], getType: async type => type === 'image/png' ? new Blob([nativeImage.createFromBitmap(Buffer.alloc(16 * 8 * 4, 255), { width: 16, height: 8 }).toPNG()], { type }) : new Blob([clipboardText], { type }) }] });
 });
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');
-const { mkdir, writeFile } = require('node:fs/promises');
+const { mkdir, writeFile, unlink } = require('node:fs/promises');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { createModelCatalog } = require('../../desktop/models.cjs');
@@ -592,6 +596,30 @@ app.whenReady().then(async () => {
         const reopened = (await js('clipboardTest.state()')).nodes.slice(-2);
         assert.equal(reopened[0].metadata.content, clipboardText);
         assert.ok(reopened[1].metadata.content.startsWith('blob:'), 'pasted image reloads from persisted original');
+        const originalFile = nativeImage.createFromBitmap(Buffer.alloc(32 * 16 * 4, 255), { width: 32, height: 16 }).toPNG();
+        const fileNames = ['本地 原图#1.PNG', '第二张.png'];
+        for (const name of fileNames) await writeFile(join(app.getPath('userData'), name), originalFile);
+        clipboardValue = 'files';
+        await openPasteMenu();
+        await js('document.querySelector("[aria-label=画布粘贴菜单] button").click()');
+        count += 2;
+        await wait(`clipboardTest.state().nodes.length === ${count}`);
+        const fileNodes = (await js('clipboardTest.state()')).nodes.slice(-2);
+        assert.deepEqual(fileNodes.map(node => node.title), fileNames);
+        for (const node of fileNodes) {
+            assert.equal(node.type, 'image');
+            assert.equal(node.metadata.naturalWidth, 32); assert.equal(node.metadata.naturalHeight, 16);
+            assert.ok(node.metadata.storageKey);
+            assert.notDeepEqual(node.position, fileNodes.find(other => other.id !== node.id).position);
+        }
+        await js('clipboardTest.flush()');
+        for (const name of fileNames) await unlink(join(app.getPath('userData'), name));
+        await win.loadURL(process.argv[2]); await wait('Boolean(window.showClipboardCanvas)'); await js('showClipboardCanvas()');
+        await wait(`document.querySelectorAll('[data-node-id]').length === ${count}`);
+        const restoredFiles = (await js('clipboardTest.state()')).nodes.slice(-2);
+        assert.deepEqual(restoredFiles.map(node => node.title), fileNames);
+        for (const node of restoredFiles) assert.ok(node.metadata.content.startsWith('blob:'), 'copied file persists independently of its source path');
+        console.log('CANVAS_RIGHT_CLICK_PASTE_MULTIPLE_LOCAL_IMAGE_FILES_PERSISTED_OK');
         clipboardValue = 'pending';
         await openPasteMenu();
         await js('document.querySelector("[aria-label=画布粘贴菜单] button").click()');

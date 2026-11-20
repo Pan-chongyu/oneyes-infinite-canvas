@@ -34,6 +34,14 @@ test("clipboard prioritizes images, preserves text and supports native and brows
         assert.ok(nativeImage instanceof File);
         assert.equal(nativeImage.type, "image/webp");
         assert.deepEqual(new Uint8Array(await nativeImage.arrayBuffer()), new Uint8Array([1, 2, 3]));
+        bridge.oneYesDesktop = { clipboard: { read: async () => ({ files: [
+            { name: "原图 中文.png", image: new Uint8Array([4, 5, 6]), type: "image/png" },
+            { name: "第二张.webp", image: new Uint8Array([7, 8]), type: "image/webp" },
+        ] }) } };
+        const files = await readSystemClipboard();
+        assert.ok(Array.isArray(files));
+        assert.deepEqual(files.map(file => [file.name, file.type]), [["原图 中文.png", "image/png"], ["第二张.webp", "image/webp"]]);
+        assert.deepEqual(await Promise.all(files.map(async file => [...new Uint8Array(await file.arrayBuffer())])), [[4, 5, 6], [7, 8]]);
         bridge.oneYesDesktop = { clipboard: { read: async () => { throw denied; } } };
         await assert.rejects(readSystemClipboard, error => error === denied);
     } finally {

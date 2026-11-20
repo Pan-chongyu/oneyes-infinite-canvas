@@ -1,7 +1,8 @@
 // Read only after an explicit paste action. Desktop uses the trusted native bridge.
-export async function readSystemClipboard(): Promise<File | string | null> {
+export async function readSystemClipboard(): Promise<File | File[] | string | null> {
     if (window.oneYesDesktop?.clipboard) {
         const data = await window.oneYesDesktop.clipboard.read();
+        if (data.files?.length) return data.files.map(file => new File([new Uint8Array(file.image).buffer], file.name, { type: file.type }));
         return data.image?.length
             ? new File([new Uint8Array(data.image).buffer], data.type && data.type !== "image/png" ? "clipboard-image" : "clipboard-image.png", { type: data.type || "image/png" })
             : data.text || null;

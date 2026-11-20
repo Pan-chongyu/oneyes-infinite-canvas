@@ -1731,9 +1731,14 @@ function InfiniteCanvasPage() {
         try {
             const data = await readSystemClipboard();
             if (!isCurrent()) return;
-            if (data instanceof File) {
+            if (data instanceof File || Array.isArray(data)) {
                 stage = "save";
-                if (await createImageFileNode(data, position, isCurrent)) message.success(t("canvas.projectPage.clipboardImageAdded"));
+                const files = Array.isArray(data) ? data : [data];
+                for (const [index, file] of files.entries()) {
+                    if (!isCurrent()) return;
+                    if (!await createImageFileNode(file, { x: position.x + index * 40, y: position.y + index * 40 }, isCurrent)) return;
+                }
+                message.success(t("canvas.projectPage.clipboardImageAdded"));
             } else if (typeof data === "string" && createTextNodeFromClipboard(data, position)) {
                 message.success(t("canvas.projectPage.clipboardTextAdded"));
             } else {
