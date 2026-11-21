@@ -536,10 +536,10 @@ app.whenReady().then(async () => {
             const point = await js(`(() => {
                 const surface=document.querySelector('[data-canvas-surface]'), rect=surface.getBoundingClientRect();
                 window.pasteContextEvent=null;
-                surface.addEventListener('contextmenu',event=>{const bounds=surface.getBoundingClientRect();window.pasteContextEvent={x:event.clientX,y:event.clientY,left:bounds.left,top:bounds.top}}, {once:true,capture:true});
+                surface.addEventListener('contextmenu',event=>{const bounds=surface.getBoundingClientRect();window.pasteContextEvent={x:event.clientX,y:event.clientY,left:bounds.left,top:bounds.top,tag:event.target.tagName,connection:event.target.closest('[data-connection-id]')?.getAttribute('data-connection-id'),node:event.target.closest('[data-node-id]')?.getAttribute('data-node-id')}}, {once:true,capture:true});
                 for(let y=Math.floor(rect.bottom)-6;y>rect.top+80;y-=30) for(let x=Math.floor(rect.right)-6;x>rect.left+80;x-=30){
                     const target=document.elementFromPoint(x,y);
-                    if(!target || !surface.contains(target) || target.closest('[data-node-id],button,input,textarea,select,[contenteditable=true],[data-canvas-no-zoom]'))continue;
+                    if(!target || !surface.contains(target) || target.closest('[data-node-id],[data-connection-id],button,input,textarea,select,[contenteditable=true],[data-canvas-no-zoom]'))continue;
                     return {x,y,left:rect.left,top:rect.top};
                 }
                 throw Error('No blank canvas point');
