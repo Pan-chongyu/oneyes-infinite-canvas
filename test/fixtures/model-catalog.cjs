@@ -659,7 +659,10 @@ app.whenReady().then(async () => {
         }
         await js('clipboardTest.flush()');
         await win.loadURL(process.argv[2]); await wait('Boolean(window.showClipboardCanvas)'); await js('showClipboardCanvas()');
-        await wait(`document.querySelectorAll('[data-node-id]').length === ${count}`);
+        // Reopened canvases cull nodes outside the visible area. Assert persisted data,
+        // rather than requiring every saved node to be mounted at this window size.
+        await wait('document.querySelector("[aria-label=一键整理]") && !document.querySelector("[aria-label=一键整理]").disabled');
+        assert.equal((await js('clipboardTest.state()')).nodes.length, count);
         assert.deepEqual((await js('clipboardTest.state()')).nodes.map(node => node.position), arrangedProject.nodes.map(node => node.position));
         console.log('CANVAS_AUTO_ARRANGE_NATIVE_CLICK_GROUP_OFFSETS_LINKS_UNDO_REDO_IDEMPOTENCE_AND_REOPEN_OK');
         clipboardValue = 'pending';
