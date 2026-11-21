@@ -620,6 +620,48 @@ app.whenReady().then(async () => {
         assert.deepEqual(restoredFiles.map(node => node.title), fileNames);
         for (const node of restoredFiles) assert.ok(node.metadata.content.startsWith('blob:'), 'copied file persists independently of its source path');
         console.log('CANVAS_RIGHT_CLICK_PASTE_MULTIPLE_LOCAL_IMAGE_FILES_PERSISTED_OK');
+        const beforeArrangement = await js('clipboardTest.state()');
+        const clickTool = async label => {
+            const point = await js(`(() => { const button = document.querySelector('[aria-label="${label}"]'); button.scrollIntoView({block:'nearest', inline:'nearest'}); const r=button.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
+            win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+            win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+        };
+        await wait('!document.querySelector("[aria-label=一键整理]").disabled');
+        await clickTool('一键整理');
+        await wait(`JSON.stringify(clipboardTest.state().nodes.map(n=>n.position)) !== ${JSON.stringify(JSON.stringify(beforeArrangement.nodes.map(n => n.position)))}`);
+        const arrangedProject = await js('clipboardTest.state()');
+        const withoutPosition = ({ position, ...node }) => node;
+        assert.deepEqual(arrangedProject.nodes.map(withoutPosition), beforeArrangement.nodes.map(withoutPosition));
+        assert.deepEqual(arrangedProject.connections, beforeArrangement.connections);
+        for (const node of beforeArrangement.nodes) {
+            const parent = beforeArrangement.nodes.find(group => group.id === node.metadata?.groupId);
+            if (!parent) continue;
+            const moved = arrangedProject.nodes.find(other => other.id === node.id), movedParent = arrangedProject.nodes.find(other => other.id === parent.id);
+            assert.equal(moved.position.x - movedParent.position.x, node.position.x - parent.position.x);
+            assert.equal(moved.position.y - movedParent.position.y, node.position.y - parent.position.y);
+        }
+        // History is debounced by the existing canvas hook; wait for its committed snapshot.
+        await new Promise(resolve => setTimeout(resolve, 250));
+        await clickTool('一键整理');
+        await new Promise(resolve => setTimeout(resolve, 250));
+        assert.deepEqual((await js('clipboardTest.state()')).nodes, arrangedProject.nodes, 'arranging twice is stable');
+        await clickTool('撤销');
+        await wait(`JSON.stringify(clipboardTest.state().nodes.map(n=>n.position)) === ${JSON.stringify(JSON.stringify(beforeArrangement.nodes.map(n => n.position)))}`);
+        await clickTool('重做');
+        await wait(`JSON.stringify(clipboardTest.state().nodes.map(n=>n.position)) === ${JSON.stringify(JSON.stringify(arrangedProject.nodes.map(n => n.position)))}`);
+        if (!process.env.CI) {
+            await mkdir('.secrets', { recursive: true });
+            for (const theme of ['light', 'dark']) {
+                await js(`setRecoveryTheme('${theme}')`);
+                await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+                await writeFile(`.secrets/qa-arrange-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            }
+        }
+        await js('clipboardTest.flush()');
+        await win.loadURL(process.argv[2]); await wait('Boolean(window.showClipboardCanvas)'); await js('showClipboardCanvas()');
+        await wait(`document.querySelectorAll('[data-node-id]').length === ${count}`);
+        assert.deepEqual((await js('clipboardTest.state()')).nodes.map(node => node.position), arrangedProject.nodes.map(node => node.position));
+        console.log('CANVAS_AUTO_ARRANGE_NATIVE_CLICK_GROUP_OFFSETS_LINKS_UNDO_REDO_IDEMPOTENCE_AND_REOPEN_OK');
         clipboardValue = 'pending';
         await openPasteMenu();
         await js('document.querySelector("[aria-label=画布粘贴菜单] button").click()');

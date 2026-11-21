@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, LocateFixed, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, LayoutDashboard, LocateFixed, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -34,6 +34,8 @@ export function CanvasToolbar({
     onBackgroundModeChange,
     onShowImageInfoChange,
     onFocusSelected,
+    canArrange,
+    onArrange,
 }: {
     selectedCount: number;
     canvasTool: "select" | "pan";
@@ -58,6 +60,8 @@ export function CanvasToolbar({
     onBackgroundModeChange: (mode: CanvasBackgroundMode) => void;
     onShowImageInfoChange: (show: boolean) => void;
     onFocusSelected: () => void;
+    canArrange: boolean;
+    onArrange: () => void;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const { t } = useTranslation();
@@ -107,6 +111,9 @@ export function CanvasToolbar({
                 </ToolbarButton>
                 <ToolbarButton id="tool-focus" label={t("canvas.toolbar.focus")} disabled={!selectedCount} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onFocusSelected}>
                     <LocateFixed className="size-4.5" />
+                </ToolbarButton>
+                <ToolbarButton id="tool-arrange" label={t("canvas.toolbar.arrange")} disabled={!canArrange} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onArrange}>
+                    <LayoutDashboard className="size-4.5" />
                 </ToolbarButton>
                 <Divider theme={theme} />
                 <ToolbarButton id="tool-text" label={t("canvas.toolbar.text")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddText}>
@@ -344,6 +351,7 @@ function toolLabel(id: string, t: (key: string) => string) {
     if (id === "tool-undo") return t("canvas.undo");
     if (id === "tool-redo") return t("canvas.redo");
     if (id === "tool-focus") return t("canvas.toolbar.focus");
+    if (id === "tool-arrange") return t("canvas.toolbar.arrange");
     if (id === "tool-text") return t("canvas.toolbar.text");
     if (id === "tool-image") return t("canvas.toolbar.image");
     if (id === "tool-video") return t("canvas.toolbar.video");

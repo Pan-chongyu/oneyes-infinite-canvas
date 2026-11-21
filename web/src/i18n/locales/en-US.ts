@@ -253,6 +253,7 @@ export default {
         openAgent: "Open local Codex panel",
         nodeTypes: { image: "Image", text: "Text", config: "Generation config", video: "Video", audio: "Audio", group: "Group" },
         toolbar: {
+            arrange: "Auto arrange", arranged: "Nodes arranged. You can undo this.", arrangedAlready: "Nodes are already arranged", arrangeFailed: "Could not arrange nodes. Check their groups and try again.",
             select: "Select", pan: "Move", focus: "Center focus", text: "Text", image: "Image", video: "Video", audio: "Audio", config: "Generation config", group: "Group", extensions: "Extension nodes", upload: "Upload assets", appearance: "Canvas appearance", clear: "Clear canvas",
             themeMode: "Theme", light: "Light", dark: "Dark", gridStyle: "Grid style", dots: "Dots", lines: "Lines", blank: "Blank", imageInfo: "Image info",
         },

@@ -34,6 +34,7 @@ import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
 import { readSystemClipboard } from "@/lib/canvas/system-clipboard";
+import { arrangeCanvasNodes } from "@/lib/canvas/canvas-arrange";
 import { reportError } from "@/services/diagnostics";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
@@ -63,7 +64,7 @@ import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
-import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
+import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, nodeBounds, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
     audioExtension,
     buildAngleLabel,
@@ -1286,6 +1287,25 @@ function InfiniteCanvasPage() {
         const nodeId = selectedNodeIdsRef.current.values().next().value;
         if (nodeId) focusNode(nodeId);
     }, [focusNode]);
+
+    const arrangeNodes = useCallback(() => {
+        if (!projectLoaded || isNodeDragging || isNodeResizing) return;
+        try {
+            const previous = nodesRef.current;
+            const arranged = arrangeCanvasNodes(previous, connectionsRef.current);
+            setContextMenu(null);
+            setDialogNodeId(null);
+            setToolbarNodeId(null);
+            if (focusAnimRef.current) cancelAnimationFrame(focusAnimRef.current);
+            const bounds = nodeBounds(arranged);
+            if (!arranged.length) return;
+            if (arranged !== previous) setNodes(arranged);
+            setViewport(focusViewportForNode({ position: { x: bounds.left, y: bounds.top }, width: bounds.right - bounds.left, height: bounds.bottom - bounds.top }, size, { bottomInset: 90 }));
+            message.success(arranged === previous ? t("canvas.toolbar.arrangedAlready") : t("canvas.toolbar.arranged"));
+        } catch {
+            message.error(t("canvas.toolbar.arrangeFailed"));
+        }
+    }, [isNodeDragging, isNodeResizing, message, projectLoaded, size, t]);
 
     useEffect(() => () => void (focusAnimRef.current && cancelAnimationFrame(focusAnimRef.current)), []);
 
@@ -3572,6 +3592,8 @@ function InfiniteCanvasPage() {
                     selectedCount={selectedNodeIds.size}
                     canvasTool={canvasTool}
                     onFocusSelected={focusSelectedNode}
+                    onArrange={arrangeNodes}
+                    canArrange={projectLoaded && nodes.length > 1 && !isNodeDragging && !isNodeResizing}
                     canUndo={collaborative ? collaborationCanUndo : historyState.canUndo}
                     canRedo={collaborative ? collaborationCanRedo : historyState.canRedo}
                     backgroundMode={backgroundMode}
