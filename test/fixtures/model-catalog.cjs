@@ -622,6 +622,7 @@ app.whenReady().then(async () => {
         console.log('CANVAS_RIGHT_CLICK_PASTE_MULTIPLE_LOCAL_IMAGE_FILES_PERSISTED_OK');
         const beforeArrangement = await js('clipboardTest.state()');
         const clickTool = async label => {
+            await wait(`document.querySelector('[aria-label="${label}"]') && !document.querySelector('[aria-label="${label}"]').disabled`);
             const point = await js(`(() => { const button = document.querySelector('[aria-label="${label}"]'); button.scrollIntoView({block:'nearest', inline:'nearest'}); const r=button.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
             win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
             win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
