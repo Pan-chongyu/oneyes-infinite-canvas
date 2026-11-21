@@ -539,7 +539,7 @@ app.whenReady().then(async () => {
                 surface.addEventListener('contextmenu',event=>{const bounds=surface.getBoundingClientRect();window.pasteContextEvent={x:event.clientX,y:event.clientY,left:bounds.left,top:bounds.top}}, {once:true,capture:true});
                 for(let y=Math.floor(rect.bottom)-6;y>rect.top+80;y-=30) for(let x=Math.floor(rect.right)-6;x>rect.left+80;x-=30){
                     const target=document.elementFromPoint(x,y);
-                    if(!target || !surface.contains(target) || target.closest('[data-node-id],button,input,textarea,[contenteditable=true]'))continue;
+                    if(!target || !surface.contains(target) || target.closest('[data-node-id],button,input,textarea,select,[contenteditable=true],[data-canvas-no-zoom]'))continue;
                     return {x,y,left:rect.left,top:rect.top};
                 }
                 throw Error('No blank canvas point');
