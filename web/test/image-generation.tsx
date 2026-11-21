@@ -11,6 +11,7 @@ import { imageTasks, initializeImageTasks, useImageTaskStore } from "@/stores/us
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType } from "@/types/canvas";
+import type { ImageTaskDependencies } from "@/services/api/image-tasks";
 
 await useConfigStore.persist.rehydrate();
 await useCanvasStore.persist.rehydrate();
@@ -28,6 +29,11 @@ imageTasks.submit = async (...args) => {
 };
 const originalFetch = window.fetch.bind(window);
 let posts = 0, complete = false;
+let releaseHistory = () => {};
+const managerDeps = (imageTasks as unknown as { deps: ImageTaskDependencies }).deps;
+const writeHistory = managerDeps.completed;
+const historyGate = new Promise<void>(resolve => { releaseHistory = resolve; });
+managerDeps.completed = async task => { await historyGate; await writeHistory(task); };
 window.fetch = async (input, options) => {
     const url = String(input);
     if (url.includes("/images/generations/async")) {
@@ -48,6 +54,7 @@ Object.assign(window, { generationTest: {
     state: () => useImageTaskStore.getState().tasks,
     orphanWarning: () => orphanWarning,
     complete: async () => { complete = true; await Promise.all([...imageTasks.tasks.keys()].map(id => imageTasks.refresh(id))); },
+    releaseHistory: () => releaseHistory(),
     theme: (dark: boolean) => { document.documentElement.classList.toggle("dark", dark); useThemeStore.getState().setTheme(dark ? "dark" : "light"); },
 } });
 createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[`/canvas/${projectId}`]}><ConfigProvider><App><Routes><Route path="/canvas/:id" element={<CanvasProject />} /></Routes></App></ConfigProvider></MemoryRouter></QueryClientProvider></React.StrictMode>);

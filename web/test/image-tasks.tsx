@@ -10,7 +10,7 @@ import ImagePage from "@/pages/image";
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { defaultConfig, useConfigStore } from "@/stores/use-config-store";
 import { imageTasks, initializeImageTasks, useImageTaskStore, storedTaskImage } from "@/stores/use-image-task-store";
-import { getImageBlob, uploadImage, previewUrlFor, deleteStoredImages } from "@/services/image-storage";
+import { getImageBlob, uploadImage, setImageBlob, previewUrlFor, deleteStoredImages } from "@/services/image-storage";
 import { useCanvasStore, flushCanvasStorage } from "@/stores/canvas/use-canvas-store";
 import { applyCanvasImageTask, markCanvasImageTask } from "@/lib/canvas/canvas-image-task";
 import { CanvasNodeType } from "@/types/canvas";
@@ -47,7 +47,7 @@ if (!useCanvasStore.getState().projects.length) {
     await flushCanvasStorage();
 }
 initializeImageTasks();
-const previewProbe = { stored: false, blocked: false, cached: false, error: "", originalBytes: 0 };
+const previewProbe = { stored: false, blocked: false, cached: false, error: "", originalBytes: 0, decodes: 0, replaced: false };
 const previewKey = "image:preview-concurrency-probe";
 let releasePreview = () => {};
 Object.assign(window, { asyncImageTest: {
@@ -97,6 +97,18 @@ Object.assign(window, { asyncImageTest: {
             previewProbe.originalBytes = saved!.size;
             previewProbe.cached = cached.width === 1024 && cached.height === 512 && saved!.size === blob.size && btoa(String.fromCharCode(...new Uint8Array(await saved!.arrayBuffer()))) === btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
         })().catch(error => { previewProbe.error = String(error); releasePreview(); });
+    },
+    checkMetadataCache: async () => {
+        const NativeImage = window.Image;
+        window.Image = new Proxy(NativeImage, { construct(target, args) { previewProbe.decodes++; return Reflect.construct(target, args); } });
+        try {
+            await Promise.all(Array.from({ length: 12 }, () => uploadImage("https://images.example.test/generated.png", { storageKey: previewKey })));
+            const canvas = document.createElement("canvas"); canvas.width = 48; canvas.height = 24;
+            const blob = await new Promise<Blob>(resolve => canvas.toBlob(value => resolve(value!)));
+            await setImageBlob(previewKey, blob);
+            const replaced = await uploadImage("https://images.example.test/generated.png", { storageKey: previewKey });
+            previewProbe.replaced = replaced.width === 48 && replaced.height === 24 && replaced.bytes === blob.size;
+        } finally { window.Image = NativeImage; }
     },
     finishPreviewProbe: () => releasePreview(),
     cleanupPreviewProbe: () => deleteStoredImages([previewKey]),

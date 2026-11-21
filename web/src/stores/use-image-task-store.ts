@@ -72,11 +72,16 @@ export async function requestDurableImage(config: AiConfig, prompt: string, path
         ...(options?.taskTarget ? { target: options.taskTarget } : {}), logId: options?.taskLogId || `async-${id}`, createdAt: Date.now(),
         ...(savedReferences.length ? { references: savedReferences } : {}),
     }, path, body, config.apiKey, options);
-    return Promise.all(saved.map(async image => ({ id: image.id, taskId: id, dataUrl: await resolveImageUrl(image.storageKey, ""), stored: await storedTaskImage(image) })));
+    return Promise.all(saved.map(async image => {
+        const stored = await storedTaskImage(image);
+        return { id: image.id, taskId: id, dataUrl: stored.url, stored };
+    }));
 }
 
 export async function storedTaskImage(image: TaskImage): Promise<UploadedImage> {
-    return { ...image, url: await resolveImageUrl(image.storageKey, "") };
+    const url = await resolveImageUrl(image.storageKey, "");
+    if (!url) throw new Error("原图暂不可读，请保留任务后继续取图");
+    return { ...image, url };
 }
 
 export function storeGeneratedImage(image: GeneratedImageResult, options?: { signal?: AbortSignal }) {

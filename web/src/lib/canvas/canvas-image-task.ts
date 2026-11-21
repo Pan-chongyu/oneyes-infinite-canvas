@@ -36,20 +36,22 @@ export function applyCanvasImageTask(node: CanvasNodeData, task: ImageTask, imag
     const slot = task.target.imageId && node.metadata?.images?.find(item => item.id === task.target?.imageId);
     if ((task.target.imageId ? slot && slot.imageTaskId : node.metadata?.imageTaskId) !== task.id) return node;
     const terminal = ["failed", "uncertain", "paused", "credentials"].includes(task.status);
-    const status = task.status === "completed" && image ? "success" : terminal ? "error" : "loading";
+    // Original bytes are already durable. History writes or slower sibling results
+    // must not keep a usable image behind the generation overlay.
+    const status = image ? "success" : terminal ? "error" : "loading";
     const loadingMessage = status === "loading" ? task.expectedImages ? "图片已生成，正在取回…" : task.status === "waiting" ? "正在重新连接，稍后继续取图…" : task.status === "submitting" ? "正在提交生成…" : "正在生成图片…" : undefined;
     const fields = image && status === "success" ? { content: image.url, storageKey: image.storageKey, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType } : {};
     const equalFields = (value: object | undefined, fields: object) => Object.entries(fields).every(([key, field]) => (value as Record<string, unknown> | undefined)?.[key] === field);
     let images = node.metadata?.images?.map(item => {
         if (item.id !== task.target?.imageId) return item;
-        const updated = { ...fields, status, loadingMessage, errorDetails: task.error, ...(status === "success" ? { imageTaskId: undefined } : {}) };
+        const updated = { ...fields, status, loadingMessage, errorDetails: status === "success" ? undefined : task.error, ...(task.status === "completed" && status === "success" ? { imageTaskId: undefined } : {}) };
         return equalFields(item, updated) ? item : { ...item, ...updated } as CanvasNodeImage;
     });
     if (images?.every((item, index) => item === node.metadata?.images?.[index])) images = node.metadata?.images;
     const primary = !task.target.imageId || !node.metadata?.content || node.metadata?.primaryImageId === task.target.imageId;
     const aggregateStatus = images?.length ? images.some(item => item.status === "loading") ? "loading" : images.some(item => item.status === "success") ? "success" : "error" : status;
     const dimensions = image && primary && !node.metadata?.freeResize ? fitNodeSize(image.width, image.height, node.width, node.height) : {};
-    const metadata: NonNullable<CanvasNodeData["metadata"]> = { ...(primary ? fields : {}), status: aggregateStatus, loadingMessage, errorDetails: aggregateStatus === "error" ? task.error : undefined, ...(task.target.imageId ? { images, ...(primary && status === "success" ? { primaryImageId: task.target.imageId } : {}) } : status === "success" ? { imageTaskId: undefined } : {}) };
+    const metadata: NonNullable<CanvasNodeData["metadata"]> = { ...(primary ? fields : {}), status: aggregateStatus, loadingMessage, errorDetails: aggregateStatus === "error" ? task.error : undefined, ...(task.target.imageId ? { images, ...(primary && status === "success" ? { primaryImageId: task.target.imageId } : {}) } : task.status === "completed" && status === "success" ? { imageTaskId: undefined } : {}) };
     if (equalFields(node, dimensions) && equalFields(node.metadata, metadata)) return node;
     return { ...node, ...dimensions, metadata: { ...node.metadata, ...metadata } };
 }

@@ -113,6 +113,7 @@ export default function ImagePage() {
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const imageHistoryRevision = imageTasks.filter(task => task.status === "completed").map(task => task.id).join(":");
+    const imageReadyRevision = imageTasks.filter(task => task.images.some((image, index) => (image.resultIndex ?? index) === 0)).map(task => task.id).join(":");
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -122,19 +123,25 @@ export default function ImagePage() {
 
     useEffect(() => {
         void refreshLogs();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [imageHistoryRevision]);
+
+    useEffect(() => {
         const recover = async () => {
-            const completed = await Promise.all(imageTasks.filter(task => task.status === "completed" && task.images[0] && resultsRef.current.some(result => result.taskId === task.id && result.status !== "success")).map(async task => ({ task, stored: await storedTaskImage(task.images[0]) })));
+            const completed = await Promise.all(imageTasks.filter(task => task.images.some((image, index) => (image.resultIndex ?? index) === 0) && resultsRef.current.some(result => result.taskId === task.id && result.status !== "success")).map(async task => {
+                const original = task.images.find((image, index) => (image.resultIndex ?? index) === 0)!;
+                return { task, id: original.id, stored: await storedTaskImage(original) };
+            }));
             if (!completed.length) return;
             setResults(previous => previous.map(result => {
                 const item = completed.find(item => item.task.id === result.taskId);
                 if (!item || result.status === "success") return result;
-                return { ...result, status: "success", image: { id: item.task.images[0].id, taskId: item.task.id, dataUrl: item.stored.url, ...item.stored, durationMs: Date.now() - item.task.createdAt }, error: undefined };
+                return { ...result, status: "success", image: { id: item.id, taskId: item.task.id, dataUrl: item.stored.url, ...item.stored, durationMs: Date.now() - item.task.createdAt }, error: undefined };
             }));
         };
-        void recover();
-        // Refresh history only when a task finishes, rather than on every poll.
+        void recover().catch(() => undefined); // The task retains its original receipt for recovery.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [imageHistoryRevision]);
+    }, [imageReadyRevision]);
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));

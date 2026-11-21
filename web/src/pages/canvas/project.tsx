@@ -593,7 +593,10 @@ function InfiniteCanvasPage() {
             const tasks = await Promise.all([...durableImageTasks.tasks.values()].filter(task => {
                 const node = nodesById.get(task.target?.nodeId || "");
                 return task.target?.projectId === projectId && node && (node.metadata?.imageTaskId === task.id || node.metadata?.images?.some(image => image.imageTaskId === task.id));
-            }).map(async task => ({ task, image: task.status === "completed" && task.images[0] ? await storedTaskImage(task.images[0]) : undefined })));
+            }).map(async task => {
+                const original = task.images.find((image, index) => (image.resultIndex ?? index) === 0);
+                return { task, image: original ? await storedTaskImage(original) : undefined };
+            }));
             if (cancelled) return;
             const tasksByNode = new Map<string, typeof tasks>();
             for (const item of tasks) {

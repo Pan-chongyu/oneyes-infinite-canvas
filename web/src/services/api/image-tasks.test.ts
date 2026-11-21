@@ -155,6 +155,26 @@ test("concurrent results checkpoint out of order, preserve every sibling and onl
     assert.equal(first.calls.submits + restored.calls.submits, 0);
 });
 
+test("a durable primary image displays before slow siblings or history finish while retaining recovery", async () => {
+    for (const slotted of [false, true]) {
+        const target = { projectId: "project", nodeId: "node", ...(slotted ? { imageId: "slot" } : {}) };
+        const task: ImageTask = { ...processing(), target, expectedImages: 2, status: "saving", images: [image] };
+        const node: CanvasNodeData = { id: "node", type: CanvasNodeType.Image, title: "test", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading", ...(slotted ? { images: [{ id: "slot", status: "loading", imageTaskId: task.id, content: "", naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: "" }] } : { imageTaskId: task.id }) } };
+        const visible = applyCanvasImageTask(node, task, { ...image, url: "blob:original" });
+        assert.equal(visible.metadata?.status, "success");
+        assert.equal(visible.metadata?.content, "blob:original");
+        assert.equal(slotted ? visible.metadata?.images?.[0].imageTaskId : visible.metadata?.imageTaskId, task.id, "unfinished history retains the original recovery association");
+        const waiting = applyCanvasImageTask(visible, { ...task, status: "waiting", error: "history disconnected" }, { ...image, url: "blob:original" });
+        assert.equal(waiting.metadata?.status, "success");
+        assert.equal(waiting.metadata?.errorDetails, undefined);
+        assert.equal(waiting.metadata?.images?.[0]?.errorDetails, undefined);
+        const finished = applyCanvasImageTask(waiting, { ...task, status: "completed" }, { ...image, url: "blob:original" });
+        assert.equal(slotted ? finished.metadata?.images?.[0].imageTaskId : finished.metadata?.imageTaskId, undefined);
+        const newer = markCanvasImageTask([node], target, "newer")[0];
+        assert.equal(applyCanvasImageTask(newer, task, { ...image, url: "blob:original" }), newer);
+    }
+});
+
 test("unchanged processing polls do not rewrite storage, notify every task or replace canvas nodes", async () => {
     let writes = 0, changes = 0;
     const f = fixture(new Map([["local", processing()]]), { poll: async () => ({ value: { id: "imgtask_remote", status: "processing" } }), changed: () => { changes++; } });

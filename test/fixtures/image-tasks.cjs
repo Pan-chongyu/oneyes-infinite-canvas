@@ -46,6 +46,9 @@ app.whenReady().then(async () => {
         assert.equal(await js('asyncImageTest.previewProbe().ready'), false, 'slow thumbnails must not block original persistence or cache recovery');
         await js('asyncImageTest.finishPreviewProbe()');
         await wait('asyncImageTest.previewProbe().ready');
+        await js('asyncImageTest.checkMetadataCache()');
+        assert.equal(await js('asyncImageTest.previewProbe().decodes'), 1, 'twelve cache reads avoid decoding; replacing the original invalidates metadata');
+        assert.equal(await js('asyncImageTest.previewProbe().replaced'), true);
         await js('asyncImageTest.cleanupPreviewProbe()');
         console.log('IMAGE_ORIGINAL_FAST_PATH_OK: original dimensions and bytes intact, durable cache reused, preview runs independently');
         await win.webContents.session.clearStorageData();
@@ -80,11 +83,15 @@ app.whenReady().then(async () => {
         assert.equal(await js('generationTest.orphanWarning()'), false, 'a batch sibling still preparing must remain loading');
         await js('generationTest.release(1)');
         await wait('generationTest.state().length === 2 && generationTest.state().every(t => t.status === "processing")');
-        await js('generationTest.complete()');
+        await js('void generationTest.complete()');
+        await wait('generationTest.state().every(t => t.status === "saving" && t.images.length) && document.querySelector("[data-node-id] img")');
+        assert.equal(await js('document.querySelectorAll("[data-node-id] [role=status]").length'), 0, 'durable originals display while the history writer is blocked');
+        await js('generationTest.releaseHistory()');
         await wait('generationTest.state().every(t => t.status === "completed") && document.querySelector("[data-node-id] img")');
         assert.equal(await js('generationTest.posts()'), 2, 'each requested image is submitted exactly once');
         assert.equal(await js('generationTest.orphanWarning()'), false);
         console.log('CANVAS_GENERATION_UI_OK: real generate click, delayed/partial batch receipt binding, light/dark compact animation, reduced motion, completed images, no false errors');
+        console.log('IMAGE_EARLY_DISPLAY_OK: original pixels displayed before delayed history writes finish, original task association retained until completion');
         console.log('ASYNC_IMAGE_OK: real IndexedDB receipt and Blob storage, generation/edit, offline reload, download interruption, original canvas target, no duplicate POST');
         app.exit(0);
     } catch (error) { console.error(error); console.error(await js('({body:document.body.innerText.slice(0,1000),api:!!window.asyncImageTest,errors:window.fixtureErrors,submitError:sessionStorage.getItem("submitError"),tasks:window.asyncImageTest?.state(),posts:window.asyncImageTest?.posts()})')); app.exit(1); }

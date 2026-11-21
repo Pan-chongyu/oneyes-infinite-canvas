@@ -20,6 +20,7 @@ const imageLogStore = localforage.createInstance({ name: "infinite-canvas", stor
 const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 const imageTaskStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_tasks" });
 const objectUrls = new Map<string, string>();
+const storedImages = new Map<string, UploadedImage>();
 const previewUrls = new Map<string, string>();
 const previewListeners = new Set<() => void>();
 let previewRevision = 0;
@@ -36,12 +37,18 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
     throwIfAborted(options?.signal);
     if (options?.storageKey) {
         const cached = await getImageBlob(options.storageKey);
+        throwIfAborted(options.signal);
         if (cached) {
-            const url = await resolveImageUrl(options.storageKey);
+            const known = storedImages.get(options.storageKey);
+            if (known) { queueImagePreview(options.storageKey); return known; }
+            const url = objectUrls.get(options.storageKey) || URL.createObjectURL(cached);
+            objectUrls.set(options.storageKey, url);
             const meta = await loadImageMeta(url, options);
             if (!meta) throw new Error(i18n.t("common.imageReadFailed"));
+            const image = { url, storageKey: options.storageKey, ...meta, bytes: cached.size, mimeType: cached.type.startsWith("image/") ? cached.type : "" };
+            storedImages.set(options.storageKey, image);
             queueImagePreview(options.storageKey);
-            return { url, storageKey: options.storageKey, ...meta, bytes: cached.size, mimeType: cached.type.startsWith("image/") ? cached.type : "" };
+            return image;
         }
     }
     if (typeof input !== "string") return storeImage(input, options);
@@ -68,8 +75,10 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         await store.setItem(storageKey, blob);
         throwIfAborted(options?.signal);
         objectUrls.set(storageKey, url);
+        const image = { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
+        storedImages.set(storageKey, image);
         queueImagePreview(storageKey);
-        return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
+        return image;
     } catch (error) {
         URL.revokeObjectURL(url);
         await store.removeItem(storageKey).catch(() => undefined);
@@ -224,10 +233,11 @@ async function deleteImagePreview(storageKey: string) {
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
     await store.setItem(storageKey, blob);
-    await deleteImagePreview(storageKey);
-    await storeImagePreview(storageKey, blob);
+    storedImages.delete(storageKey);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
+    await deleteImagePreview(storageKey);
+    queueImagePreview(storageKey);
     return url;
 }
 
@@ -243,6 +253,7 @@ export async function deleteStoredImages(keys: Iterable<string>) {
             const url = objectUrls.get(key);
             if (url) URL.revokeObjectURL(url);
             objectUrls.delete(key);
+            storedImages.delete(key);
             await deleteImagePreview(key);
             await store.removeItem(key);
         }),
