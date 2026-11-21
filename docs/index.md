@@ -2,6 +2,7 @@
 
 ## Overview
 
+- [应用中心介绍与维护规则](APP_CENTER.zh-CN.md)
 - [Quick Start](/docs/overview/quick-start)
 - [Features](/docs/overview/features)
 - [Deploy on Render](/docs/overview/render)
