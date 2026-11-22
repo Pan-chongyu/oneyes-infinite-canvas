@@ -57,7 +57,7 @@ export function modelPickerOptions(config: AiConfig, options: string[], current?
         const channel = config.channels.find(channel => candidates[0].startsWith(channel.id + '::'));
         const model = channel?.models.find(model => model.name === raw(candidates[0]));
         if (model && model.capability !== 'video') {
-            const label = raw(candidates[0]) + (channel ? `（${channel.name}）` : '');
+            const label = raw(candidates[0]);
             return [{ value: candidates[0], label, name: label, information: '' }];
         }
         let oneYesEndpoint = false;

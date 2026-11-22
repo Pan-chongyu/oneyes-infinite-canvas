@@ -421,12 +421,8 @@ export function modelOptionName(value: string) {
 }
 
 export function modelOptionLabel(config: AiConfig, value: string) {
-    const decoded = decodeChannelModel(value);
     const name = videoModelOptionName(config, value);
-    if (modelCapabilityOf(config, value) === 'video') return videoDisplayText(name);
-    if (!decoded) return name;
-    const channel = config.channels.find((item) => item.id === decoded.channelId);
-    return channel ? `${name}（${channel.name}）` : name;
+    return modelCapabilityOf(config, value) === 'video' ? videoDisplayText(name) : name;
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
