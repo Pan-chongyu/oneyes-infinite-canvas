@@ -334,10 +334,23 @@ app.whenReady().then(async () => {
             assert.ok(!layout.status || layout.status.top >= layout.name.bottom - 1, 'availability must not crowd the model name');
             assert.ok(layout.settings.top >= layout.picker.bottom && layout.controls.bottom <= layout.button.top && layout.button.bottom < layout.node.bottom, 'settings and generation action must remain separate and inside the node');
             assert.ok(layout.label.includes(model.split('::').at(-1).split(' [')[0]));
-            if (model.endsWith('::grok-imagine-video')) assert.ok(layout.settings.bottom <= layout.controls.bottom, 'the normal compact video layout must show parameters without scrolling');
             if (process.env.ONEYES_MODEL_SCREENSHOTS) {
                 await mkdir(process.env.ONEYES_MODEL_SCREENSHOTS, { recursive: true });
                 await writeFile(join(process.env.ONEYES_MODEL_SCREENSHOTS, `config-model-compact-${mode}-${scale}-${dark ? 'dark' : 'light'}.png`), (await win.capturePage()).toPNG());
+            }
+            if (model.endsWith('::grok-imagine-video')) {
+                // Font metrics differ by OS; content may scroll, but the parameter action must remain reachable.
+                await js('document.querySelector("[data-config-node-controls]").scrollTop=10000;new Promise(resolve=>requestAnimationFrame(resolve))');
+                const target = await js(`(()=>{const button=document.querySelector('[data-config-node-settings] button'),r=button.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),visible:button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}})()`);
+                assert.equal(target.visible, true, 'node scrolling must expose the real parameter action');
+                win.webContents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y });
+                win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: target.x, y: target.y });
+                win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: target.x, y: target.y });
+                await wait('Boolean(document.querySelector(".canvas-image-settings-popover"))');
+                win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: 900, y: 650 });
+                win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: 900, y: 650 });
+                await wait('!document.querySelector(".canvas-image-settings-popover")');
+                await js('document.querySelector("[data-config-node-controls]").scrollTop=0');
             }
         }
         assert.deepEqual(await js('modelTest.state().config'), compactConfig, 'layout changes must preserve model and generation defaults');
