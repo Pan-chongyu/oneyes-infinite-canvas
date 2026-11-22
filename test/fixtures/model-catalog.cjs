@@ -320,6 +320,7 @@ app.whenReady().then(async () => {
         await js('modelTest.expire();modelTest.sync()');
         await wait('!modelTest.state().syncing');
         console.log('NATIVE_MISSING_VIDEO_IDS_RETAINED_DISABLED_NO_FALSE_RETIREMENT_OR_TASK_REPLAY_OK');
+        assert.equal(await js(`(()=>{const picker=document.querySelector('[data-testid=bare-video-picker] [role=combobox]'),name=picker.querySelector('[data-model-name]').getBoundingClientRect(),status=picker.querySelector('[data-video-model-status]').getBoundingClientRect(),bounds=picker.getBoundingClientRect();return name.bottom<=status.top&&status.bottom<=bounds.bottom&&!picker.querySelector('[data-model-information]')})()`), true, 'a video model without specifications must still fit its status below the name');
         await js('showModelCanvas()');
         const compactConfig = await js('modelTest.state().config');
         for (const [scale, dark, mode, model] of [[1, true, 'video', 'oneyes-minimax::grok-imagine-video'], [0.65, false, 'video', 'oneyes-minimax::doubao-seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]'], [1.5, true, 'image', compactConfig.imageModel], [1, false, 'text', compactConfig.textModel], [1, true, 'audio', compactConfig.audioModel]]) {

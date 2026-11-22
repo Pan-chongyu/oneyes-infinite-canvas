@@ -70,7 +70,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 title={currentLabel || pickerPlaceholder}
                 aria-label={currentLabel || pickerPlaceholder}
                 aria-invalid={unavailable || undefined}
-                style={selected.information ? { height: 'auto', minHeight: 44, paddingBlock: 5 } : undefined}
+                style={selected.information || (current && capability === 'video') ? { height: 'auto', minHeight: 44, paddingBlock: 5 } : undefined}
             >
                 <ModelIcon model={current} />
                 <span className="canvas-model-picker-text min-w-0 flex-1 text-left leading-snug">

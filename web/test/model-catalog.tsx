@@ -70,6 +70,7 @@ function Probe() {
         <div data-testid="text-picker"><ModelPicker config={config} value={config.textModel} capability="text" onChange={value => useConfigStore.getState().updateConfig("textModel", value)} /></div>
         <div data-testid="image-picker"><ModelPicker config={config} value={config.imageModel} capability="image" onChange={value => useConfigStore.getState().updateConfig("imageModel", value)} /></div>
         <div data-testid="video-picker"><ModelPicker config={config} value={config.videoModel} capability="video" onChange={value => useConfigStore.getState().updateConfig("videoModel", value)} /></div>
+        <div data-testid="bare-video-picker"><ModelPicker config={config} value="default::layout-fixture-video" capability="video" onChange={() => {}} /></div>
         <Button data-testid="open-models" onClick={() => setOpen(true)}>管理模型</Button>
         <ChannelEditorDrawer open={open} channel={config.channels[0]} onClose={() => setOpen(false)} onSave={channel => useConfigStore.getState().replaceConfig({ ...useConfigStore.getState().config, channels: [channel] })} />
     </div>;
