@@ -65,12 +65,13 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         // never download a full old installer merely to enable a delta.
         if (destination.platform === 'win32' && installerCache) {
             const folder = path.join(root, `base-${currentVersion}`), stage = folder + '.staging';
-            let cached = false;
+            let cached;
             try {
                 const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(file => fs.readFile(path.join(folder, file), 'utf8')));
                 const base = readManifest(text, signature, destination, publicKey);
-                if (base.version === currentVersion) { await validateFile(path.join(folder, base.file), base); cached = true; }
+                if (base.version === currentVersion) { await validateFile(path.join(folder, base.file), base); cached = base; }
             } catch {}
+            if (cached) try { await validateFile(installerCache, cached); await fs.rm(installerCache); } catch { /* Preserve unrelated or unverifiable installer bytes. */ }
             if (!cached) try {
                 if (!(await fs.lstat(installerCache)).isFile()) throw Error('No cached installer');
                 const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(async name => (await response(`${RELEASE_ROOT}/download/v${currentVersion}/${name}`)).text()));

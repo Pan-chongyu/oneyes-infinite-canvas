@@ -103,6 +103,13 @@ test('manual Windows installation adopts only a matching signed NSIS cache witho
         await seeded.check();assert.equal(seeded.state().status,'ready');
         assert.equal(seeded.state().mode,scenario==='valid'?'delta':'full');
         if(scenario==='valid')await assert.rejects(readFile(seed));else assert.ok((await readFile(seed)).length);
+        if(scenario==='valid'){
+            seeded.close();await writeFile(seed,f.base);
+            const restarted=createUpdater({...f.options,installerCache:seed});t.after(()=>restarted.close());await restarted.check();
+            assert.equal(restarted.state().status,'ready');
+            await assert.rejects(readFile(seed),'a verified current base also removes the duplicate kept by NSIS');
+            assert.deepEqual(await readFile(join(f.directory,'ota/base-1.0.0',f.previous.entry.file)),f.base);
+        }
     });
 });
 
