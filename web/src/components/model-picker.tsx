@@ -73,7 +73,14 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 style={selected.information ? { height: 'auto', minHeight: 44, paddingBlock: 5 } : undefined}
             >
                 <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 text-left leading-snug"><span className="flex flex-wrap items-center gap-x-1.5"><span data-model-name className="min-w-0 truncate">{current ? selected.name : pickerPlaceholder}</span>{current && capability === 'video' && <VideoModelStatus config={config} value={current} />}</span>{selected.information && <span data-model-information className="block truncate text-xs text-muted-foreground">{selected.information}</span>}{unavailable && <span className="block text-xs text-destructive">暂不可用，请重新选择</span>}</span>
+                <span className="canvas-model-picker-text min-w-0 flex-1 text-left leading-snug">
+                    <span data-model-name className="block min-w-0 truncate">{current ? selected.name : pickerPlaceholder}</span>
+                    {(selected.information || (current && capability === 'video')) && <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                        {selected.information && <span data-model-information className="min-w-0 truncate">{selected.information}</span>}
+                        {current && capability === 'video' && <VideoModelStatus config={config} value={current} />}
+                    </span>}
+                    {unavailable && <span className="block text-xs text-destructive">暂不可用，请重新选择</span>}
+                </span>
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom

@@ -321,6 +321,26 @@ app.whenReady().then(async () => {
         await wait('!modelTest.state().syncing');
         console.log('NATIVE_MISSING_VIDEO_IDS_RETAINED_DISABLED_NO_FALSE_RETIREMENT_OR_TASK_REPLAY_OK');
         await js('showModelCanvas()');
+        const compactConfig = await js('modelTest.state().config');
+        for (const [scale, dark, mode, model] of [[1, true, 'video', 'oneyes-minimax::grok-imagine-video'], [0.65, false, 'video', 'oneyes-minimax::doubao-seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]'], [1.5, true, 'image', compactConfig.imageModel], [1, false, 'text', compactConfig.textModel], [1, true, 'audio', compactConfig.audioModel]]) {
+            await js(`modelNodeTest.compact(${scale},${dark},${JSON.stringify(mode)},${JSON.stringify(model)})`);
+            await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            await js('Promise.all(document.getAnimations().filter(a=>a.effect.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))');
+            const layout = await js(`(()=>{const node=document.querySelector('[data-node-id=config]'),picker=node.querySelector('[role=combobox]'),name=picker.querySelector('[data-model-name]'),info=picker.querySelector('[data-model-information]'),status=picker.querySelector('[data-video-model-status]'),settings=node.querySelector('[data-config-node-settings] button'),controls=node.querySelector('[data-config-node-controls]'),button=node.querySelector('.ant-btn-primary'),rect=element=>element.getBoundingClientRect().toJSON();return {node:rect(node),picker:rect(picker),name:rect(name),info:info&&rect(info),status:status&&rect(status),settings:rect(settings),button:rect(button),controls:rect(controls),textFits:name.scrollWidth<=name.clientWidth&&(!info||info.scrollWidth<=info.clientWidth),label:picker.title}})()`);
+            assert.ok(layout.picker.width >= layout.controls.width - 16 * scale && layout.picker.right < layout.node.right, 'model selection must use the node width instead of sharing a narrow row: ' + JSON.stringify(layout));
+            assert.equal(layout.textFits, true, 'full name, version and specifications must wrap without ellipsis');
+            assert.ok(!layout.info || layout.info.top >= layout.name.bottom - 1, 'specifications belong below the model name');
+            assert.ok(!layout.status || layout.status.top >= layout.name.bottom - 1, 'availability must not crowd the model name');
+            assert.ok(layout.settings.top >= layout.picker.bottom && layout.controls.bottom <= layout.button.top && layout.button.bottom < layout.node.bottom, 'settings and generation action must remain separate and inside the node');
+            assert.ok(layout.label.includes(model.split('::').at(-1).split(' [')[0]));
+            if (model.endsWith('::grok-imagine-video')) assert.ok(layout.settings.bottom <= layout.controls.bottom, 'the normal compact video layout must show parameters without scrolling');
+            if (process.env.ONEYES_MODEL_SCREENSHOTS) {
+                await mkdir(process.env.ONEYES_MODEL_SCREENSHOTS, { recursive: true });
+                await writeFile(join(process.env.ONEYES_MODEL_SCREENSHOTS, `config-model-compact-${mode}-${scale}-${dark ? 'dark' : 'light'}.png`), (await win.capturePage()).toPNG());
+            }
+        }
+        assert.deepEqual(await js('modelTest.state().config'), compactConfig, 'layout changes must preserve model and generation defaults');
+        console.log('NATIVE_COMPACT_CONFIG_MODEL_FULL_WIDTH_NAME_VERSION_STATUS_SETTINGS_AND_MODES_OK');
         await wait('window.modelNodeTest && document.querySelector("[data-node-id=config] [role=combobox]")');
         for (const [scale, x, y, dark] of [[1, 40, 40, false], [0.5, 650, 580, true], [1.8, 10, 20, false], [1, 650, 40, true]]) {
             await js(`modelNodeTest.configure(${scale},${x},${y},${dark});document.querySelector("[data-node-id=config] [role=combobox]").focus()`);
