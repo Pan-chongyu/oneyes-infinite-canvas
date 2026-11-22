@@ -164,9 +164,13 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
             await wait('document.querySelectorAll("[role=option]:not([data-disabled])").length === 52');
             const rows = await js('Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).map(option=>{const name=option.querySelector("[data-model-name]"),info=option.querySelector("[data-model-information]");return {id:option.getAttribute("data-model-id"),name:name.textContent,info:info?.textContent,separate:info&&info.getBoundingClientRect().top>=name.getBoundingClientRect().bottom}})');
+            const rowLayout = await js(`Array.from(document.querySelectorAll('[role=option]')).map(option=>{const name=option.querySelector('[data-model-name]'),info=option.querySelector('[data-model-information]'),status=option.querySelector('[data-model-availability]'),details=option.querySelector('[data-model-info-delayed]'),n=name.getBoundingClientRect(),s=status?.getBoundingClientRect(),i=info?.getBoundingClientRect();return {nameFits:name.scrollWidth<=name.clientWidth,statusSeparate:!s||n.right<=s.left,detailsSeparate:!details||!i||details.getBoundingClientRect().top>=i.bottom,selected:getComputedStyle(option).backgroundColor,id:option.getAttribute('data-model-id')}})`);
+            assert.ok(rowLayout.every(row => row.nameFits && row.statusSeparate && row.detailsSeparate), 'name, availability and delayed metadata must occupy separate aligned areas');
+            assert.notEqual(await js('getComputedStyle(document.querySelector("[role=option][data-state=checked]")).backgroundColor'), 'rgba(0, 0, 0, 0)', 'the current selection has a persistent background');
             await js('document.querySelector("[data-radix-select-viewport]").scrollTop=100000');
             const searchBounds = await js('(()=>{const input=document.querySelector("input[type=search]"),r=input.getBoundingClientRect();return {visible:input===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)}})()');
             assert.ok(searchBounds.visible, 'model search must stay visible after scrolling to the bottom');
+            assert.equal(await js('document.querySelector("[data-model-search]").getBoundingClientRect().bottom<=document.querySelector("[data-radix-select-viewport]").getBoundingClientRect().top'), true, 'search must be outside the scrolling viewport');
             assert.ok(rows.every(row => row.separate && /¥/.test(row.info)), 'every video model must have its information on a second line');
             const bounds = await js('(()=>{const r=document.querySelector("[role=listbox]").getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth}})()');
             assert.ok(bounds.left >= 0 && bounds.right <= bounds.width, 'two-line model list must fit narrow windows');
@@ -368,6 +372,16 @@ app.whenReady().then(async () => {
             const textBounds = await js('Array.from(document.querySelectorAll("[role=option] [data-model-name], [role=option] [data-model-information]")).map(text=>({text:text.textContent,right:text.getBoundingClientRect().left+text.scrollWidth,height:text.clientHeight,scrollHeight:text.scrollHeight}))');
             assert.ok(textBounds.every(text=>text.right<=bounds.viewport.right && text.scrollHeight<=text.height), 'full model versions must wrap without hidden text: '+JSON.stringify(textBounds));
             const wheel = { x: Math.round(bounds.viewport.x + bounds.viewport.width / 2), y: Math.round(bounds.viewport.y + bounds.viewport.height / 2) };
+            for (const selector of ['[role=option]:not([data-disabled])', 'input[type=search]', '[data-slot=select-scroll-down-button]']) {
+                const point = await js(`(()=>{const popup=document.querySelector('[role=listbox]'),viewport=popup.querySelector('[data-radix-select-viewport]');viewport.scrollTop=0;const element=popup.querySelector(${JSON.stringify(selector)}),r=element?.getBoundingClientRect();return r&&{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+                if (!point) continue;
+                await js('window.modelScrollDone=false;document.querySelector("[data-radix-select-viewport]").addEventListener("scrollend",()=>window.modelScrollDone=true,{once:true})');
+                win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+                win.webContents.sendInputEvent({ type: 'mouseWheel', deltaX: 0, deltaY: -80, ...point });
+                await wait('window.modelScrollDone && document.querySelector("[data-radix-select-viewport]").scrollTop > 0');
+            }
+            const headerPoint = await js(`(()=>{const r=document.querySelector('[data-model-search]').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+            win.webContents.sendInputEvent({ type: 'mouseMove', ...headerPoint });
             const beforeScroll = await js('document.querySelector("[data-radix-select-viewport]").scrollTop');
             if (await js('(()=>{const viewport=document.querySelector("[data-radix-select-viewport]");return viewport.scrollHeight>viewport.clientHeight+viewport.scrollTop})()')) {
                 await js('window.modelScrollDone=false;document.querySelector("[data-radix-select-viewport]").addEventListener("scrollend",()=>window.modelScrollDone=true,{once:true})');
@@ -383,7 +397,7 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'End' });
             await wait('document.activeElement === Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).at(-1)');
             await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-            const target = await js(`(()=>{const item=document.activeElement,r=item.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),visible:item.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),model:item.getAttribute('data-model-id'),text:item.textContent.trim()};})()`);
+            const target = await js(`(()=>{const item=Array.from(document.querySelectorAll('[role=option]:not([data-disabled])')).at(-1),r=item.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),visible:item.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),model:item.getAttribute('data-model-id'),text:item.textContent.trim()};})()`);
             assert.equal(target.visible, true, 'last model must be clickable above neighboring nodes');
             assert.notEqual((await js('modelNodeTest.state()')).metadata.model, target.model);
             win.webContents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y });

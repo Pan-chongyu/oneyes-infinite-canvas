@@ -62,10 +62,11 @@ function SelectTrigger({
 function SelectContent({
   className,
   children,
+  header,
   position = "item-aligned",
   align = "center",
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content>) {
+}: React.ComponentProps<typeof SelectPrimitive.Content> & { header?: React.ReactNode }) {
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
@@ -76,6 +77,7 @@ function SelectContent({
         align={align}
         {...props}
       >
+        {header}
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport
           data-position={position}

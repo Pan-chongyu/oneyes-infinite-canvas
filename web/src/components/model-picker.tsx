@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Cpu } from "lucide-react";
+import { Cpu, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
@@ -84,7 +84,11 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
-                className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl [&_[data-radix-select-viewport]]:min-w-0"
+                className="z-[1200] flex max-h-[min(var(--radix-select-content-available-height),24rem)] w-96 max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border/70 bg-popover p-1.5 shadow-xl motion-reduce:animate-none [&_[data-radix-select-viewport]]:!h-auto [&_[data-radix-select-viewport]]:min-h-0 [&_[data-radix-select-viewport]]:min-w-0 [&_[data-radix-select-viewport]]:flex-1 [&_[data-slot=select-scroll-up-button]]:shrink-0 [&_[data-slot=select-scroll-down-button]]:shrink-0"
+                header={capability === 'video' && <div className="mb-1.5 flex shrink-0 items-center gap-2 border-b border-border/70 px-2 pb-2 pt-1" data-model-search>
+                    <Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                    <input type="search" aria-label="搜索视频模型" placeholder="搜索模型、分辨率或价格" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.closest('[role=listbox]')?.querySelector<HTMLElement>('[role=option]:not([data-disabled])')?.focus(); } }} className="h-8 min-w-0 flex-1 bg-transparent text-sm text-popover-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50" />
+                </div>}
                 position="popper"
                 align="start"
                 side="bottom"
@@ -92,11 +96,15 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 collisionPadding={12}
                 onPointerDown={(event) => event.stopPropagation()}
                 onMouseDown={(event) => event.stopPropagation()}
+                onWheel={event => {
+                    const viewport = event.currentTarget.querySelector<HTMLElement>('[data-radix-select-viewport]');
+                    if (viewport && !viewport.contains(event.target as Node)) viewport.scrollTop += event.deltaY;
+                    event.stopPropagation();
+                }}
             >
-                {capability === 'video' && <input type="search" aria-label="搜索视频模型" placeholder="搜索模型、分辨率或价格" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key !== 'Escape') event.stopPropagation(); if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.parentElement?.querySelector<HTMLElement>('[role=option]:not([data-disabled])')?.focus(); } }} className="sticky top-0 z-10 mb-1 w-full rounded-lg border border-input bg-popover px-2 py-2 text-sm outline-none focus:border-ring" />}
                 {visibleOptions.length ? (
                     visibleOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value} disabled={isModelUnavailable(config, option.value)} data-model-id={option.value} textValue={option.label} className="py-2 data-disabled:opacity-75 [&>span:last-child]:min-w-0" title={option.label}
+                        <SelectItem key={option.value} value={option.value} disabled={isModelUnavailable(config, option.value)} data-model-id={option.value} textValue={option.label} className="my-0.5 cursor-pointer rounded-lg py-2.5 pl-2.5 pr-8 transition-colors data-[state=checked]:bg-accent/60 data-disabled:cursor-default data-disabled:opacity-75 motion-reduce:transition-none [&>span:last-child]:min-w-0 [&>span:last-child]:w-full" title={option.label}
                             onPointerUp={() => { if (!isModelUnavailable(config, option.value) && option.value === selected.value && current !== option.value) onChange(option.value); }}
                             onKeyDown={event => { if (!isModelUnavailable(config, option.value) && ['Enter', ' '].includes(event.key) && option.value === selected.value && current !== option.value) onChange(option.value); }}>
                             <ModelLabel option={option} config={config} video={capability === 'video'} />
@@ -120,9 +128,11 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
 
 function ModelLabel({ option, config, video }: { option: ReturnType<typeof modelPickerOptions>[number]; config: AiConfig; video: boolean }) {
     return (
-        <span className="flex min-w-0 items-center gap-2">
-            <ModelIcon model={option.value} />
-            <span className="flex min-w-0 flex-col gap-0.5 whitespace-normal break-words text-left leading-snug"><span className="flex flex-wrap items-center gap-x-1.5"><span data-model-name>{option.name}</span>{video && <VideoModelStatus config={config} value={option.value} />}</span>{option.information && <span data-model-information className="text-xs text-muted-foreground">{option.information}</span>}</span>
+        <span className="grid w-full min-w-0 grid-cols-[20px_minmax(0,1fr)_auto] gap-x-2 whitespace-normal text-left">
+            <span className="col-start-1 row-span-2 row-start-1 pt-0.5"><ModelIcon model={option.value} /></span>
+            <span data-model-name className={cn("row-start-1 min-w-0 break-all text-[13px] font-medium leading-5", video ? "col-start-2" : "col-span-2 col-start-2")}>{option.name}</span>
+            {option.information && <span data-model-information className="col-span-2 col-start-2 row-start-2 mt-0.5 break-words text-xs leading-5 text-muted-foreground">{option.information}</span>}
+            {video && <VideoModelStatus config={config} value={option.value} menu />}
         </span>
     );
 }
