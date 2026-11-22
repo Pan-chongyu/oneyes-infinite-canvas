@@ -81,6 +81,19 @@ test('dynamic SP posts one reviewed JSON request and a cold recovered retired ta
     } finally { axios.defaults.adapter = original; }
 });
 
+test('missing dynamic constraints block both manual and Video keys before any generic paid POST', async () => {
+    let posts = 0;
+    try {
+        adapter(() => { posts++; return { data: { id: 'must-not-create' } }; });
+        for (const channelId of ['default', 'oneyes-minimax']) {
+            const selected = { ...config, channels: [{ ...config.channels[0], id: channelId }], model: channelId + '::future-dynamic-fixture [1080p ¥1/条]' };
+            window.oneYesDesktop!.models.list = async () => ({ data: [selected.model.split('::')[1]] });
+            await assert.rejects(createVideoGenerationTask(selected, 'fixture'), /尚未完成适配/);
+        }
+        assert.equal(posts, 0);
+    } finally { axios.defaults.adapter = original; }
+});
+
 test('explicit retirement, outage or managed pause stops paid creation while the original receipt still recovers', async () => {
     const { parseVideoCatalog } = await import('../../../../desktop/video-catalog.mjs');
     let posts = 0, queries = 0, discoveries = 0;

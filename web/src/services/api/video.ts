@@ -148,8 +148,6 @@ async function prepareVideoGenerationTask(config: AiConfig, prompt: string, refe
         options?.signal?.throwIfAborted();
         assertVideoModelActive(config, selectedModel);
     }
-    const parameterError = videoModelConfigError(config, selectedModel);
-    if (parameterError) throw Error(parameterError);
     if (channel.apiFormat !== 'gemini' && isOneYes(channel.baseUrl) && !resolveModelScript(config, selectedModel)) {
         const entries = await fetchModelCatalogEntries(channel, true);
         options?.signal?.throwIfAborted();
@@ -159,6 +157,8 @@ async function prepareVideoGenerationTask(config: AiConfig, prompt: string, refe
         config = { ...config, channels: config.channels.map(item => item.id === channel.id ? { ...item, models: [...item.models.filter(model => model.name !== entry.id), { ...item.models.find(model => model.name === entry.id), name: entry.id, capability: 'video', referenceFileMaxBytes: entry.referenceFileMaxBytes }] } : item) };
     }
     assertVideoModelActive(config, selectedModel);
+    const parameterError = videoModelConfigError(config, selectedModel);
+    if (parameterError) throw Error(parameterError);
     const api = window.oneYesDesktop?.videoTasks;
     if (!api || resolveModelScript(config, config.model || config.videoModel)) return createVideoTask(config, prompt, references, options);
     const selected = { ...config, model: config.model || config.videoModel };

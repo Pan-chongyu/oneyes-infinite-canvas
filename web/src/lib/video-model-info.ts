@@ -109,11 +109,12 @@ export function videoModelConfigError(config: AiConfig, value = config.model || 
     const info = getVideoModelInfo(config, value);
     if (!info) {
         const index = value.indexOf('::');
-        const channel = config.channels.find(item => item.id === value.slice(0, index));
+        const name = index < 0 ? value : value.slice(index + 2);
+        const channel = config.channels.find(item => index < 0 ? item.models.some(model => model.name === name) : item.id === value.slice(0, index));
         let site = false;
         try { site = ['oneyes.ai', 'api.oneyes.ai'].includes(new URL(channel?.baseUrl || config.baseUrl).hostname); } catch { /* A custom endpoint keeps its existing protocol. */ }
-        const native = ['seedance-2.5', 'grok-imagine-video', 'grok-imagine-video-1.5'].includes(value.slice(index + 2));
-        if (site && !native && (channel?.id === 'oneyes-minimax' || channel?.oneYes?.platform === 'grok' || videoModelMetadata(config, value, useVideoCatalogStore.getState().catalog)) && !channel?.models.find(item => item.name === value.slice(index + 2))?.script?.trim()) return '该模型参数尚未完成适配，请刷新模型列表或选择其他模型；已有任务仍可取回。';
+        const native = ['sora-2', 'sora-2-pro', 'seedance-2.5', 'grok-imagine-video', 'grok-imagine-video-1.5'].includes(name);
+        if (site && !native && !channel?.models.find(item => item.name === name)?.script?.trim()) return '该模型参数尚未完成适配，请刷新模型列表或选择其他模型；已有任务仍可取回。';
         return;
     }
     return videoModelParametersError(info, config, inputs);
