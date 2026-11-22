@@ -8,6 +8,14 @@ import {generateKeyPairSync,verify,sign,createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {prepareBlockmaps} from '../scripts/prepare-ota-blockmaps.mjs';
 const require=createRequire(import.meta.url),{filename,platformKey,RELEASE_ROOT,readManifest}=require('../desktop/update-policy.cjs');
+
+test('release source version, lock and tag file agree before building native packages',async()=>{
+  const [pkg,lock,tag]=await Promise.all(['package.json','package-lock.json','VERSION'].map(file=>readFile(file,'utf8')));
+  const version=JSON.parse(pkg).version;
+  assert.equal(tag.trim(),'v'+version);
+  assert.equal(JSON.parse(lock).version,version);
+  assert.equal(JSON.parse(lock).packages[''].version,version);
+});
 test('release requires all twelve native installers and hashes RPM architecture aliases',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'canvas-release-'));
   try {
