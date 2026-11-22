@@ -32,6 +32,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - run: npm ci
       - run: node --test test/windows-update.test.mjs
+      - run: npm run test:ota-package
       - if: always()
         run: node scripts/build-resource-relay.mjs stop "${{ runner.temp }}/canvas-build-relay.json"
   ota-base:
@@ -128,6 +129,9 @@ jobs:
       - run: npm run test:chat
       - run: npm run test:models
       - run: npm run test:ota-ui
+      - name: Verify small edits produce small native Windows downloads
+        if: matrix.target == 'win'
+        run: npm run test:ota-package
       - run: npm run test:videos
       - run: npm run test:video-workflow
       - run: npm run test:playback
@@ -150,6 +154,8 @@ jobs:
         run: npm run dist -- --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Generate signed-feed block map inputs for every OTA format
+        run: node scripts/prepare-ota-blockmaps.mjs desktop-dist
       - name: Smoke test Windows package
         if: matrix.target == 'win'
         shell: pwsh
@@ -175,7 +181,7 @@ jobs:
           name: OneYes-Canvas-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             desktop-dist/*.exe
-            desktop-dist/*.exe.blockmap
+            desktop-dist/*.blockmap
             desktop-dist/*.dmg
             desktop-dist/*.zip
             desktop-dist/*.AppImage
@@ -221,9 +227,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci --omit=dev --ignore-scripts
-      - uses: ./.github/actions/linux-network
-      - run: sudo apt-get update -qq && sudo apt-get install -y bsdiff
+      - run: npm ci --ignore-scripts
       - uses: actions/download-artifact@v4
         with:
           name: OneYes-Canvas-${{ matrix.installer }}
@@ -236,18 +240,13 @@ jobs:
         run: node scripts/prepare-ota-base.mjs release-base --pinned --target=${{ matrix.target }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-      - name: Generate and reconstruct this target's delta
-        env:
-          CANVAS_OTA_BASE_DIR: ${{ github.workspace }}/release-base
-          CANVAS_OTA_BSDIFF: bsdiff
-          CANVAS_OTA_DELTA_TIMEOUT_MS: 120000
-          CANVAS_OTA_DELTA_TARGET: ${{ matrix.target }}
-        run: node scripts/verify-desktop-release.mjs release
+      - name: Reconstruct this target using only changed blocks
+        run: node scripts/verify-block-update.mjs ${{ matrix.target }} release release-base
       - uses: actions/upload-artifact@v4
         with:
           name: Canvas-OTA-Delta-${{ matrix.target }}
-          path: release/*.delta
-          if-no-files-found: ignore
+          path: release/OTA-BLOCKS-*.json
+          if-no-files-found: error
   publish:
     if: github.ref_type == 'tag'
     needs: [build, ota-base, delta]
@@ -276,15 +275,15 @@ jobs:
         with:
           name: Canvas-OTA-Base
           path: release-base
-      - name: Download previous installers for delta OTA
-        run: node scripts/prepare-ota-base.mjs release-base --pinned
+      - name: Verify the pinned base manifest without downloading installers again
+        run: node scripts/prepare-ota-base.mjs release-base --pinned --manifest-only
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Verify every platform and generate checksums
         env:
           CANVAS_OTA_PRIVATE_KEY: ${{ secrets.CANVAS_OTA_PRIVATE_KEY }}
           CANVAS_OTA_BASE_DIR: ${{ github.workspace }}/release-base
-          CANVAS_OTA_PREBUILT_DELTAS: '1'
+          CANVAS_OTA_BLOCKMAP_REPORTS: '1'
         run: node scripts/verify-desktop-release.mjs release
       - name: Publish public desktop release
         env:

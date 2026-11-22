@@ -5,11 +5,11 @@ import { modelInformationPriority, splitModelInformation } from './model-informa
 import { videoDisplayText } from './video-display-text';
 import displaySnapshot from './video-model-display-catalog.json';
 import { videoModelMetadata } from './video-model-status';
-import type { VideoCatalog } from '@/stores/use-video-catalog-store';
+import { useVideoCatalogStore, type VideoCatalog } from '@/stores/use-video-catalog-store';
 const displayCatalog = displaySnapshot.data;
 
 /** The audited OneYes bridge prices must not label another provider or a script. */
-export function getVideoModelInfo(config: AiConfig, value = config.model || config.videoModel): VideoModelInfo | undefined {
+export function getVideoModelInfo(config: AiConfig, value = config.model || config.videoModel, catalog = useVideoCatalogStore.getState().catalog): VideoModelInfo | undefined {
     const separator = value.indexOf("::");
     const model = separator < 0 ? value : value.slice(separator + 2);
     const channel = separator < 0
@@ -25,10 +25,29 @@ export function getVideoModelInfo(config: AiConfig, value = config.model || conf
     // Only OneYes' explicit Video channel uses the unified bridge for bare
     // Grok IDs. Other native accounts and third-party endpoints stay native.
     const unifiedVideo = channel?.id === "oneyes-minimax" || channel?.oneYes?.platform === "grok";
-    const info = videoModelCatalog.find((entry) => entry.aliases.includes(model) || model === entry.id && (!entry.id.startsWith("grok-") || unifiedVideo));
+    let info = videoModelCatalog.find((entry) => entry.aliases.includes(model) || model === entry.id && (!entry.id.startsWith("grok-") || unifiedVideo));
+    const metadata = videoModelMetadata(config, value, catalog);
+    if (!info && metadata && (!metadata.id.startsWith('grok-') || unifiedVideo)) info = videoModelCatalog.find(entry => entry.id === metadata.id);
+    const parameters = metadata?.parameters;
+    if (parameters && (!info || info.provider === 'zhiying')) {
+        const durations = Object.values(parameters.resolutions).flatMap(entry => entry.durations);
+        info = { id: metadata.id, provider: 'zhiying', aliases: metadata.request_ids, summary: videoDisplayText(metadata.model_info), parameters,
+            resolutions: Object.keys(parameters.resolutions).map(value => value.replace(/p$/, '')),
+            duration: { min: Math.min(...durations), max: Math.max(...durations) },
+            defaultResolution: parameters.default_resolution.replace(/p$/, ''), defaultSeconds: parameters.default_duration,
+            ratios: parameters.aspect_ratios, modes: ['reference'], promptMax: parameters.prompt_max,
+            referenceLimits: parameters.reference_limits, referenceFileMaxBytes: parameters.reference_file_max_bytes,
+            priceLines: metadata.prices.map((price: { resolution?: string; amount_cny: string; unit: string }) => `${price.resolution || ''} ¥${price.amount_cny}/${({ per_second: '秒', per_generation: '条', per_million_tokens: '百万 Token' } as Record<string, string>)[price.unit]}`), notes: [] };
+    }
     if (!info) return;
     const limits = channel?.models.find(entry => entry.name === model)?.referenceFileMaxBytes;
-    return limits === undefined ? info : { ...info, referenceFileMaxBytes: limits };
+    // Keep both independent constraints; the request uses their minimum.
+    if (limits === undefined) return info;
+    return { ...info, referenceFileMaxBytes: Object.fromEntries(['image', 'video', 'audio'].map(kind => {
+        const fromCatalog = typeof info.referenceFileMaxBytes === 'number' ? info.referenceFileMaxBytes : info.referenceFileMaxBytes?.[kind as 'image'];
+        const fromKey = typeof limits === 'number' ? limits : limits[kind as 'image'];
+        return [kind, fromCatalog === undefined ? fromKey : fromKey === undefined ? fromCatalog : Math.min(fromCatalog, fromKey)];
+    }).filter(([, limit]) => limit !== undefined)) };
 }
 
 export function videoModelOptionName(config: AiConfig, value: string) {
@@ -44,13 +63,13 @@ export function videoModelOptions(config: AiConfig, options: string[], current?:
     return modelPickerOptions(config, options, current).map(option => option.value);
 }
 
-export function modelPickerOptions(config: AiConfig, options: string[], current?: string, catalog?: VideoCatalog) {
+export function modelPickerOptions(config: AiConfig, options: string[], current?: string, catalog = useVideoCatalogStore.getState().catalog) {
     const groups = new Map<string, string[]>();
     const raw = (value: string) => value.includes('::') ? value.slice(value.indexOf('::') + 2) : value;
     for (const value of options) {
         const channel = value.includes('::') ? value.slice(0, value.indexOf('::') + 2) : '';
         const model = config.channels.find(entry => channel === entry.id + '::')?.models.find(entry => entry.name === raw(value));
-        const key = model && model.capability !== 'video' ? value : channel + (getVideoModelInfo(config, value)?.id || splitModelInformation(raw(value)).name);
+        const key = model && model.capability !== 'video' ? value : channel + (videoModelMetadata(config, value, catalog)?.id || getVideoModelInfo(config, value, catalog)?.id || splitModelInformation(raw(value)).name);
         groups.set(key, [...groups.get(key) || [], value]);
     }
     return [...groups.values()].flatMap(candidates => {
@@ -67,6 +86,7 @@ export function modelPickerOptions(config: AiConfig, options: string[], current?
         const authorized = candidates.filter(value => !channel?.models.find(model => model.name === raw(value))?.unavailable);
         const choices = authorized.length ? authorized : candidates;
         const metadata = choices.map(value => videoModelMetadata(config, value, catalog)).find(Boolean);
+        if (!authorized.length || metadata?.status === 'retired' || metadata?.new_tasks_enabled === false) return [];
         const historical = candidates.some(value => channel?.models.find(model => model.name === raw(value))?.unavailable) || metadata && ['retired', 'unavailable'].includes(metadata.status);
         const metadataPriced = metadata?.has_price !== false && modelInformationPriority(`model [${metadata?.model_info || ''}]`) === 2;
         if (videoGroup && (!priced.length && !metadataPriced || metadata?.has_price === false) && !historical) return [];
@@ -87,16 +107,24 @@ export function modelPickerOptions(config: AiConfig, options: string[], current?
 /** Reject unsupported selections before a paid POST; never mutate saved choices. */
 export function videoModelConfigError(config: AiConfig, value = config.model || config.videoModel, inputs?: { imageCount: number; videoCount: number; audioCount: number }) {
     const info = getVideoModelInfo(config, value);
-    if (!info) return undefined;
+    if (!info) {
+        const index = value.indexOf('::');
+        const channel = config.channels.find(item => item.id === value.slice(0, index));
+        let site = false;
+        try { site = ['oneyes.ai', 'api.oneyes.ai'].includes(new URL(channel?.baseUrl || config.baseUrl).hostname); } catch { /* A custom endpoint keeps its existing protocol. */ }
+        const native = ['seedance-2.5', 'grok-imagine-video', 'grok-imagine-video-1.5'].includes(value.slice(index + 2));
+        if (site && !native && (channel?.id === 'oneyes-minimax' || channel?.oneYes?.platform === 'grok' || videoModelMetadata(config, value, useVideoCatalogStore.getState().catalog)) && !channel?.models.find(item => item.name === value.slice(index + 2))?.script?.trim()) return '该模型参数尚未完成适配，请刷新模型列表或选择其他模型；已有任务仍可取回。';
+        return;
+    }
     return videoModelParametersError(info, config, inputs);
 }
 
 export function videoModelParametersError(info: VideoModelInfo, config: Pick<AiConfig, 'vquality' | 'videoSeconds' | 'size' | 'videoMode' | 'videoGenerateAudio'>, inputs?: { imageCount: number; videoCount: number; audioCount: number }) {
     const resolution = parseVideoResolution(config.vquality).toLowerCase();
     if (!/^(?:\d+p?|[24]k)$/i.test(config.vquality) || !info.resolutions.includes(resolution)) return `该模型支持 ${info.resolutions.map(tierLabel).join(" / ")}，请主动选择支持的分辨率；已保留原设置。`;
-    const seconds = Number(config.videoSeconds);
-    if (!Number.isInteger(seconds) || seconds < info.duration.min || seconds > info.duration.max || info.duration.values && !info.duration.values.includes(seconds)) {
-        return `该模型支持 ${info.duration.values?.join(" / ") || `${info.duration.min}–${info.duration.max}`} 秒，请选择支持的时长。`;
+    const seconds = Number(config.videoSeconds), duration = videoModelDuration(info, resolution);
+    if (!Number.isInteger(seconds) || seconds < duration.min || seconds > duration.max || duration.values && !duration.values.includes(seconds)) {
+        return `该分辨率支持 ${duration.values?.join(" / ") || `${duration.min}–${duration.max}`} 秒，请选择支持的时长。`;
     }
     const ratio = inferVideoRatio(config.size || "auto");
     const pixels = parsePixelSize(config.size), aspect = parseAspectRatio(ratio);
@@ -133,4 +161,9 @@ export function videoModelParametersError(info: VideoModelInfo, config: Pick<AiC
 
 export function tierLabel(value: string) {
     return /k$/i.test(value) ? value.toUpperCase() : `${value}p`;
+}
+
+export function videoModelDuration(info: VideoModelInfo, resolution: string): VideoModelInfo['duration'] {
+    const values = info.parameters?.resolutions[/k$/i.test(resolution) ? resolution.toLowerCase() : `${parseVideoResolution(resolution)}p`]?.durations;
+    return values?.length ? { min: Math.min(...values), max: Math.max(...values), values } : info.duration;
 }

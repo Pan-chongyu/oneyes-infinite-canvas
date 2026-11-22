@@ -1,11 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createVideoCatalog, parseVideoCatalog, videoCatalogExpired } from '../desktop/video-catalog.mjs';
+import { createVideoCatalog, parseVideoCatalog, parseVideoParameters, videoCatalogExpired } from '../desktop/video-catalog.mjs';
 
 const fixture = () => ({ schema_version: 1, generated_at: new Date().toISOString(), refresh_after_seconds: 300, check: { checked_at: '2026-11-18T00:00:00Z', stale: false }, data: [
     { id: '中文视频-v2', request_ids: ['中文视频-v2', '中文视频-v2【1080p 4秒 ￥0/条】'], recommended_request_id: '中文视频-v2【1080p 4秒 ￥0/条】', model_name: '中文视频-v2', model_info: '1080p 4秒 ￥0/条', status: 'active', stale: false, price_stale: false, parameters_stale: false, new_tasks_enabled: true },
 ] });
+
+test('reviewed dynamic constraints survive native/renderer validation; arbitrary data cannot become capabilities', () => {
+    const source = JSON.parse(readFileSync(new URL('./fixtures/video-catalog-dynamic.json', import.meta.url), 'utf8'));
+    const model = source.data.find(model => model.id === 'SP-特价');
+    const parameters = parseVideoParameters({ ...model.parameters, endpoint: 'private-endpoint', apiKey: 'private-key', modes: ['frames'] });
+    assert.deepEqual(parameters, model.parameters);
+    assert.equal(parameters.default_duration, 30);
+    assert.equal(parameters.reference_limits.videos, 0);
+    assert.deepEqual(parseVideoParameters(parameters), parameters);
+    for (const patch of [{ resolutions: {} }, { resolutions: { '1080p': { durations: [5, 5] } } }, { default_duration: 31 }, { aspect_ratios: ['url'] }, { prompt_max: -1 }, { reference_limits: { images: 9 } }, { reference_file_max_bytes: { image: -1 } }, { reference_modes: ['frames'] }, { cancel_supported: 'true' }]) assert.throws(() => parseVideoParameters({ ...model.parameters, ...patch }), /更新延迟/);
+    const output = parseVideoCatalog(source, Date.parse(source.generated_at));
+    assert.deepEqual(parseVideoCatalog(output, Date.parse(source.generated_at)), output);
+});
 
 test('the sanitized live public snapshot retains 26 active and two explicitly retired historic models', () => {
     const source = JSON.parse(readFileSync(new URL('./fixtures/video-catalog-public.json', import.meta.url), 'utf8'));

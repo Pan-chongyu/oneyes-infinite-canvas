@@ -1,6 +1,6 @@
 {
   "name": "oneyes-infinite-canvas",
-  "version": "0.20.202",
+  "version": "0.20.203",
   "private": true,
   "description": "OneYes 无限画布桌面版，基于 basketikun/infinite-canvas",
   "author": "OneYes / basketikun",
@@ -15,6 +15,7 @@
     "test:chat": "node scripts/test-agent-chat.mjs",
     "test:models": "node scripts/test-agent-chat.mjs --models",
     "test:ota-ui": "node scripts/test-agent-chat.mjs --updates",
+    "test:ota-package": "node scripts/test-ota-packaging.mjs",
     "test:images": "node scripts/test-agent-chat.mjs --images",
     "test:codec": "node scripts/test-image-codec.mjs",
     "release:delta": "node scripts/prepare-ota-base.mjs release-base",
@@ -37,7 +38,7 @@
   },
   "devDependencies": {
     "electron": "44.9.1",
-    "electron-builder": "26.15.3",
+    "electron-builder": "26.18.0",
     "extract-zip": "2.0.1"
   },
   "build": {
@@ -76,7 +77,7 @@
       "include": "desktop/resources/installer.nsh",
       "installerIcon": "desktop/resources/icon.ico",
       "uninstallerIcon": "desktop/resources/icon.ico",
-      "differentialPackage": true,
+      "differentialPackage": "store-asar",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

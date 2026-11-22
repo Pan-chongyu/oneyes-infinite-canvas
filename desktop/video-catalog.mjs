@@ -1,5 +1,45 @@
 export const videoModelStatuses = { active: '可用', retired: '已下架', unavailable: '暂不可用', unknown: '状态待确认' };
 
+/**
+ * Only the published, reviewed constraint schema may drive a new request.
+ * @returns {{resolutions: Record<string, {durations: number[]}>, default_resolution: string, default_duration: number, aspect_ratios: string[], default_aspect_ratio?: string, prompt_max: number, reference_limits: {images: number, videos: number, audios: number, total?: number}, reference_file_max_bytes?: Partial<Record<'image'|'video'|'audio', number>>, reference_image_input_types?: string[], reference_modes?: string[], reference_image_processing?: string[], cancel_supported?: boolean} | undefined}
+ */
+export function parseVideoParameters(value) {
+    if (value === undefined) return;
+    const fail = () => { throw Error('模型参数信息更新延迟'); };
+    const object = value => value && typeof value === 'object' && !Array.isArray(value);
+    const integer = value => Number.isSafeInteger(value) && value >= 0;
+    const strings = (value, valid) => Array.isArray(value) && value.length && value.every(valid) && new Set(value).size === value.length;
+    if (!object(value) || !object(value.resolutions) || !Object.keys(value.resolutions).length) fail();
+    const resolutions = Object.fromEntries(Object.entries(value.resolutions).map(([key, entry]) => {
+        if (!/^(?:[1-9]\d*p|[1-9]\d*k)$/.test(key) || !object(entry) || !strings(entry.durations, seconds => integer(seconds) && seconds > 0)) fail();
+        return [key, { durations: [...entry.durations].sort((a, b) => a - b) }];
+    }));
+    if (!Object.hasOwn(resolutions, value.default_resolution) || !resolutions[value.default_resolution].durations.includes(value.default_duration) ||
+        !strings(value.aspect_ratios, ratio => typeof ratio === 'string' && /^(?:auto|[1-9]\d*:[1-9]\d*)$/.test(ratio)) ||
+        value.default_aspect_ratio !== undefined && !value.aspect_ratios.includes(value.default_aspect_ratio) ||
+        !integer(value.prompt_max) || !value.prompt_max || !object(value.reference_limits) ||
+        !['images', 'videos', 'audios'].every(key => integer(value.reference_limits[key])) || value.reference_limits.total !== undefined && !integer(value.reference_limits.total)) fail();
+    const limits = Object.fromEntries(['images', 'videos', 'audios', 'total'].filter(key => value.reference_limits[key] !== undefined).map(key => [key, value.reference_limits[key]]));
+    let fileLimits;
+    if (value.reference_file_max_bytes !== undefined) {
+        if (!object(value.reference_file_max_bytes) || Object.keys(value.reference_file_max_bytes).some(key => !['image', 'video', 'audio'].includes(key) || !integer(value.reference_file_max_bytes[key]))) fail();
+        fileLimits = { ...value.reference_file_max_bytes };
+    }
+    for (const [key, allowed] of [['reference_image_input_types', ['file_id', 'https_url']], ['reference_modes', ['multi_reference']], ['reference_image_processing', ['direct']]]) {
+        if (value[key] !== undefined && !strings(value[key], item => allowed.includes(item))) fail();
+    }
+    if (value.cancel_supported !== undefined && typeof value.cancel_supported !== 'boolean') fail();
+    return { resolutions, default_resolution: value.default_resolution, default_duration: value.default_duration,
+        aspect_ratios: [...value.aspect_ratios], ...(value.default_aspect_ratio === undefined ? {} : { default_aspect_ratio: value.default_aspect_ratio }),
+        prompt_max: value.prompt_max, reference_limits: limits,
+        ...(fileLimits === undefined ? {} : { reference_file_max_bytes: fileLimits }),
+        ...(value.reference_image_input_types === undefined ? {} : { reference_image_input_types: [...value.reference_image_input_types] }),
+        ...(value.reference_modes === undefined ? {} : { reference_modes: [...value.reference_modes] }),
+        ...(value.reference_image_processing === undefined ? {} : { reference_image_processing: [...value.reference_image_processing] }),
+        ...(value.cancel_supported === undefined ? {} : { cancel_supported: value.cancel_supported }) };
+}
+
 /** The feed allows one missed refresh plus a user-approved 60-second clock grace. */
 export function videoCatalogExpired(catalog, now = Date.now()) {
     const generated = Date.parse(catalog.generated_at);
@@ -22,6 +62,8 @@ export function parseVideoCatalog(input, now = Date.now()) {
             stale: value.check.stale || item.stale !== false, price_stale: item.price_stale !== false,
             parameters_stale: item.parameters_stale !== false, new_tasks_enabled: typeof item.new_tasks_enabled === 'boolean' ? item.new_tasks_enabled : undefined,
             has_price: typeof item.has_price === 'boolean' ? item.has_price : undefined,
+            parameters: parseVideoParameters(item.parameters),
+            prices: Array.isArray(item.prices) ? item.prices.filter(price => typeof price?.amount_cny === 'string' && /^\d+(?:\.\d+)?$/.test(price.amount_cny) && ['per_second', 'per_generation', 'per_million_tokens'].includes(price.unit)).map(price => ({ amount_cny: price.amount_cny, unit: price.unit, ...(typeof price.resolution === 'string' && /^(?:\d+p|\d+k)$/i.test(price.resolution) ? { resolution: price.resolution } : {}) })) : [],
             checked_at: typeof item.checked_at === 'string' ? item.checked_at : '', status_updated_at: typeof item.status_updated_at === 'string' ? item.status_updated_at : '',
         };
     });

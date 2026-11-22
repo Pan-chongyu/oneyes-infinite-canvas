@@ -93,7 +93,7 @@ async function nativeResume() {
         console.log('NATIVE_OTA_RESUME_OK: Electron HTTP socket interruption, restored prefix, Range/If-Range, complete-file hash before installation');
     } finally { updater.close(); restarted.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
 }
-async function nativeBlockResume() {
+async function nativeBlockResume(platform,arch,format) {
     const { createServer } = require('node:http'), { gzipSync } = require('node:zlib');
     const { generateKeyPairSync, sign, createHash } = require('node:crypto');
     const { mkdir, writeFile, readFile } = require('node:fs/promises');
@@ -103,9 +103,9 @@ async function nativeBlockResume() {
     const base = Buffer.concat([Buffer.alloc(64, 1), Buffer.alloc(64, 2)]), next = Buffer.concat([Buffer.alloc(64, 2), Buffer.alloc(64, 3)]);
     const map = bytes => gzipSync(JSON.stringify({ version: '2', files: [{ name: 'file', offset: 0, sizes: [64, 64], checksums: [hash(bytes.subarray(0, 64)), hash(bytes.subarray(64))] }] }));
     const release = (version, bytes) => {
-        const file = filename(version, 'win32', 'x64', 'nsis'), url = `${RELEASE_ROOT}/download/v${version}/${file}`, blockmap = map(bytes);
+        const file = filename(version, platform, arch, format), url = `${RELEASE_ROOT}/download/v${version}/${file}`, blockmap = map(bytes);
         const entry = { file, url, size: bytes.length, sha256: hash(bytes), blockmap: { file: file + '.blockmap', url: url + '.blockmap', size: blockmap.length, sha256: hash(blockmap) } };
-        const text = JSON.stringify({ schema: 1, version, notes: 'native blocks', platforms: { 'win32-x64-nsis': entry } });
+        const text = JSON.stringify({ schema: 1, version, notes: 'native blocks', platforms: { [`${platform}-${arch}-${format}`]: entry } });
         return { entry, text, signature: sign(null, Buffer.from(text), privateKey).toString('base64'), blockmap };
     };
     const old = release('1.0.0', base), current = release('1.0.1', next), ranges = [];
@@ -129,10 +129,10 @@ async function nativeBlockResume() {
         try { await (await fetch(`http://127.0.0.1:${server.address().port}/probe`)).arrayBuffer(); break; }
         catch (error) { await new Promise(resolve => server.close(resolve)); if (error.cause?.message !== 'bad port') throw error; }
     }
-    const directory = join(app.getPath('userData'), 'native-blocks'), folder = join(directory, 'ota/base-1.0.0'); await mkdir(folder, { recursive: true });
+    const directory = join(app.getPath('userData'), `native-blocks-${platform}-${arch}-${format}`), folder = join(directory, 'ota/base-1.0.0'); await mkdir(folder, { recursive: true });
     await writeFile(join(folder, old.entry.file), base); await writeFile(join(folder, 'canvas-latest.json'), old.text); await writeFile(join(folder, 'canvas-latest.json.sig'), old.signature);
     const origin = `http://127.0.0.1:${server.address().port}`;
-    const options = { currentVersion: '1.0.0', directory, publicKey, target: async () => ({ platform: 'win32', arch: 'x64', format: 'nsis' }), fetcher: (url, init) => net.fetch(origin + new URL(url).pathname, init),
+    const options = { currentVersion: '1.0.0', directory, publicKey, target: async () => ({ platform, arch, format }), fetcher: (url, init) => net.fetch(origin + new URL(url).pathname, init),
         install: async plan => { assert.deepEqual(await readFile(plan.file), next); installs++; }, changed: state => { if (state.downloaded === 7 && pending) { pending.destroy(); pending = null; } } };
     const updater = createUpdater(options), restarted = createUpdater(options);
     try {
@@ -150,7 +150,7 @@ app.whenReady().then(async () => {
     try {
         await nativeReleaseRedirect();
         await nativeResume();
-        await nativeBlockResume();
+        for(const platform of ['win32','darwin','linux'])for(const arch of ['x64','arm64'])for(const format of {win32:['nsis'],darwin:['zip'],linux:['AppImage','deb','rpm']}[platform])await nativeBlockResume(platform,arch,format);
         await win.loadURL(process.argv[2]);
         await wait('window.updateTest && document.querySelector("[aria-expanded]")');
         await js('document.querySelector("[aria-expanded]").click()');

@@ -1,4 +1,5 @@
 import type { ReferenceFileMaxBytes } from './video-material-policy';
+import type { parseVideoParameters } from '../../../desktop/video-catalog.mjs';
 export type VideoModelInfo = {
     id: string;
     provider: "88api" | "zhiying";
@@ -17,6 +18,7 @@ export type VideoModelInfo = {
     notes: string[];
     audio?: "optional" | "required" | "unsupported";
     watermark?: "optional" | "unsupported";
+    parameters?: NonNullable<ReturnType<typeof parseVideoParameters>>;
 };
 
 // Audited against official model docs, public pricing and the active bridge.

@@ -23,6 +23,7 @@ export const useVideoCatalogStore = create<{
             const catalog = { ...fresh, data: [...fresh.data.map(model => {
                 const previous = get().catalog?.data.find(item => item.id === model.id);
                 return { ...model,
+                    ...(!model.parameters && model.parameters_stale && previous?.parameters ? { parameters: previous.parameters } : {}),
                     ...(!model.model_info.trim() && previous ? { model_info: previous.model_info } : {}),
                     ...(model.status === 'unknown' && previous && previous.status !== 'unknown' ? { status: previous.status, stale: true, new_tasks_enabled: model.new_tasks_enabled === false ? false : previous.new_tasks_enabled } : {}),
                 };

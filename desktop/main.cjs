@@ -78,6 +78,7 @@ app.whenReady().then(async () => {
     const agent = createAgent({ directory: app.getPath('userData'), onError: (error, stage) => report('agent', stage, error), runtime: app.isPackaged ? join(process.resourcesPath, 'canvas-agent') : resolve(__dirname, '../canvas-agent'),
         ...(smoke ? { agentHome: join(app.getPath('userData'), 'agent'), codexHome: join(app.getPath('userData'), 'codex') } : {}) });
     const updater = createUpdater({ currentVersion: app.getVersion(), directory: app.getPath('userData'), target: () => updateTarget(), fetcher: createReleaseFetcher({ request: network.fetch }),
+        installerCache: process.platform === 'win32' && process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'oneyes-infinite-canvas-updater', 'installer.exe') : undefined,
         enabled: app.isPackaged && !smoke,
         onError: (error, stage, operation) => { void diagnostics.report({ component: 'update', stage, operation, error }); },
         onRecovered: (stage, operation) => { void diagnostics.recover({ component: 'update', stage, operation }); },

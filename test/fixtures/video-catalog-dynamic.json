@@ -1,0 +1,442 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-22T17:55:11Z",
+  "refresh_after_seconds": 300,
+  "check": {
+    "checked_at": "2026-11-22T17:55:11Z",
+    "stale": false
+  },
+  "data": [
+    {
+      "id": "SD-特价",
+      "request_ids": [
+        "SD-特价",
+        "SD-特价 [1080p 5-30s ¥2.178/条]"
+      ],
+      "recommended_request_id": "SD-特价 [1080p 5-30s ¥2.178/条]",
+      "model_name": "SD-特价",
+      "model_info": "1080p 5-30s ¥2.178/条",
+      "status": "retired",
+      "stale": false,
+      "price_stale": true,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "parameters": {
+        "resolutions": {
+          "1080p": {
+            "durations": [
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30
+            ]
+          }
+        },
+        "default_resolution": "1080p",
+        "default_duration": 30,
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "prompt_max": 10000,
+        "reference_limits": {
+          "images": 9,
+          "videos": 0,
+          "audios": 3
+        }
+      },
+      "prices": [
+        {
+          "amount_cny": "2.178",
+          "unit": "per_generation",
+          "resolution": "1080p"
+        }
+      ],
+      "checked_at": "2026-11-22T17:55:11Z",
+      "status_updated_at": "2026-11-18T23:00:09Z"
+    },
+    {
+      "id": "sd-2.5-fullblood-line2",
+      "request_ids": [
+        "sd-2.5-fullblood-line2",
+        "sd-2.5-fullblood-line2 [720p 5-30s ¥4.378/条]",
+        "sd-2.5-fullblood-line2 [720p 5-30s ¥5.478/条]"
+      ],
+      "recommended_request_id": "sd-2.5-fullblood-line2 [720p 5-30s ¥5.478/条]",
+      "model_name": "sd-2.5-fullblood-line2",
+      "model_info": "720p 5-30s ¥5.478/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": false,
+      "has_price": true,
+      "parameters": {
+        "resolutions": {
+          "720p": {
+            "durations": [
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30
+            ]
+          }
+        },
+        "default_resolution": "720p",
+        "default_duration": 30,
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "21:9"
+        ],
+        "prompt_max": 45000,
+        "reference_limits": {
+          "images": 30,
+          "videos": 10,
+          "audios": 10,
+          "total": 50
+        },
+        "reference_modes": [
+          "multi_reference"
+        ],
+        "reference_image_processing": [
+          "direct"
+        ],
+        "cancel_supported": false
+      },
+      "prices": [
+        {
+          "amount_cny": "5.478",
+          "unit": "per_generation",
+          "resolution": "720p"
+        }
+      ],
+      "checked_at": "2026-11-22T17:55:11Z",
+      "status_updated_at": "2026-11-21T20:55:03Z"
+    },
+    {
+      "id": "sd-2.5-fullblood-line3",
+      "request_ids": [
+        "sd-2.5-fullblood-line3",
+        "sd-2.5-fullblood-line3 [720p 1-30s ¥5.258/条]"
+      ],
+      "recommended_request_id": "sd-2.5-fullblood-line3 [720p 1-30s ¥5.258/条]",
+      "model_name": "sd-2.5-fullblood-line3",
+      "model_info": "720p 1-30s ¥5.258/条",
+      "status": "retired",
+      "stale": false,
+      "price_stale": true,
+      "parameters_stale": false,
+      "new_tasks_enabled": false,
+      "has_price": false,
+      "prices": [],
+      "checked_at": "2026-11-22T17:55:11Z",
+      "status_updated_at": "2026-11-18T03:50:05Z"
+    },
+    {
+      "id": "seedance-2.5-dedicated-line1",
+      "request_ids": [
+        "seedance-2.5-dedicated-line1",
+        "seedance-2.5-dedicated-line1 [5-30s 480p ¥0.429/秒;720p ¥0.539/秒]"
+      ],
+      "recommended_request_id": "seedance-2.5-dedicated-line1 [5-30s 480p ¥0.429/秒;720p ¥0.539/秒]",
+      "model_name": "seedance-2.5-dedicated-line1",
+      "model_info": "5-30s 480p ¥0.429/秒;720p ¥0.539/秒",
+      "status": "retired",
+      "stale": false,
+      "price_stale": true,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "parameters": {
+        "resolutions": {
+          "480p": {
+            "durations": [
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30
+            ]
+          },
+          "720p": {
+            "durations": [
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30
+            ]
+          }
+        },
+        "default_resolution": "720p",
+        "default_duration": 5,
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "prompt_max": 12000,
+        "reference_limits": {
+          "images": 30,
+          "videos": 10,
+          "audios": 10
+        },
+        "reference_modes": [
+          "multi_reference"
+        ]
+      },
+      "prices": [
+        {
+          "amount_cny": "0.429",
+          "unit": "per_second",
+          "resolution": "480p"
+        },
+        {
+          "amount_cny": "0.539",
+          "unit": "per_second",
+          "resolution": "720p"
+        }
+      ],
+      "checked_at": "2026-11-22T17:55:11Z",
+      "status_updated_at": "2026-11-21T20:10:10Z"
+    },
+    {
+      "id": "SP-特价",
+      "request_ids": [
+        "SP-特价",
+        "SP-特价 [1080p 5-30s ¥2.178/条]"
+      ],
+      "recommended_request_id": "SP-特价 [1080p 5-30s ¥2.178/条]",
+      "model_name": "SP-特价",
+      "model_info": "1080p 5-30s ¥2.178/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "parameters": {
+        "resolutions": {
+          "1080p": {
+            "durations": [
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30
+            ]
+          }
+        },
+        "default_resolution": "1080p",
+        "default_duration": 30,
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "prompt_max": 10000,
+        "reference_limits": {
+          "images": 9,
+          "videos": 0,
+          "audios": 3
+        }
+      },
+      "prices": [
+        {
+          "amount_cny": "2.178",
+          "unit": "per_generation",
+          "resolution": "1080p"
+        }
+      ],
+      "checked_at": "2026-11-22T17:55:11Z",
+      "status_updated_at": "2026-11-22T17:45:06Z"
+    },
+    {
+      "id": "future-fixture-v3",
+      "request_ids": [
+        "future-fixture-v3",
+        "future-fixture-v3 [720-1080p 4-12s ￥1/条]"
+      ],
+      "recommended_request_id": "future-fixture-v3 [720-1080p 4-12s ￥1/条]",
+      "model_name": "future-fixture-v3",
+      "model_info": "720-1080p 4-12s ￥1/条",
+      "status": "active",
+      "stale": false,
+      "price_stale": false,
+      "parameters_stale": false,
+      "new_tasks_enabled": true,
+      "has_price": true,
+      "parameters": {
+        "resolutions": {
+          "720p": {
+            "durations": [
+              4,
+              6,
+              8
+            ]
+          },
+          "1080p": {
+            "durations": [
+              10,
+              12
+            ]
+          }
+        },
+        "default_resolution": "720p",
+        "default_duration": 6,
+        "aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "default_aspect_ratio": "9:16",
+        "prompt_max": 10000,
+        "reference_limits": {
+          "images": 9,
+          "videos": 0,
+          "audios": 0
+        },
+        "reference_file_max_bytes": {
+          "image": 123456,
+          "video": 0,
+          "audio": 0
+        },
+        "reference_modes": [
+          "multi_reference"
+        ],
+        "reference_image_processing": [
+          "direct"
+        ],
+        "cancel_supported": false
+      },
+      "prices": [
+        {
+          "amount_cny": "2.178",
+          "unit": "per_generation",
+          "resolution": "1080p"
+        }
+      ],
+      "checked_at": "2026-11-22T17:55:11Z",
+      "status_updated_at": "2026-11-22T17:45:06Z"
+    }
+  ]
+}

@@ -13,10 +13,11 @@ export function referenceFileMaxBytes(value: unknown): ReferenceFileMaxBytes | u
     if (Object.keys(limits).length) return limits;
 }
 
-export function videoReferenceFileLimit(model: { id: string; provider: string; referenceFileMaxBytes?: ReferenceFileMaxBytes }, kind: 'image' | 'video' | 'audio') {
+export function videoReferenceFileLimit(model: { id: string; provider: string; referenceFileMaxBytes?: ReferenceFileMaxBytes; parameters?: unknown }, kind: 'image' | 'video' | 'audio') {
     const live = model.referenceFileMaxBytes;
     if (typeof live === 'number') return live;
     if (live?.[kind] !== undefined) return live[kind];
+    if (model.parameters) return;
     if (model.provider === 'zhiying') {
         if (model.id === 'sd-2.5-fullblood-line3') return 32 * 1024 * 1024;
         if (['seedance-2.0-official', 'seedance-2.0-fast-official', 'seedance-2.5-official'].includes(model.id)) return (kind === 'image' ? 16 : 64) * 1024 * 1024;

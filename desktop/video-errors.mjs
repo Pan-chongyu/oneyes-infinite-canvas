@@ -25,6 +25,7 @@ export const videoErrorMessages = {
     parameters_invalid: '视频参数不受支持（422），请检查时长、分辨率、比例和素材模式；参数已保留，不会自动重新提交。',
     model_not_allowed: '当前 API Key 无权调用该模型，请刷新模型列表并检查官网 Key 分组权限；不会自动换 Key、分组或放宽模型权限。',
     model_missing: '当前 API Key 的可用模型列表不包含所选模型，请刷新模型列表并检查官网分组权限；不会自动换 Key、分组或付费模型。',
+    model_parameters_pending: '该模型参数尚未完成适配，请刷新模型列表或选择其他模型；已有任务仍可取回。',
     model_unavailable: '当前视频模型暂不可用，请刷新模型列表或选择其他可用模型。',
     model_retired: '该视频模型已下架，不能新建或重新生成；已提交的任务仍可查询和取回，请选择其他可用模型开始新任务。',
     model_paused: '该视频模型已暂停新建任务；已有任务仍可查询和取回，请选择其他可用模型开始新任务。',

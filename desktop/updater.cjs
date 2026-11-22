@@ -2,7 +2,7 @@ const fs = require('node:fs/promises');
 const { createReadStream } = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { FEED, CHECK_INTERVAL, readManifest, newer } = require('./update-policy.cjs');
+const { FEED, RELEASE_ROOT, CHECK_INTERVAL, readManifest, newer } = require('./update-policy.cjs');
 const { applyDelta } = require('./update-delta.cjs');
 const { downloadBlocks } = require('./update-blockmap.cjs');
 
@@ -16,7 +16,7 @@ async function validateFile(file, entry, progress) {
     const info = await fs.lstat(file);
     if (!info.isFile() || info.size !== entry.size || await fileHash(file, progress && (bytes => progress(Math.floor(bytes / entry.size * 100)))) !== entry.sha256) throw new Error('更新包校验失败，已停止安装。请重新下载');
 }
-function createUpdater({ currentVersion, directory, target, fetcher, install, changed = () => {}, onError = () => {}, onRecovered = () => {}, publicKey, enabled = true, feed = FEED }) {
+function createUpdater({ currentVersion, directory, target, fetcher, install, changed = () => {}, onError = () => {}, onRecovered = () => {}, publicKey, enabled = true, feed = FEED, installerCache }) {
     const root = path.join(directory, 'ota');
     let state = { status: 'idle', currentVersion, version: '', progress: 0, downloaded: 0, total: 0, notes: '', error: '', supported: enabled, mode: 'full', phase: '', reused: 0 };
     let selected, entry, saved, operation, installation, checking, timer, closed = false;
@@ -60,6 +60,33 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                 await fs.rename(installed, path.join(root, `base-${currentVersion}`));
             }
         } catch {}
+        // NSIS keeps its installer in its own per-user cache, including first
+        // installs and manual upgrades. Adopt it only after fixed-key validation;
+        // never download a full old installer merely to enable a delta.
+        if (destination.platform === 'win32' && installerCache) {
+            const folder = path.join(root, `base-${currentVersion}`), stage = folder + '.staging';
+            let cached = false;
+            try {
+                const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(file => fs.readFile(path.join(folder, file), 'utf8')));
+                const base = readManifest(text, signature, destination, publicKey);
+                if (base.version === currentVersion) { await validateFile(path.join(folder, base.file), base); cached = true; }
+            } catch {}
+            if (!cached) try {
+                if (!(await fs.lstat(installerCache)).isFile()) throw Error('No cached installer');
+                const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(async name => (await response(`${RELEASE_ROOT}/download/v${currentVersion}/${name}`)).text()));
+                const base = readManifest(text, signature, destination, publicKey);
+                if (base.version !== currentVersion) throw Error('Cached version mismatch');
+                await validateFile(installerCache, base);
+                await fs.rm(stage, { recursive: true, force: true }); await fs.mkdir(stage, { recursive: true, mode: 0o700 });
+                await fs.copyFile(installerCache, path.join(stage, base.file), fs.constants.COPYFILE_FICLONE);
+                await validateFile(path.join(stage, base.file), base);
+                await fs.writeFile(path.join(stage, 'canvas-latest.json'), text, { mode: 0o600 });
+                await fs.writeFile(path.join(stage, 'canvas-latest.json.sig'), signature, { mode: 0o600 });
+                await fs.rm(folder, { recursive: true, force: true }); await fs.rename(stage, folder);
+                // Remove the duplicate only if it still contains these bytes.
+                await validateFile(installerCache, base); await fs.rm(installerCache);
+            } catch { await fs.rm(stage, { recursive: true, force: true }).catch(() => {}); }
+        }
         let pending;
         for (const name of (await fs.readdir(root).catch(() => [])).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))) {
             if (!/^\d+\.\d+\.\d+$/.test(name) || !newer(name, currentVersion)) continue;
@@ -73,7 +100,12 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                 entry = candidate; saved = { text, signature, folder };
                 await cleanup(name);
                 recovered('download', 'update-package');
-                emit({ status: 'ready', version: entry.version, notes: entry.notes, progress: 100, downloaded: entry.size, total: entry.size, mode: 'full' });
+                let transfer = { total: entry.size, reused: 0, mode: 'full' };
+                try {
+                    const info = JSON.parse(await fs.readFile(path.join(folder, 'download-info.json'), 'utf8'));
+                    if (info.sha256 === entry.sha256 && ['full', 'delta'].includes(info.mode) && Number.isSafeInteger(info.total) && info.total >= 0 && Number.isSafeInteger(info.reused) && info.reused >= 0 && info.total + info.reused === entry.size) transfer = info;
+                } catch {}
+                emit({ status: 'ready', version: entry.version, notes: entry.notes, progress: 100, downloaded: transfer.total, total: transfer.total, reused: transfer.reused, mode: transfer.mode });
                 return true;
             } catch {}
         }
@@ -159,17 +191,17 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         await fs.mkdir(saved.folder, { recursive: true, mode: 0o700 });
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json'), saved.text, { mode: 0o600 });
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json.sig'), saved.signature, { mode: 0o600 });
-        const windowsBase = entry.blockmap ? await findBase(undefined, true) : null;
-        const base = windowsBase ? null : await findBase(entry.delta);
-        if (windowsBase) {
+        const blockBase = entry.blockmap ? await findBase(undefined, true) : null;
+        const base = blockBase ? null : await findBase(entry.delta);
+        if (blockBase) {
             const output = path.join(saved.folder, entry.file + '.blocks.part');
             emit({ status: 'downloading', mode: 'delta', phase: 'planning', error: '', progress: 0, downloaded: 0, total: 0, reused: 0 });
             try {
-                const oldMap = windowsBase.entry.blockmap, newMap = entry.blockmap;
-                const oldMapFile = path.join(windowsBase.folder, oldMap.file), newMapFile = path.join(saved.folder, newMap.file);
+                const oldMap = blockBase.entry.blockmap, newMap = entry.blockmap;
+                const oldMapFile = path.join(blockBase.folder, oldMap.file), newMapFile = path.join(saved.folder, newMap.file);
                 await downloadBytes(oldMap.url, oldMapFile, oldMap.size, oldMap.sha256, false);
                 await downloadBytes(newMap.url, newMapFile, newMap.size, newMap.sha256, false);
-                await downloadBlocks({ baseFile: windowsBase.file, oldMapFile, newMapFile, base: windowsBase.entry, entry, outputFile: output, fetcher, signal: controller.signal, changed: emit });
+                await downloadBlocks({ baseFile: blockBase.file, oldMapFile, newMapFile, base: blockBase.entry, entry, outputFile: output, fetcher, signal: controller.signal, changed: emit });
                 emit({ phase: 'reconstructing' });
                 await validateFile(output, entry);
                 await fs.rename(output, path.join(saved.folder, entry.file));
@@ -203,6 +235,14 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         }
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json'), saved.text, { mode: 0o600 });
         await fs.writeFile(path.join(saved.folder, 'canvas-latest.json.sig'), saved.signature, { mode: 0o600 });
+        // Keep the verified map beside the installer so the next update works
+        // even when the old release's network resource is unavailable.
+        if (entry.blockmap) {
+            const map = entry.blockmap;
+            try { await downloadBytes(map.url, path.join(saved.folder, map.file), map.size, map.sha256, false); }
+            catch (error) { if (closed) throw error; }
+        }
+        await fs.writeFile(path.join(saved.folder, 'download-info.json'), JSON.stringify({ sha256: entry.sha256, mode: state.mode, total: state.total, reused: state.mode === 'delta' ? entry.size - state.total : 0 }), { mode: 0o600 });
         recovered('download', 'update-package');
         if (state.mode === 'delta') recovered('download', 'update-delta');
         emit({ status: 'ready', downloaded: state.total, progress: 100, phase: '' });

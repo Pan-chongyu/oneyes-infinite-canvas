@@ -18,19 +18,19 @@ export function blockmap(bytes, blockSize = 32) {
     return gzipSync(JSON.stringify({ version: '2', files: [{ name: 'file', offset: 0, sizes: blocks.map(b => b.length), checksums: blocks.map(hash) }] }));
 }
 
-async function fixture(t, { arch = 'x64', scenario = '' } = {}) {
+async function fixture(t, { platform = 'win32', arch = 'x64', format = 'nsis', scenario = '', nextVersion = '1.0.1' } = {}) {
     const directory = await mkdtemp(join(tmpdir(), 'canvas-block-')); t.after(() => rm(directory, { recursive: true, force: true }));
-    const target = { platform: 'win32', arch, format: 'nsis' }, key = `win32-${arch}-nsis`, requests = [], installs = [], states = [];
+    const target = { platform, arch, format }, key = `${platform}-${arch}-${format}`, requests = [], installs = [], states = [];
     const base = Buffer.concat([Buffer.alloc(64, 1), Buffer.alloc(64, 2), Buffer.alloc(64, 3)]);
     const next = Buffer.concat([Buffer.alloc(64, 3), Buffer.alloc(64, 4), Buffer.alloc(64, 1)]);
     const oldMap = blockmap(base), newMap = blockmap(next);
     function release(version, bytes, map) {
-        const file = filename(version, 'win32', arch, 'nsis'), url = `${RELEASE_ROOT}/download/v${version}/${file}`;
+        const file = filename(version, platform, arch, format), url = `${RELEASE_ROOT}/download/v${version}/${file}`;
         const entry = { file, url, size: bytes.length, sha256: hash(bytes), blockmap: { file: file + '.blockmap', url: url + '.blockmap', size: map.length, sha256: hash(map) } };
         const text = JSON.stringify({ schema: 1, version, notes: 'Windows 增量更新', platforms: { [key]: entry } });
         return { entry, text, signature: sign(null, Buffer.from(text), privateKey).toString('base64') };
     }
-    const previous = release('1.0.0', base, oldMap), current = release('1.0.1', next, newMap);
+    const previous = release('1.0.0', base, oldMap), current = release(nextVersion, next, newMap);
     const folder = join(directory, 'ota/base-1.0.0'); await mkdir(folder, { recursive: true });
     await writeFile(join(folder, previous.entry.file), scenario === 'corrupt-base' ? Buffer.alloc(base.length) : base);
     await writeFile(join(folder, 'canvas-latest.json'), previous.text); await writeFile(join(folder, 'canvas-latest.json.sig'), previous.signature);
@@ -53,12 +53,12 @@ async function fixture(t, { arch = 'x64', scenario = '' } = {}) {
         return new Response(scenario === 'corrupt-range' ? Buffer.alloc(end - start + 1) : next.subarray(start, end + 1), { status: 206, headers });
     } };
     const updater = createUpdater(options); t.after(() => updater.close());
-    return { updater, options, directory, requests, installs, states, next, previous, current };
+    return { updater, options, directory, requests, installs, states, next, previous, current, oldMap, base };
 }
 
-test('Windows x64 and ARM64 download changed blocks, copy reordered blocks and verify the signed full installer', async t => {
-    for (const arch of ['x64', 'arm64']) await t.test(arch, async t => {
-        const f = await fixture(t, { arch }); await f.updater.check();
+test('all ten native OTA targets download only changed blocks and verify the signed full package', async t => {
+    for (const platform of ['win32','darwin','linux']) for (const arch of ['x64', 'arm64']) for (const format of {win32:['nsis'],darwin:['zip'],linux:['AppImage','deb','rpm']}[platform]) await t.test(`${platform}-${arch}-${format}`, async t => {
+        const f = await fixture(t, { platform, arch, format }); await f.updater.check();
         assert.equal(f.updater.state().status, 'ready'); assert.equal(f.updater.state().mode, 'delta');
         assert.equal(f.updater.state().total, 64); assert.equal(f.updater.state().reused, 128);
         assert.deepEqual(f.requests.filter(r => r.url === f.current.entry.url).map(r => r.headers.Range), ['bytes=64-127']);
@@ -66,6 +66,43 @@ test('Windows x64 and ARM64 download changed blocks, copy reordered blocks and v
         assert.deepEqual(await readFile(f.installs[0].file), f.next);
         const restarted = createUpdater({ ...f.options, fetcher: async () => { throw Error('offline'); } }); t.after(() => restarted.close());
         await restarted.check(); assert.equal(restarted.state().status, 'ready'); await restarted.apply(); assert.equal(f.installs.length, 2);
+    });
+});
+
+test('cached block maps stay available offline, skipped versions use the installed base, and restart preserves actual download savings', async t => {
+    const f = await fixture(t, {platform:'darwin',format:'zip',scenario:'missing-map',nextVersion:'1.4.9'});
+    await writeFile(join(f.directory,'ota/base-1.0.0',f.previous.entry.blockmap.file),f.oldMap);
+    await f.updater.check();
+    assert.equal(f.updater.state().mode,'delta');
+    assert.ok(!f.requests.some(r=>r.url===f.previous.entry.blockmap.url));
+    f.updater.close();
+    const restarted=createUpdater(f.options);t.after(()=>restarted.close());await restarted.check();
+    assert.equal(restarted.state().status,'ready');assert.equal(restarted.state().mode,'delta');
+    assert.equal(restarted.state().total,64);assert.equal(restarted.state().downloaded,64);assert.equal(restarted.state().reused,128);
+    const upgraded=createUpdater({...f.options,currentVersion:'1.4.9'});t.after(()=>upgraded.close());await upgraded.check();
+    assert.equal(upgraded.state().status,'current');
+    assert.deepEqual(await readFile(join(f.directory,'ota/base-1.4.9',f.current.entry.file)),f.next);
+    assert.ok((await readFile(join(f.directory,'ota/base-1.4.9',f.current.entry.blockmap.file))).length>0);
+    assert.ok(!(await readdir(join(f.directory,'ota'))).includes('base-1.0.0'));
+});
+
+test('manual Windows installation adopts only a matching signed NSIS cache without downloading the old installer', async t => {
+    for(const scenario of ['valid','corrupt-cache','invalid-signature','wrong-architecture'])await t.test(scenario,async t=>{
+        const f=await fixture(t),seed=join(f.directory,'installer.exe');
+        await rm(join(f.directory,'ota/base-1.0.0'),{recursive:true,force:true});
+        await writeFile(seed,scenario==='corrupt-cache'?Buffer.alloc(f.base.length):f.base);
+        const older=JSON.parse(f.previous.text);
+        if(scenario==='wrong-architecture')older.platforms={'win32-arm64-nsis':older.platforms['win32-x64-nsis']};
+        const text=JSON.stringify(older),signature=scenario==='invalid-signature'?'invalid':sign(null,Buffer.from(text),privateKey).toString('base64');
+        const seeded=createUpdater({...f.options,installerCache:seed,fetcher:(url,init)=>{
+            if(url===`${RELEASE_ROOT}/download/v1.0.0/canvas-latest.json`)return new Response(text);
+            if(url===`${RELEASE_ROOT}/download/v1.0.0/canvas-latest.json.sig`)return new Response(signature);
+            assert.notEqual(url,f.previous.entry.url,'bootstrapping must never download an old full package');
+            return f.options.fetcher(url,init);
+        }});t.after(()=>seeded.close());
+        await seeded.check();assert.equal(seeded.state().status,'ready');
+        assert.equal(seeded.state().mode,scenario==='valid'?'delta':'full');
+        if(scenario==='valid')await assert.rejects(readFile(seed));else assert.ok((await readFile(seed)).length);
     });
 });
 

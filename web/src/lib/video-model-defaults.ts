@@ -11,9 +11,9 @@ export function minimumVideoModelDefaults(config: AiConfig, model: string): Vide
     const rank = (value: string) => parseFloat(value) * (/k$/i.test(value) ? 1000 : 1);
     const durations = info?.duration.values?.filter(value => value > 0);
     return {
-        vquality: [...resolutions].sort((a, b) => rank(a) - rank(b))[0],
-        videoSeconds: String(durations?.length ? Math.min(...durations) : Math.max(1, info?.duration.min ?? VIDEO_SECONDS_MIN)),
-        size: !info || info.ratios.includes('auto') ? 'auto' : info.ratios.includes('16:9') ? '16:9' : info.ratios[0],
+        vquality: info?.parameters ? info.defaultResolution : [...resolutions].sort((a, b) => rank(a) - rank(b))[0],
+        videoSeconds: String(info?.parameters ? info.defaultSeconds : durations?.length ? Math.min(...durations) : Math.max(1, info?.duration.min ?? VIDEO_SECONDS_MIN)),
+        size: info?.parameters?.default_aspect_ratio || (!info || info.ratios.includes('auto') ? 'auto' : info.ratios.includes('16:9') ? '16:9' : info.ratios[0]),
         videoMode: !info || info.modes.includes('frames') ? 'frames' : 'reference',
         videoGenerateAudio: info?.audio === 'required' ? 'true' : 'false',
         videoWatermark: 'false',

@@ -231,6 +231,25 @@ app.whenReady().then(async () => {
         await js('modelTest.expire();modelTest.sync()'); await wait('!modelTest.state().syncing');
         console.log('NATIVE_MODEL_INFORMATION_26_CANONICAL_TWO_LINES_THEMES_TYPEAHEAD_EXACT_OLD_IDS_AND_TEXT_IMAGE_VISIBILITY_OK');
         const beforeStatus = await js('modelTest.state().config'), beforeStatusNames = names;
+        const dynamic = require('./video-catalog-dynamic.json');
+        feedOverride = { ...dynamic, generated_at: new Date().toISOString() };
+        names = dynamic.data.flatMap(model => model.request_ids);
+        await js('modelTest.expire();modelTest.sync();modelTest.feedSync()'); await wait('!modelTest.state().syncing');
+        const sp = 'oneyes-minimax::SP-特价 [1080p 5-30s ¥2.178/条]';
+        await js(`modelTest.selectVideo(${JSON.stringify(sp)})`);
+        const dynamicConfig = await js('modelTest.state().config');
+        assert.deepEqual([dynamicConfig.vquality, dynamicConfig.videoSeconds, dynamicConfig.videoMode], ['1080', '30', 'reference']);
+        await js('document.querySelector("[data-testid=video-picker] [role=combobox]").focus()');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+        await wait('Boolean(document.querySelector("[role=listbox]"))');
+        const dynamicRows = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.getAttribute("data-model-id"))');
+        assert.ok(dynamicRows.includes(sp));
+        assert.ok(dynamicRows.some(id => id?.includes('future-fixture-v3')));
+        assert.ok(dynamicRows.every(id => !/SD-特价|fullblood-line[23]|dedicated-line1/.test(id)));
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+        await wait('!document.querySelector("[role=listbox]")');
+        await js(`modelTest.replace(${JSON.stringify(beforeStatus)})`);
+        console.log('NATIVE_DYNAMIC_SP_REVIEWED_DEFAULTS_FUTURE_AUTHORIZED_MODEL_AND_HIDDEN_RETIRED_PAUSED_OK');
         const live = require('./video-catalog-public.json');
         feedOverride = { ...live, generated_at: new Date().toISOString() };
         names = live.data.flatMap(model => model.request_ids);
@@ -241,7 +260,7 @@ app.whenReady().then(async () => {
             await js(`setRecoveryTheme(${JSON.stringify(theme)});document.querySelector('[data-testid=video-picker] [role=combobox]').focus()`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
             await wait('Boolean(document.querySelector("[role=listbox]"))');
-            assert.ok(await js('Array.from(document.querySelectorAll("[role=option]")).filter(option=>option.querySelector("[data-video-model-status=retired]")).every(option=>option.hasAttribute("data-disabled"))'));
+            assert.equal(await js('document.querySelectorAll("[role=option] [data-video-model-status=retired]").length'), 0);
             if (!process.env.CI) await writeFile(`.secrets/qa-model-live-${theme}.png`, (await win.webContents.capturePage()).toPNG());
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
             await wait('!document.querySelector("[role=listbox]")');
@@ -259,13 +278,10 @@ app.whenReady().then(async () => {
         for (const theme of ['light', 'dark']) {
             await js(`setRecoveryTheme(${JSON.stringify(theme)});document.querySelector('[data-testid=video-picker] [role=combobox]').focus()`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-            await wait('document.querySelectorAll("[role=option]").length >= 4');
+            await wait('document.querySelectorAll("[role=option]").length >= 1');
             const states = (await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({id:option.getAttribute("data-model-id"),disabled:option.hasAttribute("data-disabled"),text:option.textContent}))')).filter(item => stateNames.some(id => item.id === 'default::' + id));
-            assert.equal(states.length, 4);
-            assert.equal(states.filter(item => item.disabled).length, 3);
-            assert.match(states.find(item => item.id === 'default::wan3.0-video').text, /已下架/);
-            assert.match(states.find(item => item.id === 'default::veo-3.1-fast').text, /暂不可用/);
-            assert.match(states.find(item => item.id === 'default::doubao-seedance-2.5').text, /暂停新建/);
+            assert.equal(states.length, 1, 'retired and admin-paused entries are absent from new choices');
+            assert.equal(states.filter(item => item.disabled).length, 0);
             assert.match(states.find(item => !item.disabled).text, /可用.*价格待核实.*参数待更新/);
             assert.doesNotMatch(states.map(item => item.text).join(''), /88api|智赢|https?:\/\//i);
             if (!process.env.CI) await writeFile(`.secrets/qa-model-status-${theme}.png`, (await win.webContents.capturePage()).toPNG());
@@ -313,7 +329,7 @@ app.whenReady().then(async () => {
         await wait('Boolean(document.querySelector("[role=listbox]"))');
         const offered = await js('Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).map(option=>option.getAttribute("data-model-id"))');
         assert.ok(offered.every(id => !legacyVideos.some(name => id === 'default::' + name || id === 'oneyes-minimax::' + name)));
-        assert.ok(await js('Array.from(document.querySelectorAll("[role=option][data-disabled]")).some(option=>option.getAttribute("data-model-id")==="oneyes-minimax::seedance-2.0 [720p ¥1/秒]" && option.querySelector("[data-video-model-status=unknown]"))'), 'missing key rights are retained disabled without claiming upstream retirement');
+        assert.equal(await js('Array.from(document.querySelectorAll("[role=option]")).some(option=>option.getAttribute("data-model-id")==="oneyes-minimax::seedance-2.0 [720p ¥1/秒]")'), false, 'missing key rights remain in saved config, not in new choices');
         assert.ok(offered.includes('oneyes-minimax::' + activeVideos[0]));
         await js(`Array.from(document.querySelectorAll("[role=option]")).find(option=>option.getAttribute("data-model-id")===${JSON.stringify('oneyes-minimax::' + activeVideos[0])}).focus()`);
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
@@ -325,6 +341,10 @@ app.whenReady().then(async () => {
         await wait('!modelTest.state().syncing');
         console.log('NATIVE_MISSING_VIDEO_IDS_RETAINED_DISABLED_NO_FALSE_RETIREMENT_OR_TASK_REPLAY_OK');
         assert.equal(await js(`(()=>{const picker=document.querySelector('[data-testid=bare-video-picker] [role=combobox]'),name=picker.querySelector('[data-model-name]').getBoundingClientRect(),status=picker.querySelector('[data-video-model-status]').getBoundingClientRect(),bounds=picker.getBoundingClientRect();return name.bottom<=status.top&&status.bottom<=bounds.bottom&&!picker.querySelector('[data-model-information]')})()`), true, 'a video model without specifications must still fit its status below the name');
+        // Missing rights are now hidden, so explicitly authorize a long list
+        // for the following real scrolling/keyboard layout checks.
+        names = displayModels.map(model => model.request_id);
+        await js('modelTest.expire();modelTest.sync()'); await wait('!modelTest.state().syncing');
         await js('showModelCanvas()');
         const compactConfig = await js('modelTest.state().config');
         for (const [scale, dark, mode, model] of [[1, true, 'video', 'oneyes-minimax::grok-imagine-video'], [0.65, false, 'video', 'oneyes-minimax::doubao-seedance-2.0-fast-discount [720p 4-15s ¥1.078/条]'], [1.5, true, 'image', compactConfig.imageModel], [1, false, 'text', compactConfig.textModel], [1, true, 'audio', compactConfig.audioModel]]) {
@@ -463,6 +483,7 @@ app.whenReady().then(async () => {
         assert.equal(await js('document.querySelector("[data-node-toolbar] button[aria-label=\\"重试生成\\"]")?.disabled ?? true'), true);
         console.log('NATIVE_RETIRED_CANVAS_BADGE_RECEIPT_RETRY_ALLOWED_NEW_GENERATION_DISABLED_OK');
         await js('modelTest.feedReset();modelTest.feedSync()');
+        await js(`modelTest.selectVideo(${JSON.stringify('oneyes-minimax::' + displayModels.find(model => model.id === 'sd-2.5-fullblood').request_id)})`);
         await js('showMentionPreferences()');
         await wait('window.mentionTest && document.getElementById("auto-refresh-mention-images")');
         assert.equal(await js('modelTest.state().config.autoRefreshMentionImages'), false, 'existing behavior remains the default');
@@ -511,7 +532,7 @@ app.whenReady().then(async () => {
         await wait('Array.from(document.querySelectorAll("[contenteditable=true] img")).every(image=>image.src===mentionTest.state().image)');
         console.log('NATIVE_MENTION_IMAGE_PREFERENCE_RESTORE_REFRESH_PREVIEW_CARET_AND_EXISTING_BEHAVIOR_OK');
         const preferredModel = await js('modelTest.state().config.videoModel');
-        const preferenceKey = 'oneyes-minimax::sd-2.5-fullblood-line2';
+        const preferenceKey = 'oneyes-minimax::sd-2.5-fullblood';
         await wait('Boolean(document.querySelector("[data-testid=video-model-defaults] input[type=number]"))');
         const selectionBeforePreference = await js('({model:modelTest.state().config.videoModel,seconds:modelTest.state().config.videoSeconds})');
         await js('(()=>{const input=document.querySelector("[data-testid=video-model-defaults] input[type=number]");input.focus();input.select()})()');
@@ -525,7 +546,7 @@ app.whenReady().then(async () => {
         assert.equal((await js(`modelTest.state().config.videoModelDefaults[${JSON.stringify(preferenceKey)}]`)).videoSeconds, '11');
         await js(`modelTest.selectVideo('oneyes-minimax::grok-imagine-video');modelTest.selectVideo(${JSON.stringify(preferredModel)})`);
         assert.equal(await js('modelTest.state().config.videoSeconds'), '11', 'selection must apply the saved model preference');
-        await js('Array.from(document.querySelectorAll("[data-testid=video-model-defaults] button")).find(button=>button.textContent.includes("恢复最低配置")).click()');
+        await js('Array.from(document.querySelectorAll("[data-testid=video-model-defaults] button")).find(button=>button.textContent.includes("恢复默认配置")).click()');
         await wait(`!modelTest.state().config.videoModelDefaults[${JSON.stringify(preferenceKey)}]`);
         assert.equal(await js('modelTest.state().config.videoSeconds'), '11', 'reset preference must not modify an existing selection');
         await js(`modelTest.selectVideo('oneyes-minimax::grok-imagine-video');modelTest.selectVideo(${JSON.stringify(preferredModel)})`);

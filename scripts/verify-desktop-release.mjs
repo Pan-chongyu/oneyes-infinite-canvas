@@ -38,7 +38,7 @@ const blockSums=[];
 for(const {platform,arch,format} of selectedTargets){
   const file=filename(version,platform,arch,format),{size}=await stat(join(root,file));
   platforms[platformKey({platform,arch,format})]={file,url:`${RELEASE_ROOT}/download/v${version}/${file}`,size,sha256:hashes.get(file)};
-  if(platform==='win32'){
+  {
     const mapFile=file+'.blockmap',mapPath=join(root,mapFile);
     await readBlockmap(mapPath,size);
     const sha256=await fileHash(mapPath),mapSize=(await stat(mapPath)).size;
@@ -49,9 +49,21 @@ for(const {platform,arch,format} of selectedTargets){
 const changelog=await readFile('CHANGELOG.md','utf8'),section=changelog.split(`## v${version}`)[1]?.split('\n## ')[0]?.trim()||'';
 const deltas={},deltaSums=[];
 const baseRoot=process.env.CANVAS_OTA_BASE_DIR;
+const blockReports=process.env.CANVAS_OTA_BLOCKMAP_REPORTS==='1';
 if((deltaTarget||process.env.CANVAS_OTA_PREBUILT_DELTAS)&&!baseRoot)throw new Error('Pinned OTA base is required');
 const deltaTimeoutMs=Number.isSafeInteger(Number(process.env.CANVAS_OTA_DELTA_TIMEOUT_MS))&&Number(process.env.CANVAS_OTA_DELTA_TIMEOUT_MS)>0?Number(process.env.CANVAS_OTA_DELTA_TIMEOUT_MS):120000;
-if(baseRoot){
+if(blockReports){
+  if(!baseRoot)throw new Error('Pinned OTA base manifest is required');
+  const [baseText,baseSignature]=await Promise.all(['canvas-latest.json','canvas-latest.json.sig'].map(name=>readFile(join(baseRoot,name),'utf8')));
+  for(const target of selectedTargets){
+    const key=platformKey(target),entry=platforms[key],base=readManifest(baseText,baseSignature,target,publicKey);
+    if(!require('semver').lt(base.version,version))throw new Error('Block map base must be older than release');
+    const report=JSON.parse(await readFile(join(root,`OTA-BLOCKS-${key}.json`),'utf8'));
+    if(report.version!==version||report.target!==key||report.from!==base.version||report.baseSha256!==base.sha256||report.sha256!==entry.sha256||report.size!==entry.size||report.blockmap?.sha256!==entry.blockmap.sha256||report.blockmap?.size!==entry.blockmap.size||report.blockmap?.file!==entry.blockmap.file||!Number.isSafeInteger(report.downloadBytes)||report.downloadBytes<0||!Number.isSafeInteger(report.reusedBytes)||report.reusedBytes<0||report.downloadBytes+report.reusedBytes!==entry.size)throw new Error(`Invalid block reconstruction report for ${key}`);
+    console.log(`${key}: verified changed bytes ${report.downloadBytes} / full ${entry.size}; reused ${report.reusedBytes}`);
+  }
+}
+if(baseRoot&&!blockReports){
   const baseText=await readFile(join(baseRoot,'canvas-latest.json'),'utf8');
   const baseSignature=await readFile(join(baseRoot,'canvas-latest.json.sig'),'utf8');
   for(const {platform,arch,format} of selectedTargets){

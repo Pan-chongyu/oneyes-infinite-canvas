@@ -58,7 +58,7 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
     if (error) throw Error(error);
     for (const [kind, files, label] of [['image', media.images, '图片'], ['video', media.videos, '视频'], ['audio', media.audioFiles || media.audios, '音频']] as const) {
         const limit = videoReferenceFileLimit(info, kind);
-        for (const [index, file] of files.entries()) if (file instanceof File && limit && file.size > limit) throw Error(`第 ${index + 1} 个参考${label}超过该模型单文件限制 ${limit} 字节；请更换素材或使用受支持的预上传入口，未提交生成，不会降低画质。`);
+        for (const [index, file] of files.entries()) if (file instanceof File && limit !== undefined && file.size > limit) throw Error(`第 ${index + 1} 个参考${label}超过该模型单文件限制 ${limit} 字节；请更换素材或使用受支持的预上传入口，未提交生成，不会降低画质。`);
     }
     const resolution = parseVideoResolution(config.vquality).toLowerCase();
     const quality = /k$/.test(resolution) ? resolution : `${resolution}p`;
@@ -70,6 +70,11 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
     if (info.provider !== 'zhiying' && mode === 'frames' && (media.videos.length || media.audios.length)) throw Error('首尾帧不能与参考视频或音频混用，请主动切换参考模式或调整素材。');
     if (info.promptMax && Array.from(prompt).length > info.promptMax) throw Error(`该模型提示词最多 ${info.promptMax} 字符，请缩短后提交。`);
     if (info.provider === "zhiying") {
+        if (!media.images.length && !media.videos.length && !media.audios.length) {
+            if (media.imageDataUrls.length && !info.parameters?.reference_image_input_types?.includes('https_url')) throw Error('该模型的参考图片须使用本地文件，请重新选择素材。');
+            return { body: { model, prompt, resolution: quality, duration, aspect_ratio: ratio,
+                ...(media.imageDataUrls.length ? { reference_images: media.imageDataUrls.map(url => videoBridgeMediaUrl(url, '图片')) } : {}) }, contentType: 'application/json' };
+        }
         const body = new FormData();
         Object.entries({ model, prompt, resolution: quality, duration: String(duration), aspect_ratio: ratio }).forEach(([key, value]) => body.append(key, value));
         for (const [role, files] of [["reference_images", media.images], ["reference_videos", media.videos], ["reference_audios", media.audios]] as const) {

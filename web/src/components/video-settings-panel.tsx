@@ -6,7 +6,8 @@ import i18n from "@/i18n";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseAspectRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
-import { getVideoModelInfo, videoModelConfigError } from "@/lib/video-model-info";
+import { getVideoModelInfo, videoModelConfigError, videoModelDuration } from "@/lib/video-model-info";
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 import { type AiConfig } from "@/stores/use-config-store";
 import { emptyVideoReferences, isMiniMaxVideoModel, isSupportedMiniMaxVideoResolution, usesGrokVideoReferences, videoResolutionOptionsForModel, type VideoReferenceSummary } from "@/lib/video-capabilities";
 const videoModeOptions = [
@@ -32,6 +33,7 @@ type VideoSettingsPanelProps = {
 
 export function VideoSettingsPanel({ config, model, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, showModelDetails = true, validateReferences = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
+    useVideoCatalogStore(state => state.catalog);
     const selectedModel = model || config.model || config.videoModel;
     const info = getVideoModelInfo(config, selectedModel);
     const controlsInfo = info;
@@ -46,8 +48,9 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
     const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
     const ratios = controlsInfo ? controlsInfo.ratios.map((value) => ({ value, ...(parseAspectRatio(value) || { width: 0, height: 0 }) })) : videoRatioOptions;
     const modes = controlsInfo ? videoModeOptions.filter((item) => controlsInfo.modes.includes(item.value as "frames" | "reference")) : videoModeOptions;
-    const duration = info?.duration || videoSecondsRange;
-    const discreteSeconds = controlsInfo?.duration.values;
+    const duration = info ? videoModelDuration(info, resolution) : videoSecondsRange;
+    const durationValues = info ? videoModelDuration(info, resolution).values : undefined;
+    const discreteSeconds = durationValues?.some((value, index) => index > 0 && value !== durationValues[index - 1] + 1) ? durationValues : undefined;
     const secondsValid = Number.isInteger(seconds) && seconds >= duration.min && seconds <= duration.max && (!discreteSeconds || discreteSeconds.includes(seconds));
     const applySize = (nextResolution: string, ratio: string) => {
         if (referenceLimited && parseVideoResolution(nextResolution) === "1080") return;
@@ -58,6 +61,8 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
         if (referenceLimited && parseVideoResolution(nextResolution) === "1080") return;
         if (selectedRatio === "auto") onConfigChange("vquality", nextResolution);
         else applySize(nextResolution, selectedRatio);
+        const nextDuration = info && videoModelDuration(info, nextResolution);
+        if (info?.parameters && nextDuration && (!nextDuration.values?.includes(seconds))) onConfigChange('videoSeconds', String(nextDuration.values?.includes(info.defaultSeconds) ? info.defaultSeconds : nextDuration.min));
     };
 
     return (
@@ -70,7 +75,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
                         <div style={{ color: theme.node.muted }}>{info.summary}</div>
                     </div>
                 ) : null}
-                {info && configError ? <p role="alert" className="border-l-2 pl-3 text-xs font-medium leading-5" style={{ color: theme.node.text, borderColor: theme.node.text }}>{configError} 当前设置已保留，请主动选择支持的参数。</p> : null}
+                {configError ? <p role="alert" className="border-l-2 pl-3 text-xs font-medium leading-5" style={{ color: theme.node.text, borderColor: theme.node.text }}>{configError} 当前设置已保留，请主动选择支持的参数。</p> : null}
                 {info?.id.startsWith('grok-imagine-video') ? <p role="status" className="text-xs leading-5" style={{ color: theme.node.muted }}>支持文字和参考图片生成，不支持参考视频、视频编辑或上传参考音频。</p> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">

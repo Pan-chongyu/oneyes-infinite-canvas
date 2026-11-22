@@ -27,5 +27,11 @@ for(const platform of ['win32','darwin','linux'])for(const arch of ['x64','arm64
     let bytes=0;
     await pipeline(Readable.from((async function*(){for await(const chunk of result.body){bytes+=chunk.length;if(bytes>base.size)throw new Error('Invalid OTA base size');yield chunk;}})()),createWriteStream(file,{flags:'wx'}));
     await validateFile(file,base);console.log(`Verified previous ${base.version} ${platform}/${arch}/${format}`);
+    if(base.blockmap){
+        const map=base.blockmap,mapFile=join(root,map.file),result=await response(map.url);
+        let bytes=0;
+        await pipeline(Readable.from((async function*(){for await(const chunk of result.body){bytes+=chunk.length;if(bytes>map.size)throw new Error('Invalid OTA base block map size');yield chunk;}})()),createWriteStream(mapFile,{flags:'wx'}));
+        await validateFile(mapFile,map);
+    }
 }
 if(!matched)throw new Error('Unknown OTA base target');

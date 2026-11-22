@@ -54,6 +54,33 @@ test('browser bridge diagnostics keep the real task ID, capture three stages and
     } finally { axios.defaults.adapter = original; }
 });
 
+test('dynamic SP posts one reviewed JSON request and a cold recovered retired task only performs original GETs', async () => {
+    const { default: snapshot } = await import('../../../../test/fixtures/video-catalog-dynamic.json');
+    const { parseVideoCatalog } = await import('../../../../desktop/video-catalog.mjs');
+    const { videoModelDefaults } = await import('@/lib/video-model-defaults');
+    const catalog = parseVideoCatalog({ ...snapshot, generated_at: new Date().toISOString() });
+    useVideoCatalogStore.setState({ catalog });
+    const id = catalog.data.find(model => model.id === 'SP-特价')!.request_ids[1];
+    window.oneYesDesktop!.models.list = async () => ({ data: [id] });
+    const selected = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax', models: [{ name: id, capability: 'video' as const }] }], model: 'oneyes-minimax::' + id };
+    Object.assign(selected, videoModelDefaults(selected, selected.model));
+    const requests: AxiosRequestConfig[] = [];
+    try {
+        adapter(request => { requests.push(request); return { data: request.method === 'post' ? { id: 'original-SP-task' } : request.url?.endsWith('/content') ? new Blob(['video'], { type: 'video/mp4' }) : { status: 'completed' } }; });
+        const task = await createVideoGenerationTask(selected, 'offline fixture');
+        const submitted = JSON.parse(await (requests[0].data as Blob).text());
+        assert.deepEqual(submitted, { model: id, prompt: 'offline fixture', resolution: '1080p', duration: 30, aspect_ratio: '16:9' });
+        assert.equal(requests[0].url, 'https://oneyes.ai/v1/videos');
+        useVideoCatalogStore.setState({ catalog: undefined });
+        window.oneYesDesktop!.models.list = async () => { throw Error('Recovery cannot rediscover or create'); };
+        const cold = JSON.parse(JSON.stringify({ ...selected, channels: selected.channels.map(channel => ({ ...channel, models: [] })) }));
+        assert.equal((await pollVideoGenerationTask(cold, JSON.parse(JSON.stringify(task)))).status, 'completed');
+        assert.deepEqual(requests.map(request => request.method), ['post', 'get', 'get']);
+        assert.match(requests[1].url!, /original-SP-task$/);
+        assert.match(requests[2].url!, /original-SP-task\/content$/);
+    } finally { axios.defaults.adapter = original; }
+});
+
 test('explicit retirement, outage or managed pause stops paid creation while the original receipt still recovers', async () => {
     const { parseVideoCatalog } = await import('../../../../desktop/video-catalog.mjs');
     let posts = 0, queries = 0, discoveries = 0;

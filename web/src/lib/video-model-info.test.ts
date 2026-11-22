@@ -8,12 +8,54 @@ import type { AiConfig } from "@/stores/use-config-store";
 import { minimumVideoModelDefaults, videoModelDefaults, videoModelDefaultsKey, videoModelNodePatch } from './video-model-defaults';
 import { parseVideoCatalog } from '../../../desktop/video-catalog.mjs';
 import { videoModelMetadata, videoModelState } from './video-model-status';
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
+import dynamicSnapshot from '../../../test/fixtures/video-catalog-dynamic.json';
+import { videoModelDuration } from './video-model-info';
+import { buildVideoBridgeRequest } from '@/services/api/video-bridge-request';
 
 const displayCatalog = displaySnapshot.data;
 const config = {
     baseUrl: "https://api.oneyes.ai", channels: [{ id: "oneyes-minimax", name: "Video", baseUrl: "https://api.oneyes.ai", models: [] }],
     model: "oneyes-minimax::wan3.0-video", videoModel: "oneyes-minimax::wan3.0-video", vquality: "720", size: "16:9", videoSeconds: "5", videoMode: "reference", videoGenerateAudio: "true",
 } as unknown as AiConfig;
+
+test('dynamic SP and future models use exact authorized aliases, reviewed parameters, JSON and binary requests without generic fields', async () => {
+    const catalog = parseVideoCatalog({ ...dynamicSnapshot, generated_at: new Date().toISOString() });
+    const names = catalog.data.flatMap(model => model.request_ids);
+    const selected = { ...config, channels: [{ ...config.channels[0], models: names.map(name => ({ name, capability: 'video' as const })) }] };
+    const before = JSON.stringify(selected);
+    useVideoCatalogStore.setState({ catalog });
+    try {
+        const options = modelPickerOptions(selected, names.map(name => 'oneyes-minimax::' + name));
+        assert.deepEqual(options.map(option => option.name), ['SP-特价', 'future-fixture-v3']);
+        const sp = options[0].value, info = getVideoModelInfo(selected, sp)!;
+        assert.equal(info.id, 'SP-特价');
+        assert.equal(getVideoModelInfo({ ...selected, channels: [{ ...selected.channels[0], id: 'default' }] }, sp.replace('oneyes-minimax::', 'default::'))?.id, 'SP-特价', 'manual OneYes keys use the same reviewed dynamic protocol');
+        const defaults = videoModelDefaults(selected, sp);
+        assert.deepEqual([defaults.vquality, defaults.videoSeconds, defaults.videoMode], ['1080', '30', 'reference']);
+        assert.equal(videoModelConfigError({ ...selected, ...defaults, model: sp }, sp, { imageCount: 9, audioCount: 3, videoCount: 0 }), undefined);
+        for (const invalid of [{ imageCount: 10, audioCount: 0, videoCount: 0 }, { imageCount: 1, audioCount: 4, videoCount: 0 }, { imageCount: 1, audioCount: 0, videoCount: 1 }]) assert.match(videoModelConfigError({ ...selected, ...defaults, model: sp }, sp, invalid)!, /最多支持/);
+        const media = { images: [], imageDataUrls: [], videos: [], audios: [] };
+        const json = buildVideoBridgeRequest(info, defaults, sp.split('::')[1], '离线验证', media);
+        assert.deepEqual(json.body, { model: sp.split('::')[1], prompt: '离线验证', resolution: '1080p', duration: 30, aspect_ratio: '16:9' });
+        const image = new File([Uint8Array.of(1, 2, 3)], '原图.webp', { type: 'image/webp' });
+        const audio = new File([Uint8Array.of(4, 5)], '音频.mp3', { type: 'audio/mpeg' });
+        const multipart = buildVideoBridgeRequest(info, defaults, sp.split('::')[1], '离线验证', { ...media, images: [image], audios: [audio] }).body as FormData;
+        assert.deepEqual([...multipart.keys()], ['model', 'prompt', 'resolution', 'duration', 'aspect_ratio', 'reference_images', 'reference_audios']);
+        assert.deepEqual(await (multipart.get('reference_images') as File).arrayBuffer(), await image.arrayBuffer());
+        assert.doesNotMatch(JSON.stringify([...multipart.keys()]), /"(?:mode|first_frame|size)"/);
+        const future = getVideoModelInfo(selected, options[1].value)!;
+        assert.deepEqual(videoModelDuration(future, '1080').values, [10, 12]);
+        assert.match(videoModelConfigError({ ...selected, ...videoModelDefaults(selected, options[1].value), model: options[1].value, vquality: '1080' })!, /10 \/ 12/);
+        assert.deepEqual(videoModelDefaults(selected, options[1].value).size, '9:16');
+        const onlyBare = modelPickerOptions(selected, ['oneyes-minimax::SP-特价']);
+        assert.equal(onlyBare[0].value, 'oneyes-minimax::SP-特价', 'feed never grants a recommended alias not returned by this Key');
+        for (const id of catalog.data.filter(model => model.new_tasks_enabled === false || model.status === 'retired').flatMap(model => model.request_ids)) assert.equal(videoModelMetadata(selected, 'oneyes-minimax::' + id, catalog)?.request_ids.includes(id), true, 'hidden histories still resolve exactly');
+        assert.equal(getVideoModelInfo(selected, 'oneyes-minimax::SP-特价 [1080p 5-30s ¥999/条]'), undefined);
+        assert.match(videoModelConfigError(selected, 'oneyes-minimax::not-reviewed')!, /尚未完成适配/);
+        assert.equal(JSON.stringify(selected), before);
+    } finally { useVideoCatalogStore.setState({ catalog: undefined }); }
+});
 
 test('every audited video model starts with its lowest supported resolution and shortest explicit duration', () => {
     for (const info of videoModelCatalog) {
@@ -37,8 +79,10 @@ test('dynamic state decorates only exact authorized IDs, preserves old aliases a
     const old = 'veo-3.1-fast [720p 8s ¥0.165/秒]', current = 'veo-3.1-fast [720p-4k 4/6/8s ¥0.165/秒起]';
     const input = { schema_version: 1, generated_at: '2026-11-18T00:00:00Z', check: { stale: false }, data: [{ id: 'veo-3.1-fast', model_name: 'veo-3.1-fast', model_info: '最新价格参数 ￥0.165/秒起', request_ids: ['veo-3.1-fast', old, current], recommended_request_id: current, status: 'retired', new_tasks_enabled: false, stale: false, price_stale: true, parameters_stale: true }] };
     const catalog = parseVideoCatalog(input), options = ['oneyes-minimax::' + old];
-    assert.equal(modelPickerOptions(config, options, options[0], catalog)[0].value, options[0], 'public recommendations cannot add an unreturned request ID');
-    assert.equal(modelPickerOptions(config, options, options[0], catalog)[0].information, '最新价格参数 ￥0.165/秒起');
+    assert.deepEqual(modelPickerOptions(config, options, options[0], catalog), [], 'retired selections remain stored but disappear from new menus');
+    const active = parseVideoCatalog({ ...input, data: [{ ...input.data[0], status: 'active', new_tasks_enabled: true }] });
+    assert.equal(modelPickerOptions(config, options, options[0], active)[0].value, options[0], 'public recommendations cannot add an unreturned request ID');
+    assert.equal(modelPickerOptions(config, options, options[0], active)[0].information, '最新价格参数 ￥0.165/秒起');
     assert.equal(videoModelState(config, options[0], catalog).status, 'retired');
     assert.equal(videoModelState(config, options[0], catalog).disabled, true);
     assert.equal(videoModelState(config, options[0], catalog).priceStale, true);

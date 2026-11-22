@@ -5,8 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {generateKeyPairSync,verify,sign,createHash} from 'node:crypto';
-import {gzipSync} from 'node:zlib';
 import {createRequire} from 'node:module';
+import {prepareBlockmaps} from '../scripts/prepare-ota-blockmaps.mjs';
 const require=createRequire(import.meta.url),{filename,platformKey,RELEASE_ROOT,readManifest}=require('../desktop/update-policy.cjs');
 test('release requires all twelve native installers and hashes RPM architecture aliases',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'canvas-release-'));
@@ -18,8 +18,8 @@ test('release requires all twelve native installers and hashes RPM architecture 
     for(const suffix of ['Windows-x64-Setup.exe','Windows-arm64-Setup.exe','macOS-x64.dmg','macOS-x64.zip','macOS-arm64.dmg','macOS-arm64.zip','Linux-x86_64.AppImage','Linux-amd64.deb','Linux-x86_64.rpm','Linux-arm64.AppImage','Linux-arm64.deb','Linux-aarch64.rpm']) {
       const name=`OneYes-Canvas-${version}-${suffix}`;
       await writeFile(join(dir,name),currentPayload);files.push(name);
-      if(name.endsWith('.exe'))await writeFile(join(dir,name+'.blockmap'),gzipSync(JSON.stringify({version:'2',files:[{name:'file',offset:0,sizes:[currentPayload.length],checksums:[createHash('sha256').update(currentPayload).digest('hex')]}]})));
     }
+    await prepareBlockmaps(dir);
     const keys=generateKeyPairSync('ed25519'),publicKey=keys.publicKey.export({format:'pem',type:'spki'}),privateKey=keys.privateKey.export({format:'pem',type:'pkcs8'});
     const run=()=>spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8',env:{...process.env,CANVAS_OTA_PRIVATE_KEY:privateKey,CANVAS_OTA_TEST_PUBLIC_KEY:publicKey}});
     const result=run();assert.equal(result.status,0,result.stderr);
@@ -29,7 +29,11 @@ test('release requires all twelve native installers and hashes RPM architecture 
     assert.ok(verify(null,Buffer.from(text),publicKey,Buffer.from(signature.trim(),'base64')));
     assert.equal(Object.keys(JSON.parse(text).platforms).length,10);
     assert.equal(JSON.parse(text).platforms['win32-x64-nsis'].blockmap.file,filename(version,'win32','x64','nsis')+'.blockmap');
-    assert.equal((await readFile(join(dir,'SHA256SUMS-blockmaps.txt'),'utf8')).trim().split('\n').length,2);
+    assert.equal((await readFile(join(dir,'SHA256SUMS-blockmaps.txt'),'utf8')).trim().split('\n').length,10);
+    for(const [key,entry] of Object.entries(JSON.parse(text).platforms)){
+      const [platform,arch,format]=key.split('-');
+      assert.equal(readManifest(text,signature,{platform,arch,format},publicKey).blockmap.file,entry.file+'.blockmap');
+    }
     assert.ok(JSON.parse(text).platforms['linux-arm64-rpm'].file.endsWith('Linux-aarch64.rpm'));
     const baseDir=await mkdtemp(join(tmpdir(),'canvas-release-base-'));
     try {
@@ -42,6 +46,19 @@ test('release requires all twelve native installers and hashes RPM architecture 
       const baseText=JSON.stringify({schema:1,version:previous,notes:'base',platforms:basePlatforms});
       await writeFile(join(baseDir,'canvas-latest.json'),baseText);
       await writeFile(join(baseDir,'canvas-latest.json.sig'),sign(null,Buffer.from(baseText),privateKey).toString('base64'));
+      const reportsEnv={...process.env,CANVAS_OTA_PRIVATE_KEY:privateKey,CANVAS_OTA_TEST_PUBLIC_KEY:publicKey,CANVAS_OTA_BASE_DIR:baseDir,CANVAS_OTA_BLOCKMAP_REPORTS:'1'};
+      assert.notEqual(spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8',env:reportsEnv}).status,0,'a missing reconstruction report must block publishing');
+      for(const key of Object.keys(basePlatforms)){
+        const check=spawnSync(process.execPath,['scripts/verify-block-update.mjs',key,dir,baseDir],{encoding:'utf8',env:reportsEnv});
+        assert.equal(check.status,0,check.stderr);
+        const report=JSON.parse(await readFile(join(dir,`OTA-BLOCKS-${key}.json`),'utf8'));
+        assert.ok(report.reusedBytes>0);assert.ok(report.downloadBytes<report.size);
+      }
+      const reportsRun=()=>spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8',env:reportsEnv});
+      assert.equal(reportsRun().status,0,'every report must be checked without downloading bases again');
+      const reportPath=join(dir,'OTA-BLOCKS-linux-arm64-rpm.json'),reportText=await readFile(reportPath,'utf8');
+      await writeFile(reportPath,reportText.replace(/"sha256": "[a-f0-9]+"/,`"sha256": "${'0'.repeat(64)}"`));
+      assert.notEqual(reportsRun().status,0,'a report for different bytes must block signing');await writeFile(reportPath,reportText);
       const runDelta=()=>spawnSync(process.execPath,['scripts/verify-desktop-release.mjs',dir],{encoding:'utf8',env:{...process.env,CANVAS_OTA_PRIVATE_KEY:privateKey,CANVAS_OTA_TEST_PUBLIC_KEY:publicKey,CANVAS_OTA_BASE_DIR:baseDir,CANVAS_OTA_BSDIFF:''}});
       const deltaRun=runDelta();assert.equal(deltaRun.status,0,deltaRun.stderr);
       const deltaText=await readFile(join(dir,'canvas-latest.json'),'utf8'),deltaSignature=await readFile(join(dir,'canvas-latest.json.sig'),'utf8');
@@ -87,13 +104,18 @@ test('parallel release covers every OTA target and publishes only after all buil
   const {parse}=require('../canvas-agent/node_modules/yaml');
   const workflow=parse(await readFile('.github/workflows/desktop-release.yml','utf8'));
   for(const job of ['ota-base','delta','publish']) assert.equal(workflow.jobs[job]['runs-on'],'ubuntu-24.04');
-  for(const job of ['build','delta']) {
+  for(const job of ['build']) {
     const prepare=workflow.jobs[job].steps.findIndex(step=>step.uses==='./.github/actions/linux-network');
     assert.ok(prepare>=0&&prepare<workflow.jobs[job].steps.findIndex(step=>step.run?.includes('apt-get update')));
   }
   const expected=['win32','darwin','linux'].flatMap(platform=>['x64','arm64'].flatMap(arch=>({win32:['nsis'],darwin:['zip'],linux:['AppImage','deb','rpm']}[platform]).map(format=>platformKey({platform,arch,format}))));
   assert.deepEqual(workflow.jobs.delta.strategy.matrix.include.map(item=>item.target).sort(),expected.sort());
   assert.deepEqual(workflow.jobs.publish.needs,['build','ota-base','delta']);
-  assert.equal(workflow.jobs.delta.steps.find(step=>step.name==='Generate and reconstruct this target\'s delta').env.CANVAS_OTA_DELTA_TIMEOUT_MS,120000);
-  assert.equal(workflow.jobs.publish.steps.find(step=>step.name==='Verify every platform and generate checksums').env.CANVAS_OTA_PREBUILT_DELTAS,'1');
+  assert.ok(workflow.jobs.delta.steps.some(step=>step.run?.startsWith('node scripts/verify-block-update.mjs ')));
+  assert.ok(!workflow.jobs.delta.steps.some(step=>step.env?.CANVAS_OTA_BSDIFF));
+  assert.ok(workflow.jobs.build.steps.some(step=>step.run==='node scripts/prepare-ota-blockmaps.mjs desktop-dist'));
+  assert.ok(workflow.jobs.build.steps.some(step=>step.with?.path?.includes('desktop-dist/*.blockmap')));
+  assert.equal(workflow.jobs.publish.steps.find(step=>step.name==='Verify every platform and generate checksums').env.CANVAS_OTA_BLOCKMAP_REPORTS,'1');
+  assert.ok(workflow.jobs.publish.steps.some(step=>step.run==='node scripts/prepare-ota-base.mjs release-base --pinned --manifest-only'));
+  assert.equal(JSON.parse(await readFile('package.json','utf8')).build.nsis.differentialPackage,'store-asar');
 });
