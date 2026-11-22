@@ -19,7 +19,29 @@ import { CanvasVideoSettingsPopover } from '@/components/canvas/canvas-video-set
 import type { AiConfig } from '@/stores/use-config-store';
 import type { VideoReferenceSummary } from '@/lib/video-capabilities';
 import { videoModelCatalog } from '@/lib/video-model-catalog';
+import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
+import { parseVideoCatalog } from '../../desktop/video-catalog.mjs';
+import { videoModelDefaults } from '@/lib/video-model-defaults';
+import dynamicSnapshot from '../../test/fixtures/video-catalog-dynamic.json';
 Object.assign(window, { videoAvailableModels: [...videoModelCatalog.flatMap(model => [model.id, ...model.aliases]), 'seedance-2.5'] });
+
+Object.assign(window, { videoDynamicTest: async () => {
+    const previous = useVideoCatalogStore.getState().catalog;
+    useVideoCatalogStore.setState({ catalog: parseVideoCatalog({ ...dynamicSnapshot, generated_at: new Date().toISOString() }) });
+    try {
+        const id = 'SP-特价 [1080p 5-30s ¥2.178/条]';
+        (window as unknown as { videoAvailableModels: string[] }).videoAvailableModels.push(id);
+        const selected = { ...config, channels: [{ ...config.channels[0], id: 'oneyes-minimax' }], model: 'oneyes-minimax::' + id };
+        Object.assign(selected, videoModelDefaults(selected, selected.model));
+        const task = await createVideoGenerationTask(selected, 'dynamic text');
+        check((await pollVideoGenerationTask(selected, task)).status === 'completed', 'dynamic JSON retains original task retrieval');
+        const canvas = document.createElement('canvas'); canvas.width = 17; canvas.height = 11;
+        canvas.getContext('2d')!.fillRect(0, 0, 17, 11);
+        const stored = await uploadImage(canvas.toDataURL('image/png'));
+        await createVideoGenerationTask(selected, 'dynamic local image', [{ id: 'dynamic-image', name: '参考.png', type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+        return true;
+    } finally { useVideoCatalogStore.setState({ catalog: previous }); }
+} });
 
 Object.assign(window, { oneYesDesktop: { models: { list: async (apiKey: string) => {
     const response = await fetch('oneyes-canvas://app/proxy?url=' + encodeURIComponent('https://oneyes.ai/v1/models'), { headers: { Authorization: 'Bearer ' + apiKey } });

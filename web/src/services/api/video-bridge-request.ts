@@ -70,7 +70,7 @@ export function buildVideoBridgeRequest(info: VideoModelInfo, config: VideoParam
     if (info.provider !== 'zhiying' && mode === 'frames' && (media.videos.length || media.audios.length)) throw Error('首尾帧不能与参考视频或音频混用，请主动切换参考模式或调整素材。');
     if (info.promptMax && Array.from(prompt).length > info.promptMax) throw Error(`该模型提示词最多 ${info.promptMax} 字符，请缩短后提交。`);
     if (info.provider === "zhiying") {
-        if (!media.images.length && !media.videos.length && !media.audios.length) {
+        if (info.parameters && !media.images.length && !media.videos.length && !media.audios.length) {
             if (media.imageDataUrls.length && !info.parameters?.reference_image_input_types?.includes('https_url')) throw Error('该模型的参考图片须使用本地文件，请重新选择素材。');
             return { body: { model, prompt, resolution: quality, duration, aspect_ratio: ratio,
                 ...(media.imageDataUrls.length ? { reference_images: media.imageDataUrls.map(url => videoBridgeMediaUrl(url, '图片')) } : {}) }, contentType: 'application/json' };

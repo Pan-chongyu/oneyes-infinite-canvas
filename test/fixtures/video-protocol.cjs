@@ -41,7 +41,7 @@ app.whenReady().then(async () => {
                 const body = /multipart\/form-data/.test(type) ? Object.fromEntries(await request.formData()) : await request.json();
                 if (raw) {
                     const { pathToFileURL } = require('node:url');
-                    const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, /^(sd-|seedance-.*(?:official|discount)|seedance-2.5-dedicated|SD-特价|wan3\.0$)/.test(body.model) ? 'zhiying-request.mjs' : '88api-request.mjs')).href)).default;
+                    const adapter = (await import(pathToFileURL(join(process.env.ONEYES_BRIDGE_TEST_DIRECTORY, /^(sd-|seedance-.*(?:official|discount)|seedance-2.5-dedicated|(?:SD|SP)-特价|wan3\.0$)/.test(body.model) ? 'zhiying-request.mjs' : '88api-request.mjs')).href)).default;
                     assert.doesNotThrow(() => adapter.normalizeCreateBody({ requestBuffer: raw }, type), body.model);
                 }
                 posts.push({ path: target.pathname, body, type });
@@ -158,6 +158,20 @@ app.whenReady().then(async () => {
             }
         }
         console.log('GROK_LOCAL_NATIVE_OK: exact canonical/alias routing, lossless Worker pixels, mixed public URL order and trusted upload plan');
+        const dynamicStart = posts.length;
+        assert.equal(await run('videoDynamicTest()'), true);
+        const dynamic = posts.slice(dynamicStart);
+        assert.equal(dynamic.length, 2);
+        for (const item of dynamic) {
+            assert.equal(item.path, '/v1/videos'); assert.equal(item.body.model, 'SP-特价 [1080p 5-30s ¥2.178/条]');
+            assert.equal(Number(item.body.duration), 30); assert.equal(item.body.resolution, '1080p');
+            for (const field of ['mode', 'first_frame', 'size', 'watermark', 'generate_audio']) assert.equal(item.body[field], undefined);
+        }
+        assert.equal(dynamic[0].type, 'application/json');
+        assert.match(dynamic[1].type, /multipart\/form-data; boundary=/);
+        assert.ok(dynamic[1].body.reference_images instanceof File);
+        assert.equal((await fileTypeFromBuffer(Buffer.from(await dynamic[1].body.reference_images.arrayBuffer()))).mime, 'image/webp');
+        console.log('DYNAMIC_SP_NATIVE_JSON_BINARY_LOSSLESS_EXACT_ALIAS_DEFAULTS_AND_ORIGINAL_GET_OK');
         const key = await run('videoBusyTest()');
         assert.equal(busyRequests.length, 2); assert.equal(busyRequests[0].key, key); assert.equal(busyRequests[1].key, key);
         assert.equal(busyRequests[0].type, busyRequests[1].type); assert.deepEqual(busyRequests[0].bytes, busyRequests[1].bytes);
