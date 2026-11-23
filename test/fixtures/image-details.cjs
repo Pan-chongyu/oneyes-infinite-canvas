@@ -54,6 +54,12 @@ app.whenReady().then(async () => {
                 assert.ok(layout.info.includes('JPEG')); assert.ok(!layout.info.includes('provider::')); assert.ok(!layout.info.includes('1 × 1'));
                 await click('button[title="原始大小（1）"]');
                 await wait('document.querySelector("[aria-live=polite]").textContent==="100%"');
+                await wait('Math.abs(document.querySelector("[aria-label^=图片预览] img").getBoundingClientRect().width-4096)<1');
+                if (width === 640) {
+                    await resize(620, 900);
+                    await wait('Math.abs(document.querySelector("[aria-label^=图片预览] img").getBoundingClientRect().width-4096)<1');
+                    await resize(640, 900);
+                }
                 assert.ok(Math.abs(await js('document.querySelector("[aria-label^=图片预览] img").getBoundingClientRect().width') - 4096) < 1);
                 const pan = await js(`(()=>{const v=document.querySelector('[aria-label^=图片预览]'),r=v.getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),left:v.scrollLeft,top:v.scrollTop}})()`);
                 win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: pan.x, y: pan.y });

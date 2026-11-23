@@ -14,7 +14,8 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean, o
     const zoomAnchorRef = useRef<{ zoom: number; ratioX: number; ratioY: number; viewportX: number; viewportY: number } | null>(null);
     const [viewportElement, setViewportElement] = useState<HTMLDivElement | null>(null);
     const [viewportSize, setViewportSize] = useState<ImageSize>({ width: 0, height: 0 });
-    const [zoom, setZoom] = useState(minZoom);
+    const [zoomLevel, setZoom] = useState(minZoom);
+    const [originalScale, setOriginalScale] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
     const [spacePressed, setSpacePressed] = useState(false);
     const spacePressedRef = useRef(false);
@@ -27,6 +28,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean, o
         if (!open) return;
         zoomAnchorRef.current = null;
         setZoom(minZoom);
+        setOriginalScale(false);
     }, [open, image?.width, image?.height]);
 
     useEffect(() => {
@@ -80,6 +82,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean, o
     }, [open, viewportElement, options.actualSize]);
 
     const baseSize = fitImage(image, viewportSize);
+    const zoom = originalScale && image && baseSize.width ? image.width / baseSize.width : zoomLevel;
     const zoomLimit = options.actualSize && image && baseSize.width ? Math.max(maxZoom, image.width / baseSize.width) : maxZoom;
     const stageSize = { width: baseSize.width * zoom, height: baseSize.height * zoom };
     const contentSize = {
@@ -111,6 +114,8 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean, o
             if (!viewport || !stage || !baseSize.width || !baseSize.height) return;
 
             const boundedZoom = clamp(nextZoom, minZoom, zoomLimit);
+            setOriginalScale(false);
+            setZoom(boundedZoom);
             if (Math.abs(boundedZoom - zoom) < 0.001) return;
 
             const viewportRect = viewport.getBoundingClientRect();
@@ -123,7 +128,6 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean, o
             const viewportY = pointerY - viewportRect.top;
 
             zoomAnchorRef.current = { zoom: boundedZoom, ratioX, ratioY, viewportX, viewportY };
-            setZoom(boundedZoom);
         },
         [baseSize.height, baseSize.width, zoom, zoomLimit],
     );
@@ -192,7 +196,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean, o
         zoomIn: () => setZoomAround(zoom * zoomStep),
         zoomOut: () => setZoomAround(zoom / zoomStep),
         resetZoom: () => setZoomAround(minZoom),
-        actualSize: () => image && baseSize.width && setZoomAround(image.width / baseSize.width),
+        actualSize: () => { if (image && baseSize.width) { setZoomAround(image.width / baseSize.width); setOriginalScale(true); } },
         contentStyle: { width: contentSize.width, height: contentSize.height } satisfies CSSProperties,
         stageStyle: {
             left: stageOffset.left,
