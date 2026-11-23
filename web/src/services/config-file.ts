@@ -43,6 +43,8 @@ export async function importAppConfig(file: File) {
         throw new Error(i18n.t("config.invalidFile"));
     }
     if (data.app !== "infinite-canvas" || data.version !== 1 || !data.config || !data.webdav || !data.promptSources) throw new Error(i18n.t("config.invalidFile"));
-    useConfigStore.setState({ config: normalizeOneYesConfig(data.config), webdav: data.webdav });
+    // Importing someone else's configuration cannot accept streaming-loss risk for this device.
+    const asyncImageGeneration = useConfigStore.getState().config.asyncImageGeneration;
+    useConfigStore.setState({ config: normalizeOneYesConfig({ ...data.config, asyncImageGeneration }), webdav: data.webdav });
     usePromptSourceStore.setState(data.promptSources);
 }

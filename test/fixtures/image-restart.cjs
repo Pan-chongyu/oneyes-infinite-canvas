@@ -27,7 +27,28 @@ app.whenReady().then(async () => {
     const signedImages = [0, 1, 2].map(index => `https://images.example.test/restarted-${index}.png?signature=a%2Fb%3D&x=1&x=2`);
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
     const pendingImages = new Map();
-    const imageServer = createServer((req, res) => {
+    let streamCalls = 0;
+    const imageServer = createServer(async (req, res) => {
+        if (req.url === '/stream-api') {
+            try {
+                streamCalls++;
+                assert.equal(req.method, 'POST');
+                assert.equal(req.headers.accept, 'text/event-stream');
+                assert.equal(req.headers.authorization, 'Bearer fixture-private-key');
+                const chunks = []; for await (const chunk of req) chunks.push(chunk);
+                const request = new Request('http://fixture', { method: 'POST', headers: req.headers, body: Buffer.concat(chunks) });
+                const form = req.headers['content-type'].includes('multipart/') ? await request.formData() : undefined;
+                const body = form ? undefined : await request.json();
+                assert.equal(form ? form.get('stream') : body.stream, form ? 'true' : true);
+                assert.equal(form ? form.get('size') : body.size, '2048x1152');
+                assert.equal(Number(form ? form.get('n') : body.n), 1);
+                if (form) assert.ok(form.get('image') instanceof Blob);
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.write('event: image_generation.partial_image\ndata: {"b64_json":"preview"}\n\n');
+                res.end(`event: image_generation.completed\ndata: {"b64_json":"${png.toString('base64')}","output_index":0}\n\ndata: [DONE]\n\n`);
+            } catch (error) { console.error(error); res.statusCode = 500; res.end(); }
+            return;
+        }
         assert.equal(req.headers.authorization, undefined); assert.equal(req.headers.cookie, undefined);
         res.setHeader('Content-Type', 'image/png'); // Deliberately no Access-Control-Allow-Origin.
         if (phase === 'partial' && req.url.includes('index=')) {
@@ -58,6 +79,7 @@ app.whenReady().then(async () => {
         if (url.pathname.startsWith('/fixture-references/')) return new Response(references[Number(url.pathname.split('/').pop())]);
         if (url.pathname.startsWith('/fixture-uploads/')) return new Response(uploads[Number(url.pathname.split('/').pop())], { headers: { 'Content-Type': 'image/webp' } });
         if (url.pathname.startsWith('/oneyes-api/')) {
+            if (phase === 'completed' && request.method === 'POST' && !url.pathname.endsWith('/async')) return net.fetch(imageOrigin.replace('/image.png', '/stream-api'), { method: 'POST', headers: request.headers, body: await request.arrayBuffer() });
             if (request.method === 'POST') {
                 attemptedPosts++;
                 const form = await request.formData();
@@ -136,6 +158,15 @@ app.whenReady().then(async () => {
             assert.equal(await js(`fetch(${JSON.stringify(imageOrigin)}).then(() => false, () => true)`), true, 'fixture must reproduce the object-store CORS rejection');
             await js('restartTest.flush()');
             if (phase === 'restore') await js('restartTest.loseCheckpoint()');
+            if (phase === 'completed') {
+                for (const edit of [false, true]) {
+                    const result = await js(`restartTest.streamNative(${edit})`);
+                    assert.equal(result.count, 1); assert.equal(result.requestedSize, '2048x1152');
+                    assert.equal(result.taskCount, 1, 'streaming must not create a fake recovery task');
+                }
+                assert.equal(streamCalls, 2); assert.equal(posts(), 1, 'only the original async request is durably submitted');
+                console.log('NATIVE_IMAGE_STREAM_OK: actual native protocol and HTTP SSE, JSON and binary multipart, selected size, original async task retained');
+            }
         }
         await win.webContents.session.flushStorageData();
         console.log(`ASYNC_IMAGE_RESTART_OK: ${phase}`);

@@ -56,6 +56,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const { i18n, t } = useTranslation();
     const configInputRef = useRef<HTMLInputElement>(null);
     const [activeTab, setActiveTab] = useState<ConfigTabKey>(initialTab);
+    const [confirmStreaming, setConfirmStreaming] = useState(false);
     const [editingChannelId, setEditingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
@@ -196,6 +197,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 </div>
                                 <ConfigVideoDefaults />
                                 <div className="mb-2 text-sm font-semibold">{t("config.preferences.generation")}</div>
+                                <Form.Item className="mb-4">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div>
+                                            <label htmlFor="async-image-generation" className="text-sm">{t("config.preferences.asyncImageGeneration")}</label>
+                                            <div id="async-image-generation-help" className="mt-1 text-xs opacity-60">{t(config.asyncImageGeneration ? "config.preferences.asyncImageGenerationDescription" : "config.preferences.streamingImageGenerationDescription")}</div>
+                                        </div>
+                                        <Switch id="async-image-generation" aria-describedby="async-image-generation-help" checked={config.asyncImageGeneration} onChange={checked => checked ? updateConfig("asyncImageGeneration", true) : setConfirmStreaming(true)} />
+                                    </div>
+                                </Form.Item>
                                 <div className="grid gap-4 md:grid-cols-4">
                                     <Form.Item label={t("config.preferences.canvasImageCount")} extra={t("config.preferences.canvasImageCountDescription")} className="mb-4">
                                         <Input
@@ -328,6 +338,9 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                 </div>
             ) : null}
             <ChannelEditorDrawer open={Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => setEditingChannelId("")} />
+            <Modal open={confirmStreaming} destroyOnHidden title={t("config.preferences.streamingImageConfirmTitle")} okText={t("config.preferences.streamingImageConfirm")} cancelText={t("config.preferences.keepAsyncImages")} onCancel={() => setConfirmStreaming(false)} onOk={() => { updateConfig("asyncImageGeneration", false); setConfirmStreaming(false); }}>
+                <p className="leading-relaxed">{t("config.preferences.streamingImageRisk")}</p>
+            </Modal>
         </>
     );
 }

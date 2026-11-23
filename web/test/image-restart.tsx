@@ -7,7 +7,7 @@ import localforage from "localforage";
 import "@/i18n";
 import "@/styles/globals.css";
 import CanvasProject from "@/pages/canvas/project";
-import { requestEdit } from "@/services/api/image";
+import { requestEdit, requestGeneration } from "@/services/api/image";
 import { prepareReferenceFiles } from "@/services/api/image-references";
 import { defaultConfig, useConfigStore } from "@/stores/use-config-store";
 import { imageTasks, initializeImageTasks, useImageTaskStore } from "@/stores/use-image-task-store";
@@ -109,6 +109,16 @@ Object.assign(window, { restartTest: {
     state: () => useImageTaskStore.getState(),
     node: () => useCanvasStore.getState().projects[0].nodes[0],
     keyRestored: () => useConfigStore.getState().config.channels[0].apiKey === "fixture-private-key",
+    streamNative: async (edit: boolean) => {
+        const config = { ...useConfigStore.getState().config, size: '2048x1152', count: '1' };
+        useConfigStore.getState().updateConfig('asyncImageGeneration', false);
+        try {
+            const reference = document.createElement('canvas'); reference.width = 12; reference.height = 8;
+            const options = { onTask: async () => { throw Error('Streaming cannot issue an async receipt'); } };
+            const results = await (edit ? requestEdit(config, 'native stream', [{ id: 'ref', name: 'ref.png', type: 'image/png', dataUrl: reference.toDataURL() }], options) : requestGeneration(config, 'native stream', options));
+            return { count: results.length, requestedSize: results[0]?.requestedSize, taskCount: useImageTaskStore.getState().tasks.length };
+        } finally { useConfigStore.getState().updateConfig('asyncImageGeneration', true); }
+    },
     flush: flushCanvasStorage,
     blob: async () => { const image = useImageTaskStore.getState().tasks[0]?.images[0]; return image && (await getImageBlob(image.storageKey))?.size; },
     allBlobs: async () => (await Promise.all(useImageTaskStore.getState().tasks[0].images.map(async image => {

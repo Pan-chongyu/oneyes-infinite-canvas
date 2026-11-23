@@ -20,6 +20,7 @@ app.whenReady().then(async () => {
             await wait('asyncImageTest.state().tasks[0]?.remoteId === "imgtask_fixture"');
             assert.equal(await js('asyncImageTest.posts()'), 1);
             assert.ok(await js('asyncImageTest.node().metadata.imageTaskId'));
+            await js('asyncImageTest.asyncPreference(false)');
             await js('asyncImageTest.refresh()');
             await wait('asyncImageTest.state().tasks[0]?.status === "waiting"');
             await win.loadURL(process.argv[2]);
@@ -41,6 +42,22 @@ app.whenReady().then(async () => {
             assert.ok((await js('asyncImageTest.blob()')).bytes > 0);
             assert.equal(await js('asyncImageTest.posts()'), 1);
         }
+        for (const edit of [false, true]) for (const mode of ['success', 'json', 'truncated', '524', 'disconnect']) {
+            const posts = await js('asyncImageTest.posts()');
+            const result = await js(`asyncImageTest.stream(${edit},${JSON.stringify(mode)})`);
+            assert.equal(await js('asyncImageTest.posts()'), posts + 1, 'streaming never retries a paid POST or falls back to async');
+            assert.equal(result.addedTasks, 0, 'streaming never invents a durable receipt');
+            assert.equal(result.request.path, edit ? '/v1/images/edits' : '/v1/images/generations');
+            assert.equal(result.request.accept, 'text/event-stream');
+            assert.equal(result.request.stream, edit ? 'true' : true);
+            assert.equal(result.request.size, '2048x1536');
+            assert.equal(Number(result.request.n), 1);
+            assert.equal(result.request.images, edit ? 1 : 0);
+            if (mode === 'success' || mode === 'json') { assert.equal(result.count, 1); assert.equal(result.size, '2048x1536'); assert.ok(result.dataUrl.startsWith('data:image/png;base64,')); }
+            else assert.ok(result.error, 'partial-only, server failure and disconnection cannot become completed images');
+        }
+        await js('asyncImageTest.asyncPreference(true)');
+        console.log('IMAGE_MODE_PREFERENCE_OK: default async recovery survives opt-out/reload; streaming JSON and edits retain parameters, no receipt, no replay or fallback');
         await js('asyncImageTest.startPreviewProbe()');
         await wait('asyncImageTest.previewProbe().stored && asyncImageTest.previewProbe().blocked && asyncImageTest.previewProbe().cached');
         assert.equal(await js('asyncImageTest.previewProbe().ready'), false, 'slow thumbnails must not block original persistence or cache recovery');

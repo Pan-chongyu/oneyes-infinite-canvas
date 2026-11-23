@@ -22,6 +22,21 @@ const { CONFIG_STORE_KEY, defaultConfig, guessCapability, GROK_VIDEO_CHANNEL_ID,
 const { normalizeProxySettings, proxySettings, testProxyConnection } = await import("@/services/api/local-proxy");
 const { shouldOpenSetup, getVerifiedSetupIds } = await import("./oneyes-setup");
 
+test('async images default on, retain an explicit opt-out and survive configuration hydration', async () => {
+    const original = useConfigStore.getState().config;
+    try {
+        assert.equal(defaultConfig.asyncImageGeneration, true);
+        assert.equal(normalizeOneYesConfig({}).asyncImageGeneration, true);
+        assert.equal(normalizeOneYesConfig({ asyncImageGeneration: undefined }).asyncImageGeneration, true);
+        useConfigStore.getState().updateConfig('asyncImageGeneration', false);
+        await useConfigStore.persist.rehydrate();
+        assert.equal(useConfigStore.getState().config.asyncImageGeneration, false);
+        useConfigStore.getState().updateConfig('asyncImageGeneration', true);
+        await useConfigStore.persist.rehydrate();
+        assert.equal(useConfigStore.getState().config.asyncImageGeneration, true);
+    } finally { useConfigStore.getState().replaceConfig(original); }
+});
+
 test('explicit video selection applies its defaults while edits, reselect and restoration preserve parameters', async () => {
     const original = useConfigStore.getState().config;
     try {

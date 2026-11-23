@@ -74,6 +74,7 @@ export type AiConfig = {
     nodeRegenerateBehavior: "new-node" | "overwrite";
     autoFocusOnSelect: boolean;
     autoRefreshMentionImages: boolean;
+    asyncImageGeneration: boolean;
 };
 
 export type WebdavSyncConfig = {
@@ -153,6 +154,7 @@ export const defaultConfig: AiConfig = {
     nodeRegenerateBehavior: "new-node",
     autoFocusOnSelect: false,
     autoRefreshMentionImages: false,
+    asyncImageGeneration: true,
 };
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
@@ -329,6 +331,7 @@ export const useConfigStore = create<ConfigStore>()(
                         nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
                         autoFocusOnSelect: Boolean(config.autoFocusOnSelect),
                         autoRefreshMentionImages: config.autoRefreshMentionImages === true,
+                        asyncImageGeneration: config.asyncImageGeneration !== false,
                     },
                 };
             },
@@ -526,6 +529,7 @@ export function normalizeOneYesConfig(input: Partial<AiConfig>, fallback: AiConf
     if (channel.oneYes?.platform === "openai") channel.name = "OneYes OpenAI";
     return {
         ...config,
+        asyncImageGeneration: config.asyncImageGeneration !== false,
         channelMode: "local",
         baseUrl: OPENAI_BASE_URL,
         apiKey: channel.apiKey,

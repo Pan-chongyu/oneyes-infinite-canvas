@@ -28,6 +28,7 @@ import { VideoRecovery } from '@/components/layout/video-recovery';
 import { UserStatusActions } from '@/components/layout/user-status-actions';
 import { useVideoRecoveryStore } from '@/services/video-recovery';
 import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
+import { importAppConfig } from '@/services/config-file';
 
 await useConfigStore.persist.rehydrate();
 useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-model-key", models: [] }] });
@@ -48,6 +49,7 @@ Object.assign(window, { modelTest: {
     selectVideo: (model: string) => useConfigStore.getState().updateConfig('videoModel', model),
     replace: (config: typeof defaultConfig) => useConfigStore.getState().replaceConfig(config),
     restore: () => useConfigStore.persist.rehydrate(),
+    importStreamPreference: () => importAppConfig(new File([JSON.stringify({ app: 'infinite-canvas', version: 1, config: { ...useConfigStore.getState().config, asyncImageGeneration: false }, webdav: useConfigStore.getState().webdav, promptSources: {} })], 'config.json')),
     checked: (name: string) => (Array.from(document.querySelectorAll("label.ant-checkbox-wrapper")).find(label => label.textContent?.trim() === name)?.querySelector("input") as HTMLInputElement)?.checked,
     toggle: (name: string) => (Array.from(document.querySelectorAll("label.ant-checkbox-wrapper")).find(label => label.textContent?.trim() === name)?.querySelector("input") as HTMLInputElement)?.click(),
 } });
@@ -77,6 +79,7 @@ function Probe() {
 }
 
 function MentionPreferences() {
+    Object.assign(window, { setPreferenceTheme: (dark: boolean) => useThemeStore.getState().setTheme(dark ? 'dark' : 'light') });
     const makeImage = (color: string) => {
         const canvas = document.createElement("canvas"); canvas.width = canvas.height = 8;
         const context = canvas.getContext("2d")!; context.fillStyle = color; context.fillRect(0, 0, 8, 8);

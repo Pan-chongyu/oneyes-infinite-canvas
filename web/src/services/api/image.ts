@@ -1,10 +1,10 @@
 import { reportError } from "../diagnostics";
-import { isOneYes } from "./image-stream";
+import { isOneYes, requestImageStream } from "./image-stream";
 import { requestDurableImage, type AsyncImageOptions, type GeneratedImageResult } from "@/stores/use-image-task-store";
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, modelCapabilityOf, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, modelCapabilityOf, resolveModelRequestConfig, resolveModelScript, useConfigStore, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { readFileAsDataUrl } from "@/lib/image-utils";
@@ -601,6 +601,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<GeneratedImageResult[]> {
+    const asyncImages = useConfigStore.getState().config.asyncImageGeneration !== false;
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
@@ -651,8 +652,9 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             };
         const url = aiApiUrl(requestConfig, "/images/generations");
         const headers = aiHeaders(requestConfig, "application/json");
-        if (isOneYes(requestConfig.baseUrl)) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/generations/async", requestBody, options);
-        const payload = (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: 0 })).data;
+        const oneYes = isOneYes(requestConfig.baseUrl);
+        if (oneYes && asyncImages) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/generations/async", requestBody, options);
+        const payload = oneYes ? await requestImageStream(url, requestBody, headers, options || {}) : (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: 0 })).data;
         const images = await parseImagePayload(payload);
         return images.map(image => ({ ...image, requestedSize: requestSize }));
     } catch (error) {
@@ -664,6 +666,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<GeneratedImageResult[]> {
+    const asyncImages = useConfigStore.getState().config.asyncImageGeneration !== false;
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
@@ -728,8 +731,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     try {
         const url = aiApiUrl(requestConfig, "/images/edits"), headers = aiHeaders(requestConfig);
-        if (isOneYes(requestConfig.baseUrl)) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/edits/async", formData, options, references);
-        const payload = (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: 0 })).data;
+        const oneYes = isOneYes(requestConfig.baseUrl);
+        if (oneYes && asyncImages) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/edits/async", formData, options, references);
+        const payload = oneYes ? await requestImageStream(url, formData, headers, options || {}) : (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: 0 })).data;
         const images = await parseImagePayload(payload);
         return images.map(image => ({ ...image, requestedSize: requestSize }));
     } catch (error) {

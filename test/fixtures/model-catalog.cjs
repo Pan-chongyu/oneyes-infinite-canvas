@@ -486,6 +486,39 @@ app.whenReady().then(async () => {
         await js(`modelTest.selectVideo(${JSON.stringify('oneyes-minimax::' + displayModels.find(model => model.id === 'sd-2.5-fullblood').request_id)})`);
         await js('showMentionPreferences()');
         await wait('window.mentionTest && document.getElementById("auto-refresh-mention-images")');
+        const asyncSwitch = 'document.getElementById("async-image-generation")';
+        assert.equal(await js('modelTest.state().config.asyncImageGeneration'), true);
+        await js('modelTest.importStreamPreference()');
+        assert.equal(await js('modelTest.state().config.asyncImageGeneration'), true, 'imported config cannot silently accept streaming risk');
+        for (const dark of [false, true]) {
+            await js(`setPreferenceTheme(${dark})`);
+            await js(`${asyncSwitch}.focus()`);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('document.querySelector("[role=dialog]")?.textContent.includes("关闭异步生图")');
+            assert.equal(await js('modelTest.state().config.asyncImageGeneration'), true, 'risk must be accepted before opting out');
+            assert.equal(await js(`${asyncSwitch}.getAttribute("aria-checked")`), 'true');
+            assert.match(await js('document.querySelector("[role=dialog]").textContent'), /无法取回.*费用/);
+            if (!process.env.CI) {
+                await js('Promise.all(document.getAnimations().filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})))');
+                await writeFile(`.secrets/qa-async-images-${dark ? 'dark' : 'light'}.png`, (await win.webContents.capturePage()).toPNG());
+            }
+            await js('[...document.querySelectorAll("[role=dialog] button")].find(button=>button.textContent.replace(/\\s/g,"")==="保持异步生图").click()');
+            await wait('!document.querySelector("[role=dialog]") || document.querySelector("[role=dialog]").getBoundingClientRect().width===0');
+            assert.equal(await js('modelTest.state().config.asyncImageGeneration'), true);
+            await js(`${asyncSwitch}.click()`);
+            await wait('document.querySelector("[role=dialog]")?.getBoundingClientRect().width>0');
+            await js('[...document.querySelectorAll("[role=dialog] button")].find(button=>button.textContent.replace(/\\s/g,"")==="我已了解风险，改用流式").click()');
+            await wait('modelTest.state().config.asyncImageGeneration===false');
+            await js('modelTest.restore()');
+            assert.equal(await js('modelTest.state().config.asyncImageGeneration'), false);
+            await wait('!document.querySelector("[role=dialog]") || document.querySelector("[role=dialog]").getBoundingClientRect().width===0');
+            await js(`${asyncSwitch}.click()`);
+            await wait('modelTest.state().config.asyncImageGeneration===true');
+            await js('modelTest.restore()');
+            assert.equal(await js('modelTest.state().config.asyncImageGeneration'), true);
+        }
+        console.log('NATIVE_ASYNC_IMAGE_PREFERENCE_OK: default on, keyboard confirmation, cancel stays on, explicit consent only, persistence and re-enable in both themes');
         assert.equal(await js('modelTest.state().config.autoRefreshMentionImages'), false, 'existing behavior remains the default');
         const toggle = async checked => {
             await js('document.getElementById("auto-refresh-mention-images").focus()');

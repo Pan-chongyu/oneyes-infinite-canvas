@@ -19,12 +19,24 @@ const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+A8AAQU
 const bytes = Uint8Array.from(atob(png), char => char.charCodeAt(0));
 const original = window.fetch.bind(window);
 const config = { ...defaultConfig, model: "default::gpt-image-2", imageModel: "default::gpt-image-2", channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-private-key" }] };
-useConfigStore.setState({ config });
+useConfigStore.setState({ config: { ...config, asyncImageGeneration: sessionStorage.getItem("asyncImages") !== "false" } });
+const streamRequests: Array<{ path: string; stream: unknown; size: unknown; n: unknown; images: number; accept: string | null }> = [];
 window.fetch = async (input, options) => {
     const url = String(input);
     if (url.includes("/v1/images/")) {
         if (options?.method === "POST") {
             sessionStorage.setItem("posts", String(Number(sessionStorage.getItem("posts") || 0) + 1));
+            if (!url.endsWith("/async")) {
+                const form = options.body instanceof FormData ? options.body : undefined;
+                const body = form ? undefined : JSON.parse(String(options.body));
+                streamRequests.push({ path: new URL(url).pathname, stream: form ? form.get("stream") : body.stream, size: form ? form.get("size") : body.size, n: form ? form.get("n") : body.n, images: form ? [...form.values()].filter(value => value instanceof Blob).length : 0, accept: new Headers(options.headers).get("Accept") });
+                const mode = sessionStorage.getItem("streamMode");
+                if (mode === "524") return new Response("timeout", { status: 524 });
+                if (mode === "disconnect") throw new TypeError("simulated stream disconnect");
+                if (mode === "json") return Response.json({ data: [{ b64_json: png }] });
+                const text = `event: image_generation.partial_image\ndata: {"b64_json":"preview"}\n\n${mode === "truncated" ? "" : `event: image_generation.completed\ndata: {"b64_json":"${png}","output_index":0}\n\ndata: [DONE]\n\n`}`;
+                return new Response(text, { headers: { "Content-Type": "text/event-stream" } });
+            }
             if (url.includes("/edits/")) {
                 if (!(options.body instanceof FormData) || options.body.get("stream") !== null || !(options.body.get("image") instanceof Blob)) throw Error("Invalid async edit form");
             }
@@ -53,6 +65,19 @@ let releasePreview = () => {};
 Object.assign(window, { asyncImageTest: {
     state: () => useImageTaskStore.getState(),
     posts: () => Number(sessionStorage.getItem("posts") || 0),
+    asyncPreference: (enabled: boolean) => { sessionStorage.setItem("asyncImages", String(enabled)); useConfigStore.getState().updateConfig("asyncImageGeneration", enabled); },
+    stream: async (edit: boolean, mode: string) => {
+        sessionStorage.setItem("streamMode", mode);
+        useConfigStore.getState().updateConfig("asyncImageGeneration", false);
+        const before = useImageTaskStore.getState().tasks.length;
+        const canvas = document.createElement("canvas"); canvas.width = 12; canvas.height = 8;
+        const selected = { ...config, size: "2048x1536", count: "1" }; // Deliberately stale: preference is global.
+        const options = { onTask: async () => { throw Error("Streaming cannot create an async receipt"); } };
+        try {
+            const result = await (edit ? requestEdit(selected, "stream edit", [{ id: "ref", name: "ref.png", type: "image/png", dataUrl: canvas.toDataURL() }], options) : requestGeneration(selected, "stream image", options));
+            return { count: result.length, size: result[0]?.requestedSize, dataUrl: result[0]?.dataUrl, addedTasks: useImageTaskStore.getState().tasks.length - before, request: streamRequests.at(-1) };
+        } catch (error) { return { error: String(error), addedTasks: useImageTaskStore.getState().tasks.length - before, request: streamRequests.at(-1) }; }
+    },
     start: (edit: boolean) => {
         const target = { projectId: sessionStorage.getItem("project")!, nodeId: "image-node" };
         const options = { taskTarget: target, onTask: async (id: string) => {
