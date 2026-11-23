@@ -23,8 +23,9 @@ const collaboration = process.argv.includes('--collaboration');
 const playback = process.argv.includes('--playback');
 const videoWorkflow = process.argv.includes('--video-workflow');
 const modelCatalog = process.argv.includes('--models');
-const fixture = imageDetails?'image-details':modelCatalog?'model-catalog':videoWorkflow?'video-workflow':playback?'playback':collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
-const server = imageDetails||videoWorkflow||playback||collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
+const setup = process.argv.includes('--setup');
+const fixture = setup ? 'oneyes-setup' : imageDetails?'image-details':modelCatalog?'model-catalog':videoWorkflow?'video-workflow':playback?'playback':collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const server = setup||imageDetails||videoWorkflow||playback||collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {
@@ -39,6 +40,7 @@ try {
     const require = createRequire(import.meta.url), electron = require('electron');
     const args = [resolve(`test/fixtures/${fixture}.cjs`), server.url || `http://127.0.0.1:${server.httpServer.address().port}/__agent-chat`];
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+    if (setup) env.CANVAS_SETUP_TEST_ROOT = server.root;
     if (director) env.CANVAS_DIRECTOR_TEST_ROOT = server.root;
     if (creators) env.CANVAS_CREATOR_TEST_ROOT = server.root;
     if(studio)env.CANVAS_STUDIO_TEST_ROOT=server.root;

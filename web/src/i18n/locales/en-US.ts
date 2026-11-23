@@ -379,6 +379,13 @@ Write a detailed, ready-to-use overall prompt in connected paragraphs, then self
     },
     config: {
         onboarding: {
+            chooseTitle: "How would you like to start?", chooseHint: "Choose your setup style. You can still adjust everything in Settings.",
+            beginner: "Beginner", beginnerHint: "Sign in and let Canvas prepare your API keys and models automatically.",
+            expert: "Expert", expertHint: "Keep the existing workflow and configure keys, models, and parameters yourself.",
+            choiceNote: "Beginner mode reuses or creates Canvas_无限画布 keys. It does not start image or video generation.",
+            beginnerLoginHint: "Sign in to OneYes and Canvas will handle API and model setup. You can also use your OneYes Desktop session.",
+            automaticHint: "Matching available groups, preparing keys, and selecting default models. Please wait.", automatic: "Setting up automatically…",
+            switchExpert: "Switch to Expert for manual setup", switchBeginner: "Switch to Beginner for automatic setup",
             title: "Welcome to OneYes Canvas", guide: "Setup guide", begin: "Get started", more: "More settings",
             steps: { login: "Sign in", configure: "Connect models", done: "Create" },
             loginTitle: "Connect your OneYes account",

@@ -99,6 +99,8 @@ test("first launch offers setup only without configured models, respecting later
     assert.equal(shouldOpenSetup({ ...state, isConfigOpen: true }), false);
     const config = normalizeOneYesConfig({ ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: "test-existing" }] });
     assert.equal(shouldOpenSetup({ ...state, config }), false);
+    assert.equal(shouldOpenSetup({ ...state, config, setupMode: "beginner" }), true, "unfinished automatic setup resumes after partially saved models");
+    assert.equal(shouldOpenSetup({ ...state, config, setupMode: "expert" }), false);
     assert.equal(shouldOpenSetup({ ...state, config: { ...config, channels: [{ ...config.channels[0], models: [] }] } }), true);
     assert.equal(shouldOpenSetup({ ...state, config: { ...config, channels: [{ ...config.channels[0], apiKey: "  " }] } }), true);
 });
@@ -133,6 +135,7 @@ test("setup completion requires verified usable services, with partial failures 
     assert.deepEqual(getVerifiedSetupIds(config, [], ""), []);
     assert.deepEqual(getVerifiedSetupIds(config, [ok], "network unavailable"), []);
     assert.deepEqual(getVerifiedSetupIds(defaultConfig, [ok], ""), []);
+    assert.deepEqual(getVerifiedSetupIds({ ...config, channels: config.channels.map(channel => ({ ...channel, models: channel.models.map(model => ({ ...model, unavailable: true })) })) }, [ok], ""), []);
     assert.deepEqual(getVerifiedSetupIds(config, [{ ...ok, code: "inactive", status: "error" }], ""), []);
     assert.deepEqual(getVerifiedSetupIds(config, [ok, { id: "oneyes-deepseek", name: "DeepSeek", code: "setupFailed", status: "error" }], ""), ["default"]);
     assert.deepEqual(getVerifiedSetupIds(config, [ok, { ...ok, id: "oneyes-deepseek" }], ""), ["default", "oneyes-deepseek"]);
@@ -140,6 +143,7 @@ test("setup completion requires verified usable services, with partial failures 
 
 test("setup completion and explicit later persist without persisting an open dialog or changing model selections", async () => {
     useConfigStore.setState({ config: defaultConfig, setupStatus: "pending" });
+    useConfigStore.getState().setSetupMode("beginner");
     useConfigStore.getState().openSetup();
     useConfigStore.getState().closeSetup("completed");
     assert.equal(useConfigStore.getState().isSetupOpen, true);
@@ -147,10 +151,12 @@ test("setup completion and explicit later persist without persisting an open dia
     useConfigStore.getState().closeSetup();
     let saved = JSON.parse(localStorage.getItem(CONFIG_STORE_KEY)!);
     assert.equal(saved.state.setupStatus, "skipped");
+    assert.equal(saved.state.setupMode, "beginner");
     assert.equal(saved.state.isSetupOpen, undefined);
     useConfigStore.setState({ setupStatus: "pending" }, false);
     localStorage.setItem(CONFIG_STORE_KEY, JSON.stringify(saved));
     await useConfigStore.persist.rehydrate();
+    assert.equal(useConfigStore.getState().setupMode, "beginner");
     assert.equal(shouldOpenSetup(useConfigStore.getState()), false);
     const config = normalizeOneYesConfig({ ...defaultConfig, channels: [{ ...defaultConfig.channels[0], apiKey: "test-saved", models: [{ name: "gpt-image-test", capability: "image" }] }], imageModel: "default::gpt-image-test" });
     useConfigStore.getState().replaceConfig(config);

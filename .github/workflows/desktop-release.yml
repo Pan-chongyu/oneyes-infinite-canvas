@@ -128,6 +128,7 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == 'tag' ]]; then test "$GITHUB_REF_NAME" = "$(cat VERSION)"; fi
       - run: npm test
       - run: npm run test:chat
+      - run: npm run test:setup
       - run: npm run test:models
       - run: npm run test:ota-ui
       - name: Verify small edits produce small native Windows downloads

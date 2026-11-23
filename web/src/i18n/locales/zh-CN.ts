@@ -378,6 +378,13 @@ export default {
     },
     config: {
         onboarding: {
+            chooseTitle: "你想怎样开始创作？", chooseHint: "选一种适合你的配置方式，之后仍可在设置中调整。",
+            beginner: "小白", beginnerHint: "登录后全自动配置 API 和模型，准备好就能用。",
+            expert: "大师", expertHint: "沿用原有流程，自行配置 Key、模型与参数。",
+            choiceNote: "小白模式会复用或创建 Canvas_无限画布 Key，不会自动发起生图或视频生成。",
+            beginnerLoginHint: "只需登录 OneYes，接下来的 API 和模型配置交给画布。也可以复用 OneYes 客户端的登录状态。",
+            automaticHint: "正在为你匹配可用分组、准备 Key 并配置默认模型，请稍候。", automatic: "正在自动配置，请稍候…",
+            switchExpert: "切换大师模式，手动配置", switchBeginner: "切换小白模式，自动配置",
             title: "欢迎使用 OneYes Canvas", guide: "配置向导", begin: "开始配置", more: "更多设置",
             steps: { login: "登录", configure: "配置模型", done: "开始创作" },
             loginTitle: "先连接你的 OneYes 账户",

@@ -168,6 +168,8 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
 type ConfigStore = {
     config: AiConfig;
     setupStatus: "pending" | "skipped" | "completed";
+    setupMode: "beginner" | "expert" | null;
+    setSetupMode: (mode: "beginner" | "expert") => void;
     isSetupOpen: boolean;
     openSetup: () => void;
     closeSetup: (status?: "skipped" | "completed") => void;
@@ -263,6 +265,8 @@ export const useConfigStore = create<ConfigStore>()(
         (set, get) => ({
             config: defaultConfig,
             setupStatus: "pending",
+            setupMode: null,
+            setSetupMode: (setupMode) => set({ setupMode }),
             isSetupOpen: false,
             openSetup: () => set({ isSetupOpen: true }),
             closeSetup: (setupStatus = "skipped") => {
@@ -302,7 +306,7 @@ export const useConfigStore = create<ConfigStore>()(
             name: CONFIG_STORE_KEY,
             skipHydration: true,
             storage: createJSONStorage(() => window.oneYesDesktop?.storage || localStorage),
-            partialize: (state) => ({ config: state.config, webdav: state.webdav, setupStatus: state.setupStatus }),
+            partialize: (state) => ({ config: state.config, webdav: state.webdav, setupStatus: state.setupStatus, setupMode: state.setupMode }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
@@ -311,6 +315,7 @@ export const useConfigStore = create<ConfigStore>()(
                 return {
                     ...current,
                     setupStatus: persistedState.setupStatus === "completed" || persistedState.setupStatus === "skipped" ? persistedState.setupStatus : "pending",
+                    setupMode: persistedState.setupMode === "beginner" || persistedState.setupMode === "expert" ? persistedState.setupMode : null,
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
                     config: {
                         ...config,
