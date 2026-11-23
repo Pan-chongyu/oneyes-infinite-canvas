@@ -39,7 +39,7 @@ async function main() {
             bytes: async () => Array.from(new Uint8Array(await blob.arrayBuffer())),
             node: () => JSON.stringify(current),
             restore: () => flushSync(() => { setCurrent(node); setOpen(false); }),
-            expanded: (value: boolean) => flushSync(() => setExpanded(value)),
+            expanded: (value: boolean) => flushSync(() => { setExpanded(value); setCurrent(value ? { ...node, width: 240, height: 120 } : node); }),
             plain: () => flushSync(() => setCurrent({ ...node, metadata: { content: 'blob:expired-fixture', storageKey: first.storageKey } })),
             missingCopy: () => flushSync(() => setCurrent({ ...node, metadata: { content: 'blob:missing-fixture', storageKey: 'image:absent-copy' } })),
             pasted: () => pasted,
