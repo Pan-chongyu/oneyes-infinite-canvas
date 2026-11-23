@@ -1,9 +1,32 @@
-import { Button, Checkbox, InputNumber, Progress, Select, Slider, Tooltip } from "antd";
+import { Button, Checkbox, Input, InputNumber, Popconfirm, Progress, Select, Slider, Tooltip } from "antd";
 import { ArrowDown, ArrowUp, Clapperboard, Layers, LoaderCircle, Play, ScanLine, Scissors, Settings2, Sparkles, X } from "lucide-react";
 import { creatorSources, creatorTool, creatorTools } from "@/lib/canvas/creator-tools";
 import type { CanvasNodeContext, CanvasPlugin } from "@/types/canvas-plugin";
 import type { CreatorLayer, CreatorSettings, CreatorTool } from "@/types/creator-tools";
 import { SourceSummary } from "./source-summary";
+import { ModelPicker } from "@/components/model-picker";
+import { ImageSettingsPanel } from "@/components/image-settings-panel";
+import { useEffectiveConfig } from "@/stores/use-config-store";
+import type { CanvasNodeData } from "@/types/canvas";
+
+function UpscaleSettings({ ctx, settings, sources, busy, patch }: { ctx: CanvasNodeContext; settings: CreatorSettings; sources: CanvasNodeData[]; busy: boolean; patch: (value: Partial<CreatorSettings>) => void }) {
+    const globalConfig = useEffectiveConfig();
+    const config = { ...globalConfig, model: settings.upscaleModel || globalConfig.imageModel, size: settings.upscaleSize || "auto", quality: "high", count: "1" };
+    const source = sources[0]?.metadata;
+    const image = source?.images?.find(item => item.id === (source.primaryImageId || source.images?.[0]?.id)) || source;
+    const model = settings.upscaleMethod === "model";
+    return <div className="space-y-3" data-upscale-settings>
+        <div role="radiogroup" aria-label="超分方式" className="grid grid-cols-2 gap-1 border-b pb-2" style={{ borderColor: ctx.theme.toolbar.border }}>{([{ label: "本地超分 · 免费", value: "local" }, { label: "生图模型增强", value: "model" }] as const).map(option => <button key={option.value} role="radio" aria-checked={(settings.upscaleMethod || "local") === option.value} disabled={busy} className="rounded-md px-2 py-2 text-xs transition-colors hover:opacity-80 focus-visible:outline-2 disabled:opacity-50" style={{ color: ctx.theme.node.text, background: (settings.upscaleMethod || "local") === option.value ? ctx.theme.toolbar.activeBg : "transparent" }} onClick={() => patch({ upscaleMethod: option.value })}>{option.label}</button>)}</div>
+        {image?.naturalWidth && image.naturalHeight ? <p className="text-xs" style={{ color: ctx.theme.node.muted }}>原图 {image.naturalWidth} × {image.naturalHeight}{!model && ` → ${image.naturalWidth * 3} × ${image.naturalHeight * 3}`}</p> : null}
+        {model ? <>
+            <div className="space-y-1"><label className="text-xs">增强模型</label><div className={busy ? "pointer-events-none opacity-60" : ""}><ModelPicker config={config} value={config.model} capability="image" fullWidth className="!text-inherit" onChange={upscaleModel => patch({ upscaleModel })} /></div></div>
+            <details open={!settings.upscaleSize}><summary className="cursor-pointer text-xs">输出分辨率 · {settings.upscaleSize || "请选择"}</summary><div className={busy ? "pointer-events-none opacity-60" : ""}><ImageSettingsPanel config={config} theme={ctx.theme} showTitle={false} sizeOnly className="mt-3 space-y-3" onConfigChange={(key, value) => { if (key === "size") patch({ upscaleSize: value }); }} /></div></details>
+            <label className="block space-y-1 text-xs"><span>细节要求（可选）</span><Input.TextArea aria-label="超分细节要求" value={settings.upscalePrompt || ""} disabled={busy} autoSize={{ minRows: 2 }} style={{ color: ctx.theme.node.text, background: ctx.theme.node.panel, borderColor: ctx.theme.toolbar.border }} placeholder="例如：保持文字和人物一致，增强织物纹理" onChange={event => patch({ upscalePrompt: event.target.value })} /></label>
+            <p className="text-xs leading-relaxed" style={{ color: ctx.theme.node.muted }}>将上传参考原图，调用一次生图接口并按所选模型计费。AI 可能重绘细节，重要文字与人脸请对照原图检查。支持 OneYes 异步接口的模型可在结果节点继续取回原任务。</p>
+            {settings.modelOutputId && <div className="flex items-center justify-between gap-2 text-xs"><span style={{ color: ctx.theme.node.muted }}>已有增强结果或任务，请在右侧节点查看。</span><Popconfirm title="新建增强任务？" description="已有任务与结果会保留，再次生成会产生新的模型费用。" okText="新建" cancelText="取消" onConfirm={() => patch({ modelOutputId: undefined })}><Button style={{ color: ctx.theme.node.text }} type="text" size="small" disabled={busy}>新建增强任务</Button></Popconfirm></div>}
+        </> : <p className="text-xs leading-relaxed" style={{ color: ctx.theme.node.muted }}>内置 ESPCN 3×，离线运行。重叠分块消除接缝，镜像延拓改善边缘，高质量色彩采样减少色边；保留透明度，不上传图片。</p>}
+    </div>;
+}
 
 const icons = { analyze: Clapperboard, concat: Scissors, cutout: ScanLine, compose: Layers, superResolution: Sparkles, videoSuperResolution: Clapperboard, board: Layers, color: Sparkles, mix: Scissors };
 function selected(ctx: CanvasNodeContext) {
@@ -16,18 +39,19 @@ function CreatorContent({ ctx }: { ctx: CanvasNodeContext }) {
     const info = creatorTools[tool], Icon = icons[tool];
     const state = ctx.processing?.state(ctx.node.id), { sources, error } = selected(ctx);
     const settings = ctx.node.metadata?.creatorSettings;
+    const modelUpscale = tool === "superResolution" && settings?.upscaleMethod === "model";
     return <div className="flex h-full flex-col justify-between gap-3 p-4" style={{ color: ctx.theme.node.text }} data-creator-tool={tool}>
         <div className="flex items-start gap-3">
             {state ? <LoaderCircle size={22} className="shrink-0 animate-spin motion-reduce:animate-none" /> : <Icon size={22} className="shrink-0" />}
-            <div className="min-w-0"><div className="text-sm font-medium">{info.title}{tool === "superResolution" ? " · 3×" : tool === "videoSuperResolution" ? ` · ${settings?.videoScale ?? 3}×` : ""}</div><p className="mt-1 text-xs leading-relaxed" style={{ color: ctx.theme.node.muted }}>{info.description}</p></div>
+            <div className="min-w-0"><div className="text-sm font-medium">{info.title}{tool === "superResolution" ? modelUpscale ? " · 模型增强" : " · 本地 3×" : tool === "videoSuperResolution" ? ` · ${settings?.videoScale ?? 3}×` : ""}</div><p className="mt-1 text-xs leading-relaxed" style={{ color: ctx.theme.node.muted }}>{modelUpscale ? `保真修复与细节增强 · ${settings?.upscaleSize || "请设置输出分辨率"} · 生成 1 张` : info.description}</p></div>
         </div>
         {state ? <div role="status" aria-live="polite"><p className="text-xs">{state.stage}</p>{state.progress !== undefined && <Progress percent={Math.round(state.progress)} size="small" showInfo={false} />}</div>
             : ctx.node.metadata?.errorDetails ? <p className="max-h-20 overflow-auto text-xs leading-relaxed" role="alert">{ctx.node.metadata.errorDetails}</p>
             : <p className="text-xs" style={{ color: ctx.theme.node.muted }}>{error || `已选 ${sources.length} 份素材`}{settings?.resultCount ? ` · 已生成 ${settings.resultCount} 个结果` : ""}</p>}
         <div className="flex items-center justify-between gap-2" onPointerDown={event => event.stopPropagation()}>
-            <Button type="text" size="small" icon={<Settings2 size={14} />} onClick={() => ctx.openPanel()}>设置</Button>
-            {state ? <Button type="text" size="small" icon={<X size={14} />} onClick={() => ctx.processing?.cancel(ctx.node.id)}>取消</Button>
-                : <Button type="text" size="small" icon={<Play size={14} />} disabled={!ctx.processing || !sources.length} onClick={() => start(ctx)}>{ctx.node.metadata?.status === "error" ? "重新运行" : tool === "videoSuperResolution" ? `开始 ${settings?.videoScale ?? 3}× 超采样` : info.action}</Button>}
+            <Button style={{ color: ctx.theme.node.text }} type="text" size="small" icon={<Settings2 size={14} />} onClick={() => ctx.openPanel()}>设置</Button>
+            {state ? <Button style={{ color: ctx.theme.node.text }} type="text" size="small" icon={<X size={14} />} onClick={() => ctx.processing?.cancel(ctx.node.id)}>取消</Button>
+                : <Button style={{ color: ctx.theme.node.text }} type="text" size="small" icon={<Play size={14} />} disabled={!ctx.processing || !sources.length || modelUpscale && (!settings?.upscaleSize || Boolean(settings.modelOutputId) && ctx.node.metadata?.status !== "success")} onClick={() => start(ctx)}>{modelUpscale ? "增强 1 张（计费）" : ctx.node.metadata?.status === "error" ? "重新运行" : tool === "videoSuperResolution" ? `开始 ${settings?.videoScale ?? 3}× 超采样` : info.action}</Button>}
         </div>
     </div>;
 }
@@ -43,12 +67,13 @@ function CreatorPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =>
     const move = (index: number, offset: number) => { const next = [...ids]; [next[index], next[index + offset]] = [next[index + offset], next[index]]; patch({ sourceIds: next }); };
     const multi = tool === "compose" || tool === "concat" || tool==='board' || tool==='mix';
     return <section className="space-y-4 rounded-2xl border p-4" style={{ background: ctx.theme.toolbar.panel, borderColor: ctx.theme.toolbar.border, color: ctx.theme.node.text }} onPointerDown={event => event.stopPropagation()} data-creator-panel={tool}>
-        <header className="flex items-center justify-between"><div className="text-sm font-medium">{info.title}</div><Button type="text" size="small" icon={<X size={16} />} aria-label="关闭设置" onClick={onClose} /></header>
-        <details className="text-xs" open={!sources.length}><summary className="cursor-pointer py-1">{sources.length ? `已连接 ${sources.length} 份素材 · 更换或排序` : "选择素材（也可直接连线）"}</summary><div className="mt-2 space-y-2"><div className="flex items-center justify-between text-xs"><span>{multi ? "选择素材 · 可调整顺序" : "选择素材"}</span><Button type="text" size="small" disabled={busy} onClick={() => patch({ sourceIds: undefined })}>使用上游连线</Button></div>
+        <header className="flex items-center justify-between"><div className="text-sm font-medium">{info.title}</div><Button style={{ color: ctx.theme.node.text }} type="text" size="small" icon={<X size={16} />} aria-label="关闭设置" onClick={onClose} /></header>
+        <details className="text-xs" open={!sources.length}><summary className="cursor-pointer py-1">{sources.length ? `已连接 ${sources.length} 份素材 · 更换或排序` : "选择素材（也可直接连线）"}</summary><div className="mt-2 space-y-2"><div className="flex items-center justify-between text-xs"><span>{multi ? "选择素材 · 可调整顺序" : "选择素材"}</span><Button style={{ color: ctx.theme.node.text }} type="text" size="small" disabled={busy} onClick={() => patch({ sourceIds: undefined })}>使用上游连线</Button></div>
             {multi ? <Select mode="multiple" className="w-full" placeholder="选择画布中的素材" options={options} value={ids} disabled={busy} onChange={(sourceIds: string[]) => patch({ sourceIds })} optionFilterProp="label" />
                 : <Select className="w-full" placeholder="选择画布中的素材" options={options} value={ids[0]} disabled={busy} showSearch={{ optionFilterProp: "label" }} onChange={(id: string) => patch({ sourceIds: [id] })} />}
         </div></details>
         {error && <p role="alert" className="text-xs leading-5">{error}</p>}
+        {tool === "superResolution" && <UpscaleSettings ctx={ctx} settings={settings} sources={sources} busy={busy} patch={patch} />}
         {!multi && sources[0] && <SourceSummary node={sources[0]} />}
         {tool === "videoSuperResolution" && <div className="space-y-2 text-xs">
             <label className="flex items-center justify-between gap-3">放大倍率<Select aria-label="视频超采样倍率" className="min-w-40" size="small" value={settings.videoScale ?? 3} disabled={busy} options={[{ value: 2, label: "2× · 宽高各两倍" }, { value: 3, label: "3× · 宽高各三倍" }]} onChange={(videoScale: 2 | 3) => patch({ videoScale })} /></label>
@@ -63,7 +88,7 @@ function CreatorPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =>
         </div></details>}
         {multi && <div className="max-h-64 space-y-3 overflow-y-auto pr-1">
             {sources.map((source, index) => <div key={source.id} className="space-y-2 border-t pt-3" style={{ borderColor: ctx.theme.toolbar.border }}>
-                <div className="flex items-center gap-2"><span className="text-xs opacity-60">{index + 1}</span><SourceSummary node={source} /><Tooltip title="上移"><Button size="small" type="text" icon={<ArrowUp size={14} />} aria-label={`上移 ${source.title}`} disabled={busy || index === 0} onClick={() => move(index, -1)} /></Tooltip><Tooltip title="下移"><Button size="small" type="text" icon={<ArrowDown size={14} />} aria-label={`下移 ${source.title}`} disabled={busy || index === sources.length - 1} onClick={() => move(index, 1)} /></Tooltip><Button type="text" size="small" aria-label={`移除 ${source.title}`} disabled={busy} icon={<X size={12} />} onClick={() => patch({ sourceIds: ids.filter(id => id !== source.id) })} /></div>
+                <div className="flex items-center gap-2"><span className="text-xs opacity-60">{index + 1}</span><SourceSummary node={source} /><Tooltip title="上移"><Button size="small" type="text" icon={<ArrowUp size={14} />} aria-label={`上移 ${source.title}`} disabled={busy || index === 0} onClick={() => move(index, -1)} /></Tooltip><Tooltip title="下移"><Button size="small" type="text" icon={<ArrowDown size={14} />} aria-label={`下移 ${source.title}`} disabled={busy || index === sources.length - 1} onClick={() => move(index, 1)} /></Tooltip><Button style={{ color: ctx.theme.node.text }} type="text" size="small" aria-label={`移除 ${source.title}`} disabled={busy} icon={<X size={12} />} onClick={() => patch({ sourceIds: ids.filter(id => id !== source.id) })} /></div>
                 {(tool === "concat" || tool === "compose") && <details className="text-xs"><summary className="cursor-pointer py-1">{tool === "concat" ? "调整截取范围（默认整段）" : "调整图层（默认原位置）"}</summary><div className="mt-2">
                 {tool === "concat" ? <div className="flex flex-wrap items-center gap-2 text-xs"><span>截取（秒）</span><InputNumber size="small" min={0} step={0.1} placeholder="从头" aria-label={`${source.title} 起点`} value={settings.trims?.[source.id]?.start} disabled={busy} onChange={value => patch({ trims: { ...settings.trims, [source.id]: { ...settings.trims?.[source.id], start: value ?? undefined } } })} /><span>至</span><InputNumber size="small" min={0} step={0.1} placeholder="结尾" aria-label={`${source.title} 终点`} value={settings.trims?.[source.id]?.end} disabled={busy} onChange={value => patch({ trims: { ...settings.trims, [source.id]: { ...settings.trims?.[source.id], end: value ?? undefined } } })} /></div>
                     : <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -76,13 +101,15 @@ function CreatorPanel({ ctx, onClose }: { ctx: CanvasNodeContext; onClose: () =>
         <p className="text-xs leading-relaxed" style={{ color: ctx.theme.node.muted }}>{tool === "compose" ? "从上到下依次叠放，第一张图决定输出画布的原始尺寸；超出画布的部分不输出。源图不变。"
             : tool === "concat" ? "保持原始尺寸；素材需具有相同尺寸、帧率和音轨结构。结果保存为新视频。"
             : tool === "videoSuperResolution" ? "支持 SDR 不透明视频，保持各帧时间位置，全部音轨转为 AAC。长视频处理耗时较长，可随时取消；结果另存为新视频节点。"
-            : tool === "cutout" || tool === "superResolution" ? `${info.description}。模型已内置，离线运行，图片不上传。` : "全部在本机处理，保留原始素材。"}</p>
-        <footer className="flex items-center justify-between border-t pt-3" style={{ borderColor: ctx.theme.toolbar.border }}><span className="text-xs" style={{ color: ctx.theme.node.muted }}>结果作为新节点保存</span>{busy ? <Button type="text" onClick={() => ctx.processing?.cancel(ctx.node.id)}>取消处理</Button> : <Button type="text" icon={<Play size={14} />} disabled={!ctx.processing || !sources.length} onClick={() => start(ctx)}>{info.action}</Button>}</footer>
+            : tool === "superResolution" && settings.upscaleMethod === "model" ? "按所选尺寸请求，不自动缩小或插值补齐；上游返回尺寸不一致时保留原图并提示。"
+            : tool === "superResolution" ? "ESPCN 输出宽高均为原图 3 倍。模型已内置，离线运行，图片不上传。"
+            : tool === "cutout" ? `${info.description}。模型已内置，离线运行，图片不上传。` : "全部在本机处理，保留原始素材。"}</p>
+        <footer className="flex items-center justify-between border-t pt-3" style={{ borderColor: ctx.theme.toolbar.border }}><span className="text-xs" style={{ color: ctx.theme.node.muted }}>结果作为新节点保存</span>{busy ? <Button style={{ color: ctx.theme.node.text }} type="text" onClick={() => ctx.processing?.cancel(ctx.node.id)}>取消处理</Button> : <Button style={{ color: ctx.theme.node.text }} type="text" icon={<Play size={14} />} disabled={!ctx.processing || !sources.length || tool === "superResolution" && settings.upscaleMethod === "model" && (!settings.upscaleSize || Boolean(settings.modelOutputId) && ctx.node.metadata?.status !== "success")} onClick={() => start(ctx)}>{tool === "superResolution" && settings.upscaleMethod === "model" ? "增强 1 张（计费）" : info.action}</Button>}</footer>
     </section>;
 }
 
 export const creatorToolsPlugin: CanvasPlugin = {
-    id: "creator-tools", name: "本地创作工具", version: "1.0.0", description: "视频拉片、拼接与 AI 超采样，智能抠图、图层合成和图片超分；本地处理，保留源素材。",
+    id: "creator-tools", name: "本地创作工具", version: "1.0.0", description: "视频拉片、拼接与 AI 超采样，智能抠图、图层合成和图片超分；可选生图模型增强，保留源素材。",
     nodes: (Object.keys(creatorTools) as CreatorTool[]).map(tool => {
         const Icon = icons[tool];
         return { type: `creator-tools:${tool}`, title: creatorTools[tool].title, description: creatorTools[tool].description, icon: <Icon size={18} />, defaultSize: { width: 320, height: 190 }, defaultMetadata: { creatorSettings: {}, status: "idle" }, autoOpenPanel: true, renderOwnStatus: true, Content: CreatorContent, Panel: CreatorPanel,

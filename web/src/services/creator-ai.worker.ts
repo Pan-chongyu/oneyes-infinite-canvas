@@ -1,6 +1,7 @@
 import * as ort from "onnxruntime-web/wasm";
 import wasm from "onnxruntime-web/ort-wasm-simd-threaded.wasm?url";
 import mjs from "onnxruntime-web/ort-wasm-simd-threaded.mjs?url";
+import { reflectPixel, restoreLuminance } from "@/lib/image-upscale";
 
 // All inference assets are packaged locally. Terminating this worker cancels inference too.
 ort.env.wasm.wasmPaths = { wasm, mjs };
@@ -74,6 +75,8 @@ async function superResolution(bitmap: ImageBitmap, session: ort.InferenceSessio
     source.ctx.drawImage(bitmap, 0, 0);
     const result = surface(bitmap.width * scale, bitmap.height * scale);
     // ESPCN predicts luminance. Chroma and alpha retain the source content with smooth sampling.
+    result.ctx.imageSmoothingEnabled = true;
+    result.ctx.imageSmoothingQuality = "high";
     result.ctx.drawImage(bitmap, 0, 0, result.canvas.width, result.canvas.height);
     const rgb = source.ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
     // Overlapping tiles bound inference working memory, never the user's input dimensions.
@@ -83,17 +86,22 @@ async function superResolution(bitmap: ImageBitmap, session: ort.InferenceSessio
     // do not resize the source to the model input or cap the source dimensions.
     const side = 224, overlap = 5, tile = side - 2 * overlap;
     const total = Math.ceil(bitmap.width / tile) * Math.ceil(bitmap.height / tile);
+    // Reuse the fixed-shape tensor across tiles; inference consumes it before the next fill.
+    const input = new Float32Array(side * side);
+    const tensor = new ort.Tensor("float32", input, [1, 1, side, side]);
+    const columns = new Int32Array(side);
     let completed = 0;
     for (let y = 0; y < bitmap.height; y += tile) for (let x = 0; x < bitmap.width; x += tile) {
-        const input = new Float32Array(side * side);
-        for (let dy = 0; dy < side; dy++) for (let dx = 0; dx < side; dx++) {
-            const sx = Math.max(0, Math.min(bitmap.width - 1, x - overlap + dx));
-            const sy = Math.max(0, Math.min(bitmap.height - 1, y - overlap + dy));
-            const i = (sy * bitmap.width + sx) * 4;
-            input[dy * side + dx] = (0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2]) / 255;
+        for (let dx = 0; dx < side; dx++) columns[dx] = reflectPixel(x - overlap + dx, bitmap.width);
+        for (let dy = 0; dy < side; dy++) {
+            const sy = reflectPixel(y - overlap + dy, bitmap.height);
+            for (let dx = 0; dx < side; dx++) {
+                const i = (sy * bitmap.width + columns[dx]) * 4;
+                input[dy * side + dx] = (0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2]) / 255;
+            }
         }
         progress(`ESPCN 3× 正在增强细节 · ${completed + 1} / ${total}`, completed / total * 100);
-        const prediction = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", input, [1, 1, side, side]) });
+        const prediction = await session.run({ [session.inputNames[0]]: tensor });
         const output = prediction[session.outputNames[0]];
         if (output.dims[2] !== side * scale || output.dims[3] !== side * scale) throw new Error("超分模型输出倍率不一致，已停止处理");
         const w = Math.min(tile, bitmap.width - x) * scale, h = Math.min(tile, bitmap.height - y) * scale;
@@ -103,11 +111,7 @@ async function superResolution(bitmap: ImageBitmap, session: ort.InferenceSessio
             const index = (dy * w + dx) * 4;
             const luminance = values[(overlap * scale + dy) * side * scale + overlap * scale + dx] * 255;
             const r = pixels.data[index], g = pixels.data[index + 1], b = pixels.data[index + 2];
-            const cb = -0.168736 * r - 0.331264 * g + 0.5 * b;
-            const cr = 0.5 * r - 0.418688 * g - 0.081312 * b;
-            pixels.data[index] = clamp(luminance + 1.402 * cr);
-            pixels.data[index + 1] = clamp(luminance - 0.344136 * cb - 0.714136 * cr);
-            pixels.data[index + 2] = clamp(luminance + 1.772 * cb);
+            restoreLuminance(luminance, r, g, b, pixels.data, index);
         }
         result.ctx.putImageData(pixels, x * scale, y * scale);
         completed++;

@@ -12,6 +12,11 @@ export type CreatorSettings = {
     layers?: Record<string, CreatorLayer>;
     resultCount?: number;
     videoScale?: 2 | 3;
+    upscaleMethod?: "local" | "model";
+    upscaleModel?: string;
+    upscaleSize?: string;
+    upscalePrompt?: string;
+    modelOutputId?: string;
 };
 export type CreatorProgress = { stage: string; progress?: number };
 export type CreatorArtifact = { name: string; kind: "image" | "video" | "audio" | "text"; blob: Blob; time?: number };

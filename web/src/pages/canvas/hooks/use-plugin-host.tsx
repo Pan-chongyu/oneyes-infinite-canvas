@@ -44,7 +44,7 @@ type PluginHostParams = {
 export function usePluginHost(params: PluginHostParams) {
     const { t } = useTranslation();
     const { effectiveConfig, isAiConfigReady, openConfigDialog, theme, nodes, connections, viewportRef, setNodes, setDialogNodeId, applyAgentOps } = params;
-    const processing = useCreatorProcessing({ projectId: params.projectId, nodes, connections, applyOps: applyAgentOps,
+    const processing = useCreatorProcessing({ projectId: params.projectId, nodes, connections, applyOps: applyAgentOps, imageConfig: effectiveConfig, readNodes: params.readNodes, flush: params.flush,
         updateMetadata: (id, patch) => setNodes(previous => previous.map(node => node.id === id ? { ...node, metadata: { ...node.metadata, ...patch } } : node)) });
     const batch=useBatchProcessing(params);
 

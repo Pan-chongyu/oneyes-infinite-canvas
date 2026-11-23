@@ -63,15 +63,42 @@ app.whenReady().then(async()=>{
   assert.equal(await js('reported.at(-1).error.status'),403);assert.equal(await js('reported.at(-1).stage'),'request');assert.equal(reads.length,2);assert.equal(await js('creatorTest.state().nodes.length'),2);
   await js('creatorTest.input("empty","")');const failure=await js('creatorTest.start().then(()=>"",error=>error.message)');assert.match(failure,/原始素材|图片/);
   assert.equal(await js('creatorTest.state().nodes.length'),2);assert.equal(await js('creatorTest.state().nodes[1].metadata.status'),'error');assert.equal(await js('reported.at(-1).stage'),'request');
+  await js('creatorTest.model()');
+  await wait('document.body.innerText.includes("生图模型增强")');
+  assert.match(await js('document.body.innerText'),/增强 1 张（计费）/);
+  await js('creatorTest.pair()');
+  await wait('creatorTest.state().nodes.find(n=>n.id==="tool").metadata.status==="success"');
+  const enhanced = await js('creatorTest.state().nodes.find(n=>n.id===creatorTest.state().nodes.find(n=>n.id==="tool").metadata.creatorSettings.modelOutputId)');
+  assert.equal(enhanced.metadata.naturalWidth,1024); assert.equal(enhanced.metadata.naturalHeight,1024);
+  const modelInfo = await js('creatorTest.modelInfo()');
+  assert.deepEqual(modelInfo.requests,[{model:'gpt-image-2',size:'1024x1024',n:'1',references:1}]);
+  const receipt=modelInfo.tasks.find(task=>task.target.nodeId===enhanced.id);
+  assert.equal(receipt.target.projectId,'A');assert.equal(receipt.target.nodeId,enhanced.id);
+  assert.ok(receipt.references[0].storageKey); assert.equal(receipt.status,'completed');
+  assert.deepEqual(await js('creatorTest.original()'),original);
+  for(const status of ['loading','error']){
+   await js(`creatorTest.model('1024x1024', '${status}')`);
+   const blocked=await js('creatorTest.start().then(()=>"",error=>error.message)');assert.match(blocked,/已有增强任务/);
+   assert.equal((await js('creatorTest.modelInfo()')).requests.length,1,'restored task must not replay a paid POST');
+  }
+  await js('creatorTest.model("auto")');assert.match(await js('creatorTest.start().then(()=>"",error=>error.message)'),/明确/);
+  await js('creatorTest.model();creatorTest.failFlush()');assert.match(await js('creatorTest.start().then(()=>"",error=>error.message)'),/disk full/);
+  assert.equal((await js('creatorTest.modelInfo()')).requests.length,1,'failed local persistence blocks paid submission');
+  console.log('MODEL_UPSCALE_OK: exact output, one reference edit, persisted target before POST, restart duplicate guard, no request on invalid parameters or disk failure');
   if(process.env.CANVAS_CREATOR_SCREENSHOT){
-   await js('creatorTest.seed("compose");creatorTest.theme(false)');
-   await wait('document.querySelector("[data-creator-panel=compose]")');
+   await js('creatorTest.model();creatorTest.theme(false)');
+   await wait('document.querySelector("[data-upscale-settings]")');
    await wait('!document.body.innerText.includes("取消处理")');
+   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+   await js('Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))');
+   await wait('[...document.querySelectorAll("[data-upscale-settings] [role=radio],[data-upscale-settings] textarea")].every(e=>getComputedStyle(e).color==="rgb(41, 37, 36)")');
    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
    writeFileSync(process.env.CANVAS_CREATOR_SCREENSHOT,(await win.webContents.capturePage()).toPNG());
    await js('creatorTest.theme(true)');win.setSize(680,820);
    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
    await js('Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))');
+   await wait('[...document.querySelectorAll("[data-upscale-settings] [role=radio],[data-upscale-settings] textarea")].every(e=>getComputedStyle(e).color==="rgb(245, 245, 244)")');
+   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
    assert.ok(await js('Number(getComputedStyle(document.querySelector("[data-creator-panel] button")).color.match(/[\\d.]+/)[0])>150'),'dark buttons stay legible');
    writeFileSync(process.env.CANVAS_CREATOR_SCREENSHOT.replace('.png','-dark.png'),(await win.webContents.capturePage()).toPNG());
   }

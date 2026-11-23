@@ -81,19 +81,32 @@ app.whenReady().then(async () => {
             const cut=await createImageBitmap(removed);subject.ctx.clearRect(0,0,80,60);subject.ctx.drawImage(cut,0,0);
             const alpha=subject.ctx.getImageData(0,0,80,60).data;
             let low=255,high=0;for(let i=3;i<alpha.length;i+=4){low=Math.min(low,alpha[i]);high=Math.max(high,alpha[i]);}
+            const transparent=surface(19,11),colored=transparent.ctx.createImageData(19,11);
+            for(let y=0;y<11;y++)for(let x=0;x<19;x++)colored.data.set([255,x%2?40:0,y%2?200:0,Math.round(x/18*255)],(y*19+x)*4);
+            transparent.ctx.putImageData(colored,0,0);
+            const colorBlob=await transparent.canvas.convertToBlob({type:'image/png'});
+            const colorResult=await createImageBitmap(await process('${ai}',{operation:'superResolution',blob:colorBlob}));
+            const colorOutput=surface(57,33);colorOutput.ctx.drawImage(colorResult,0,0);colorResult.close();
+            const colorPixels=colorOutput.ctx.getImageData(0,0,57,33).data;
+            const alphaReference=surface(57,33);alphaReference.ctx.imageSmoothingQuality='high';alphaReference.ctx.drawImage(transparent.canvas,0,0,57,33);
+            const expectedAlpha=alphaReference.ctx.getImageData(0,0,57,33).data;
+            let alphaDelta=0;for(let i=3;i<colorPixels.length;i+=4)alphaDelta=Math.max(alphaDelta,Math.abs(colorPixels[i]-expectedAlpha[i]));
+            const pixel=surface(1,1);pixel.ctx.fillStyle='#ff3030';pixel.ctx.fillRect(0,0,1,1);
+            const tiny=await createImageBitmap(await process('${ai}',{operation:'superResolution',blob:await pixel.canvas.convertToBlob({type:'image/png'})}));
             const base=surface(4,3);base.ctx.fillStyle='red';base.ctx.fillRect(0,0,4,3);
             const top=surface(1,1);top.ctx.fillStyle='blue';top.ctx.fillRect(0,0,1,1);
             const blobs=await Promise.all([base,top].map(v=>v.canvas.convertToBlob({type:'image/png'})));
             const merged=await process('${compose}',{blobs,layers:[{},{x:1,y:1,opacity:0.5}]});
             const image=await createImageBitmap(merged);base.ctx.clearRect(0,0,4,3);base.ctx.drawImage(image,0,0);
             let invalid=false;try{await process('${compose}',{blobs,layers:[{blend:'copy'},{}]});}catch{invalid=true;}
-            return {width:bitmap.width,height:bitmap.height,difference,seams,size:[full.canvas.width,full.canvas.height],cut:[cut.width,cut.height],alpha:[low,high,alpha[3]],composition:[image.width,image.height,...base.ctx.getImageData(1,1,1,1).data],invalid};
+            return {width:bitmap.width,height:bitmap.height,difference,seams,size:[full.canvas.width,full.canvas.height],cut:[cut.width,cut.height],alpha:[low,high,alpha[3]],alphaDelta,tiny:[tiny.width,tiny.height],composition:[image.width,image.height,...base.ctx.getImageData(1,1,1,1).data],invalid};
         })()`);
         assert.equal(result.width, 603); assert.equal(result.height, 99); assert.ok(result.difference > 100, 'AI result must differ from interpolated pixels');
         assert.deepEqual(result.size,[449*3,451*3]);
         for(const comparison of result.seams)assert.ok(comparison.maximum<=1 && comparison.mean<0.01, 'tile crossings must match single-tile inference: '+JSON.stringify(result.seams));
         console.log('SUPER_RESOLUTION_SEAMS_OK: '+JSON.stringify(result.seams));
         assert.deepEqual(result.cut, [80,60]); assert.equal(result.alpha[2], 0); assert.ok(result.alpha[0] < result.alpha[1]);
+        assert.ok(result.alphaDelta<=1,'upscale must retain smoothly sampled original alpha');assert.deepEqual(result.tiny,[3,3]);
         assert.deepEqual(result.composition.slice(0,2), [4,3]);
         // Skia's premultiplied-alpha rounding differs by one byte across native backends.
         const [red,green,blue,opacity] = result.composition.slice(2);

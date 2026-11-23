@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import { creatorTool, creatorSources, creatorTools } from "@/lib/canvas/creator-tools";
-import { createCanvasNode, imageMetadata, videoMetadata, audioMetadata } from "@/lib/canvas/canvas-node-factory";
+import { createCanvasNode, imageMetadata, videoMetadata, audioMetadata, buildImageGenerationMetadata } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { creatorSourceBlob, composeImages, processNativeVideo } from "@/services/creator-media";
 import { processLocalAi } from "@/services/creator-ai";
 import { studioImages } from '@/services/studio-images';
 import { uploadImage, deleteStoredImages } from "@/services/image-storage";
+import { imageTasks, storeGeneratedImage } from "@/stores/use-image-task-store";
+import { prepareModelUpscale } from "@/services/api/image-upscale";
+import { requestEdit } from "@/services/api/image";
+import type { AiConfig } from "@/stores/use-config-store";
 import { uploadMediaFile, deleteStoredMedia } from "@/services/file-storage";
 import { reportError } from "@/services/diagnostics";
 import type { CanvasNodeData, CanvasConnection, CanvasNodeMetadata } from "@/types/canvas";
@@ -18,8 +22,11 @@ type Params = {
     connections: CanvasConnection[];
     updateMetadata: (id: string, patch: CanvasNodeMetadata) => void;
     applyOps: (ops: CanvasAgentOp[]) => unknown;
+    imageConfig?: AiConfig;
+    readNodes?: () => CanvasNodeData[];
+    flush?: () => Promise<void>;
 };
-type Task = { projectId: string; type: string; controller: AbortController; promise: Promise<void>; sources?: string[]; settings: string };
+type Task = { projectId: string; type: string; controller: AbortController; promise: Promise<void>; sources?: string[]; outputId?: string; settings: string };
 
 export function useCreatorProcessing(params: Params): CreatorProcessor {
     const current = useRef(params);
@@ -34,20 +41,39 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
     useEffect(() => {
         jobs.current.forEach((job, id) => {
             const node = params.nodes.find(node => node.id === id);
-            if (job.projectId !== params.projectId || !node || node.type !== job.type || JSON.stringify(node.metadata?.creatorSettings || {}) !== job.settings || job.sources?.some(source => !params.nodes.some(node => node.id === source))) job.controller.abort();
+            if (job.projectId !== params.projectId || !node || node.type !== job.type || JSON.stringify(node.metadata?.creatorSettings || {}) !== job.settings || job.sources?.some(source => !params.nodes.some(node => node.id === source)) || job.outputId && !params.nodes.some(node => node.id === job.outputId)) job.controller.abort();
         });
         // Native/local jobs cannot survive process exit. Never leave a restored node spinning forever.
         params.nodes.forEach(node => {
-            if (creatorTool(node.type) && node.metadata?.status === "loading" && jobs.current.get(node.id)?.projectId !== params.projectId) params.updateMetadata(node.id, { status: "error", errorDetails: "上次本地处理已中断，可重新运行；源素材保持不变" });
+            if (!creatorTool(node.type) || jobs.current.get(node.id)?.projectId === params.projectId) return;
+            const outputId = node.metadata?.creatorSettings?.modelOutputId;
+            if (outputId && node.metadata?.creatorSettings?.upscaleMethod === "model") {
+                const output = params.nodes.find(item => item.id === outputId);
+                const status = output?.metadata?.status || "error";
+                const errorDetails = !output ? "结果节点已删除，请检查生成记录与用量后新建超分任务。" : status === "error" ? "请在右侧结果节点查看任务详情或继续取回，不会重新提交付费请求。" : undefined;
+                if (node.metadata?.status !== status || node.metadata?.errorDetails !== errorDetails) params.updateMetadata(node.id, { status, errorDetails });
+            } else if (node.metadata?.status === "loading") params.updateMetadata(node.id, { status: "error", errorDetails: "上次本地处理已中断，可重新运行；源素材保持不变" });
         });
     }, [params.projectId, params.nodes]);
 
     return useMemo(() => ({
         state: id => {
             const job = jobs.current.get(id);
-            return job?.projectId === current.current.projectId && job.type === current.current.nodes.find(node => node.id === id)?.type ? (job.controller.signal.aborted ? { stage: "正在取消并清理" } : states[id]) : undefined;
+            const node = current.current.nodes.find(node => node.id === id);
+            if (job?.projectId === current.current.projectId && job.type === node?.type) return job.controller.signal.aborted ? { stage: "正在取消并清理" } : states[id];
+            const output = node?.metadata?.creatorSettings?.upscaleMethod === "model" && current.current.nodes.find(item => item.id === node.metadata?.creatorSettings?.modelOutputId);
+            return output && output.metadata?.status === "loading" ? { stage: output.metadata.loadingMessage || "模型正在增强 · 在右侧结果节点查看进度" } : undefined;
         },
-        cancel: id => { const job = jobs.current.get(id); if (job) { job.controller.abort(); setStates(old => ({ ...old, [id]: { stage: "正在取消并清理" } })); } },
+        cancel: id => {
+            const job = jobs.current.get(id);
+            if (job) { job.controller.abort(); setStates(old => ({ ...old, [id]: { stage: "正在取消并清理" } })); }
+            else {
+                const settings = current.current.nodes.find(node => node.id === id)?.metadata?.creatorSettings;
+                const output = settings?.upscaleMethod === "model" ? current.current.nodes.find(node => node.id === settings.modelOutputId) : undefined;
+                if (output?.metadata?.imageTaskId) void imageTasks.pause(output.metadata.imageTaskId).catch(error => reportError("image", "pause", error));
+                if (output) current.current.updateMetadata(output.id, { status: "error", loadingMessage: undefined, errorDetails: "已停止等待，可从生成记录继续取回原任务。" });
+            }
+        },
         start: id => {
             const previous = jobs.current.get(id);
             if (previous?.projectId === current.current.projectId && previous.type === current.current.nodes.find(node => node.id === id)?.type) return previous.promise;
@@ -73,6 +99,56 @@ export function useCreatorProcessing(params: Params): CreatorProcessor {
                 try {
                     const sources = creatorSources(node, snapshot.nodes, snapshot.connections);
                     task.sources = [...sources.map(source => source.id), ...(settings.matchId ? [settings.matchId] : [])];
+                    if (tool === "superResolution" && settings.upscaleMethod === "model") {
+                        if (!snapshot.imageConfig || !snapshot.flush || !snapshot.readNodes) throw new Error("模型增强服务尚未就绪，请重新打开画布。");
+                        if (settings.modelOutputId) {
+                            const previousOutput = snapshot.readNodes().find(item => item.id === settings.modelOutputId);
+                            if (previousOutput?.metadata?.status !== "success") throw new Error("已有增强任务，请先在结果节点查看进度或生成记录；不会重复提交。需要新任务时请在设置中点击「新建增强任务」。");
+                        }
+                        progress({ stage: "正在准备参考原图与输出参数" });
+                        const prepared = await prepareModelUpscale(snapshot.imageConfig, settings, await creatorSourceBlob(sources[0], signal), signal);
+                        check();
+                        const output = createCanvasNode("image", { x: 0, y: 0 }, { ...buildImageGenerationMetadata("edit", prepared.config, 1, prepared.references), prompt: prepared.prompt, status: "loading", loadingMessage: "正在提交模型超分请求" });
+                        output.position = { x: node.position.x + node.width + 100, y: node.position.y };
+                        output.title = "AI 超分 · 模型增强";
+                        settings.modelOutputId = output.id;
+                        task.outputId = output.id;
+                        task.settings = JSON.stringify(settings);
+                        current.current.applyOps([
+                            { type: "add_node", id: output.id, nodeType: "image", title: output.title, position: output.position, width: output.width, height: output.height, metadata: output.metadata },
+                            { type: "connect_nodes", fromNodeId: id, toNodeId: output.id },
+                            { type: "update_node", id, metadata: { creatorSettings: settings, status: "loading", errorDetails: undefined } },
+                        ]);
+                        const checkOutput = () => { check(); if (!current.current.readNodes?.().some(item => item.id === output.id)) throw new DOMException("结果节点已删除", "AbortError"); };
+                        try {
+                            await snapshot.flush();
+                            checkOutput();
+                            progress({ stage: "模型正在增强 · 可在右侧结果节点查看和取回" });
+                            const [image] = await requestEdit(prepared.config, prepared.prompt, prepared.references, {
+                                signal, taskTarget: { projectId: snapshot.projectId, nodeId: output.id },
+                                onTask: async taskId => {
+                                    checkOutput();
+                                    current.current.applyOps([{ type: "update_node", id: output.id, metadata: { imageTaskId: taskId } }]);
+                                    await snapshot.flush!();
+                                    checkOutput();
+                                },
+                            });
+                            if (!image) throw new Error("模型未返回图片，请检查结果节点与用量。");
+                            const uploaded = await storeGeneratedImage(image, { signal });
+                            checkOutput();
+                            current.current.applyOps([{ type: "update_node", id: output.id, patch: fitNodeSize(uploaded.width, uploaded.height, 400, 400), metadata: { ...imageMetadata(uploaded), loadingMessage: undefined, errorDetails: undefined } }]);
+                            committed = true;
+                            update({ status: "success", creatorSettings: { ...settings, resultCount: 1 } });
+                            await snapshot.flush();
+                        } catch (error) {
+                            if (active() && current.current.readNodes?.().some(item => item.id === output.id)) {
+                                current.current.applyOps([{ type: "update_node", id: output.id, metadata: { status: "error", loadingMessage: undefined, errorDetails: signal.aborted ? "已停止等待。已提交的任务可从生成记录继续取回；不会自动重新生成。" : error instanceof Error ? error.message : "模型增强失败，请查看任务记录。" } }]);
+                                await snapshot.flush().catch(() => {});
+                            }
+                            throw error;
+                        }
+                        return;
+                    }
                     const reference=settings.matchId?snapshot.nodes.find(node=>node.id===settings.matchId):undefined;
                     if(settings.matchId&&!reference)throw Error('调色参考图已删除，请重新选择');
                     const results = tool === 'board'||tool==='color' ? await studioImages(tool,sources,settings,signal,reference)
