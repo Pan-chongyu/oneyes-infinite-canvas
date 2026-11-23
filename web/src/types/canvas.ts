@@ -26,6 +26,7 @@ export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
 export type CanvasNodeImage = {
+    resolutionWarning?: string;
     id: string;
     imageTaskId?: string;
     status: CanvasNodeStatus;
@@ -47,6 +48,7 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    resolutionWarning?: string;
     smartEdit?: import('./smart-edit').SmartEditSettings;
     studio?: import('./studio').StudioSettings;
     directorScene?: import("./director").DirectorScene;

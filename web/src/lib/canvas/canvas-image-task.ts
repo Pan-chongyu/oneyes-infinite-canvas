@@ -40,7 +40,7 @@ export function applyCanvasImageTask(node: CanvasNodeData, task: ImageTask, imag
     // must not keep a usable image behind the generation overlay.
     const status = image ? "success" : terminal ? "error" : "loading";
     const loadingMessage = status === "loading" ? task.expectedImages ? "图片已生成，正在取回…" : task.status === "waiting" ? "正在重新连接，稍后继续取图…" : task.status === "submitting" ? "正在提交生成…" : "正在生成图片…" : undefined;
-    const fields = image && status === "success" ? { content: image.url, storageKey: image.storageKey, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType } : {};
+    const fields = image && status === "success" ? { content: image.url, storageKey: image.storageKey, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, resolutionWarning: image.resolutionWarning, mimeType: image.mimeType } : {};
     const equalFields = (value: object | undefined, fields: object) => Object.entries(fields).every(([key, field]) => (value as Record<string, unknown> | undefined)?.[key] === field);
     let images = node.metadata?.images?.map(item => {
         if (item.id !== task.target?.imageId) return item;

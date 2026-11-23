@@ -1945,7 +1945,7 @@ function InfiniteCanvasPage() {
                         naturalWidth: image.naturalWidth,
                         naturalHeight: image.naturalHeight,
                         bytes: image.bytes,
-                        mimeType: image.mimeType,
+                        resolutionWarning: image.resolutionWarning, mimeType: image.mimeType,
                         primaryImageId: image.id,
                     },
                 };
@@ -1971,7 +1971,7 @@ function InfiniteCanvasPage() {
                 naturalWidth: image.naturalWidth,
                 naturalHeight: image.naturalHeight,
                 bytes: image.bytes,
-                mimeType: image.mimeType,
+                resolutionWarning: image.resolutionWarning, mimeType: image.mimeType,
                 status: NODE_STATUS_SUCCESS,
                 prompt: node.metadata?.prompt,
                 generationType: node.metadata?.generationType,
@@ -2205,7 +2205,7 @@ function InfiniteCanvasPage() {
     const maskEditImageNode = useCallback(
         async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
             if (!node.metadata?.content) return;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: node.metadata?.size || "auto" };
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
             if (payload.generate && !isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -2688,7 +2688,7 @@ function InfiniteCanvasPage() {
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, imageTaskOptions(rootId, controller.signal, imageId)).then((items) => items[0]);
                                 const uploaded = await storeGeneratedImage(image, { signal: controller.signal });
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
-                                const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType };
+                                const item: CanvasNodeImage = { id: imageId, status: NODE_STATUS_SUCCESS, content: uploaded.url, storageKey: uploaded.storageKey, naturalWidth: uploaded.width, naturalHeight: uploaded.height, bytes: uploaded.bytes, resolutionWarning: uploaded.resolutionWarning, mimeType: uploaded.mimeType };
                                 setNodes((prev) =>
                                     prev.map((node) => {
                                         if (node.id !== rootId) return node;
@@ -3084,7 +3084,7 @@ function InfiniteCanvasPage() {
                     naturalWidth: uploadedImage.width,
                     naturalHeight: uploadedImage.height,
                     bytes: uploadedImage.bytes,
-                    mimeType: uploadedImage.mimeType,
+                    resolutionWarning: uploadedImage.resolutionWarning, mimeType: uploadedImage.mimeType,
                 };
                 const generationMetadata = savedImageMetadata?.generationType
                     ? {

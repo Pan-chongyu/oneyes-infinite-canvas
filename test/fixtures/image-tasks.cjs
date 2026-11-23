@@ -8,7 +8,7 @@ app.whenReady().then(async () => {
     const win = new BrowserWindow({ show: false, width: 1300, height: 850, webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
     win.webContents.on('console-message', (...args) => { const details = args[0]; if (details.level === 'error' || details.level >= 2 || args[1] >= 2) console.error(details.message || args[2]); });
     const js = code => win.webContents.executeJavaScript(code);
-    const wait = async condition => { const end = Date.now() + 20000; while (!await js(`(window.asyncImageTest || window.generationTest) && (${condition})`)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
+    const wait = async condition => { const end = Date.now() + 20000; while (!await js(`(window.asyncImageTest || window.generationTest || window.resolutionTest) && (${condition})`)) { if (Date.now() > end) throw Error('Timed out: ' + condition); await new Promise(resolve => setTimeout(resolve, 25)); } };
     try {
         for (const edit of [false, true]) {
             console.log('ASYNC_IMAGE_PHASE', edit ? 'edit' : 'generation');
@@ -52,6 +52,38 @@ app.whenReady().then(async () => {
         await js('asyncImageTest.cleanupPreviewProbe()');
         console.log('IMAGE_ORIGINAL_FAST_PATH_OK: original dimensions and bytes intact, durable cache reused, preview runs independently');
         await win.webContents.session.clearStorageData();
+        await win.loadURL(new URL('/__image-resolution', process.argv[2]).href);
+        await wait('window.resolutionTest && document.querySelector("[data-image-size-hint]")');
+        const choose = async label => {
+            assert.equal(await js(`Boolean([...document.querySelectorAll('main button')].find(button => button.textContent.trim() === ${JSON.stringify(label)}))`), true);
+            await js(`[...document.querySelectorAll('main button')].find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
+        };
+        for (const dark of [false, true]) {
+            await js(`resolutionTest.reset(); resolutionTest.theme(${dark})`);
+            await wait('resolutionTest.size() === "1k@16:9"');
+            await choose('4k');
+            await wait('resolutionTest.size() === "4k@16:9" && document.querySelector("[data-image-size-hint]").textContent.includes("3840")');
+            for (const edit of [false, true]) {
+                const original = await js(`resolutionTest.generate(${edit})`);
+                assert.equal(original.width, 1, 'the small upstream image must never be enlarged to fake the requested size');
+                assert.match(original.warning, /3840×2160.*1×1/);
+                assert.equal(await js('resolutionTest.requests().at(-1).size'), '3840x2160', 'JSON and multipart must carry the selected dimensions');
+            }
+            await choose('9:16');
+            await wait('resolutionTest.size() === "4k@9:16"');
+            await js('resolutionTest.gemini()');
+            await wait('document.querySelector("[data-image-size-hint]").textContent === "4K · 9:16"');
+            for (const edit of [false, true]) {
+                await js(`resolutionTest.generate(${edit})`);
+                assert.deepEqual(await js('resolutionTest.requests().at(-1).gemini'), { imageSize: '4K', aspectRatio: '9:16' });
+            }
+            await choose('9:21');
+            await wait('document.querySelector("[data-image-size-hint]").textContent.includes("不支持")');
+            const count = await js('resolutionTest.requests().length');
+            assert.match(await js('resolutionTest.reject()'), /不支持/);
+            assert.equal(await js('resolutionTest.requests().length'), count, 'unsupported combinations must stop before the paid POST');
+        }
+        console.log('IMAGE_RESOLUTION_OK: real light/dark panel clicks, exact JSON/multipart sizes, native Gemini tiers, preflight rejection and preserved original pixels');
         await win.loadURL(new URL('/__image-generation', process.argv[2]).href);
         await wait('window.generationTest && Array.from(document.querySelectorAll("[data-node-id=generate] button")).some(b => b.textContent.trim() === "开始生成")');
         await js('Array.from(document.querySelectorAll("[data-node-id=generate] button")).find(b => b.textContent.trim() === "开始生成").click()');

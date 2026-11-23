@@ -25,6 +25,7 @@ import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
 
 type GeneratedImage = {
+    resolutionWarning?: string;
     id: string;
     dataUrl: string;
     storageKey?: string;
@@ -354,7 +355,7 @@ export default function ImagePage() {
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
             const stored = await storeGeneratedImage(image);
-            const nextImage: GeneratedImage = { id: image.id, taskId: image.taskId, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            const nextImage: GeneratedImage = { id: image.id, taskId: image.taskId, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType, resolutionWarning: stored.resolutionWarning };
             setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
             return nextImage;
         } catch (error) {
@@ -634,6 +635,7 @@ function ResultImageCard({
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
+                    {image.resolutionWarning && <p role="note" className="col-span-3 text-xs leading-5">{image.resolutionWarning}</p>}
                     <Tooltip title={t("common.addToAssets")}>
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
                             {t("common.addToAssets")}

@@ -57,6 +57,8 @@ export function normalizeMediaScale(value: string | undefined) {
 
 export function inferMediaScale(size: string, storedScale?: string) {
     if (storedScale) return normalizeMediaScale(storedScale);
+    const selection = parseImageSizeSelection(size);
+    if (selection) return selection.scale;
     if (!size || size === "auto") return "auto";
     if (parseAspectRatio(size)) return "auto";
     const pixels = parsePixelSize(size);
@@ -70,6 +72,8 @@ export function inferMediaScale(size: string, storedScale?: string) {
 }
 
 export function inferMediaRatio(size: string, fallback = "1:1") {
+    const selection = parseImageSizeSelection(size);
+    if (selection) return selection.ratio;
     if (!size || size === "auto") return "auto";
     if (mediaRatioOptions.some((item) => item.value === size)) return size;
     const pixels = parsePixelSize(size) || parseAspectRatio(size);
@@ -90,6 +94,17 @@ export function computeMediaSize(scale: string, ratio: string) {
     const normalizedScale = normalizeMediaScale(scale);
     if (normalizedScale === "auto") return ratio;
     return imageSizePresets[normalizedScale][ratio];
+}
+
+// Store named choices separately from custom pixels so auto ratio cannot erase
+// the selected tier, and Gemini can receive its native tier without guessing.
+export function selectImageSize(scale: string, ratio: string) {
+    return `${normalizeMediaScale(scale)}@${ratio || "auto"}`;
+}
+
+export function parseImageSizeSelection(size: string) {
+    const match = String(size || "").match(/^(1k|2k|4k|auto)@(auto|\d+:\d+)$/i);
+    return match ? { scale: match[1].toLowerCase(), ratio: match[2].toLowerCase() } : null;
 }
 
 export function readMediaDimensions(size: string, scale: string, ratio: string) {
@@ -120,6 +135,8 @@ export function videoResolutionPixels(value: string | undefined) {
 }
 
 export function inferVideoRatio(size: string) {
+    const selection = parseImageSizeSelection(size);
+    if (selection) return selection.ratio;
     if (!size || size === "auto") return "auto";
     if (parseAspectRatio(size)) return size;
     if (videoRatioOptions.some((item) => item.value === size)) return size;

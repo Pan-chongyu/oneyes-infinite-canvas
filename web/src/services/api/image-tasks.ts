@@ -1,9 +1,10 @@
 import { reportError } from "../diagnostics";
 import { MEDIA_POLL_INTERVAL_MS } from "./media-request-policy";
 import type { ReferenceImage } from "../../types/image";
+import { imageSizeMismatch } from "../../lib/image-request-size";
 
 export type ImageTaskTarget = { projectId: string; nodeId: string; imageId?: string };
-export type TaskImage = { id: string; storageKey: string; width: number; height: number; bytes: number; mimeType: string; resultIndex?: number };
+export type TaskImage = { id: string; storageKey: string; width: number; height: number; bytes: number; mimeType: string; resultIndex?: number; resolutionWarning?: string };
 export type ImageTask = {
     id: string;
     remoteId?: string;
@@ -11,6 +12,7 @@ export type ImageTask = {
     model: string;
     prompt: string;
     config: { model: string; imageModel: string; size: string; quality: string; count: string };
+    requestedSize?: string;
     target?: ImageTaskTarget;
     references?: ReferenceImage[];
     logId: string;
@@ -191,7 +193,8 @@ export class ImageTaskManager {
                     const image = await this.deps.saveImage(source, `${task.id}-${index}`);
                     const checkpoint = checkpoints.then(async () => {
                         if (this.removed.has(id)) return;
-                        saved.set(index, { ...image, resultIndex: index });
+                        const resolutionWarning = imageSizeMismatch(task.requestedSize, image);
+                        saved.set(index, { ...image, resultIndex: index, ...(resolutionWarning ? { resolutionWarning } : {}) });
                         task = { ...task, images: [...saved.entries()].sort(([a], [b]) => a - b).map(([, value]) => value) };
                         await this.put(task);
                     });

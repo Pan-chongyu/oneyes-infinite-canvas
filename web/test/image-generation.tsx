@@ -15,7 +15,7 @@ import type { ImageTaskDependencies } from "@/services/api/image-tasks";
 
 await useConfigStore.persist.rehydrate();
 await useCanvasStore.persist.rehydrate();
-useConfigStore.setState({ config: { ...defaultConfig, model: "default::gpt-image-2", imageModel: "default::gpt-image-2", count: "2", canvasImageCount: "2", channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-private-key" }] } });
+useConfigStore.setState({ config: { ...defaultConfig, size: "4k@16:9", model: "default::gpt-image-2", imageModel: "default::gpt-image-2", count: "2", canvasImageCount: "2", channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-private-key" }] } });
 const projectId = useCanvasStore.getState().createProject("生成等待状态回归");
 useCanvasStore.getState().updateProject(projectId, { nodes: [{ id: "generate", type: CanvasNodeType.Config, title: "生图配置", position: { x: 80, y: 80 }, width: 320, height: 320, metadata: { prompt: "测试图片", composerContent: "测试图片", generationMode: "image", count: 2 } }] });
 
@@ -37,6 +37,7 @@ managerDeps.completed = async task => { await historyGate; await writeHistory(ta
 window.fetch = async (input, options) => {
     const url = String(input);
     if (url.includes("/images/generations/async")) {
+        if (JSON.parse(String(options?.body)).size !== "3840x2160") throw Error("Selected 4K resolution missing from async JSON");
         posts++;
         return Response.json({ task_id: `imgtask_${posts}`, status: "processing" }, { status: 202 });
     }

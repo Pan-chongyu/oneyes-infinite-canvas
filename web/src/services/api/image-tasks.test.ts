@@ -8,6 +8,23 @@ const image = { id: "local-0", storageKey: "image:blob", width: 1024, height: 76
 const seed = { id: "local", credential: "key-fingerprint", model: "default::gpt-image-2", prompt: "离线恢复测试", config: { model: "default::gpt-image-2", imageModel: "default::gpt-image-2", quality: "high", size: "4:3", count: "1" }, logId: "log-local", createdAt: Date.now() };
 const processing = (): ImageTask => ({ ...structuredClone(seed), remoteId: "imgtask_remote", status: "processing", pollMs: 3000, images: [], expiresAt: Date.now() + 100000 });
 const complete = { value: { id: "imgtask_remote", status: "completed", result: { data: [{ url: "https://images.example/1.png" }] } } };
+
+test("resolution checks survive restart and preserve a completed original without another paid POST", async () => {
+    const task = { ...processing(), requestedSize: "3840x2160", config: { ...seed.config, size: "4k@16:9" } };
+    const f = fixture(new Map([[task.id, task]]));
+    await f.manager.resumeAll();
+    const saved = f.saved.get(task.id)!;
+    assert.equal(saved.status, "completed");
+    assert.equal(saved.config.size, "4k@16:9");
+    assert.match(saved.images[0].resolutionWarning!, /请求 3840×2160，上游返回 1024×768/);
+    assert.equal(saved.images[0].storageKey, image.storageKey);
+    assert.equal(saved.images[0].width, 1024);
+    const restarted = fixture(f.saved);
+    await restarted.manager.resumeAll();
+    assert.equal(restarted.calls.submits, 0);
+    assert.equal(restarted.calls.polls, 0);
+    assert.equal(restarted.saved.get(task.id)?.images[0].resolutionWarning, saved.images[0].resolutionWarning);
+});
 function fixture(saved = new Map<string, ImageTask>(), overrides: Partial<ImageTaskDependencies> = {}) {
     const calls = { submits: 0, polls: 0, saves: [] as string[], logs: [] as string[] };
     const deps: ImageTaskDependencies = {

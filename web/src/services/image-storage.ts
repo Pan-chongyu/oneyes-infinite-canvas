@@ -6,6 +6,7 @@ import { withLocalProxy } from "@/stores/use-config-store";
 import { createImageThumbnail } from "@/lib/image-thumbnail";
 
 export type UploadedImage = {
+    resolutionWarning?: string;
     url: string;
     storageKey?: string;
     width: number;

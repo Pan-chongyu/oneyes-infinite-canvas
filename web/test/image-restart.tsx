@@ -46,7 +46,7 @@ async function imagePixels(blob: Blob, losslessUpload = false) {
 const invalidReferenceErrors: string[] = [];
 let canceled = false;
 if (submit) {
-    const config = { ...defaultConfig, model: "default::gpt-image-2", imageModel: "default::gpt-image-2", channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-private-key" }] };
+    const config = { ...defaultConfig, size: "2k@16:9", model: "default::gpt-image-2", imageModel: "default::gpt-image-2", channels: [{ ...defaultConfig.channels[0], apiKey: "fixture-private-key" }] };
     useConfigStore.setState({ config });
     // Wait for the real encrypted IPC storage, as the next process must restore it.
     await window.oneYesDesktop!.storage.setItem("infinite-canvas:ai_config_store", JSON.stringify({ state: { config }, version: 0 }));

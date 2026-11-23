@@ -61,6 +61,7 @@ app.whenReady().then(async () => {
             if (request.method === 'POST') {
                 attemptedPosts++;
                 const form = await request.formData();
+                assert.equal(form.get('size'), '2048x1152', 'native async edits retain the chosen resolution');
                 const files = form.getAll('image[]');
                 assert.equal(files.length, references.length || 4, 'all reference images must survive native multipart transport');
                 assert.equal(form.get('image'), null);
@@ -124,6 +125,8 @@ app.whenReady().then(async () => {
         } else {
             assert.equal(await js('restartTest.keyRestored()'), true, 'encrypted Key must restore before recovery');
             await wait('restartTest.state().tasks[0]?.status === "completed"');
+            assert.equal(await js('restartTest.state().tasks[0].requestedSize'), '2048x1152');
+            assert.match(await js('restartTest.state().tasks[0].images[0].resolutionWarning'), /请求 2048×1152/);
             assert.deepEqual(await js('restartTest.state().tasks[0].images.map(image => image.resultIndex)'), [0, 1, 2]);
             await wait('restartTest.node().metadata.status === "success" && !!document.querySelector("[data-node-id=restart-node] img")');
             assert.ok(await js('restartTest.blob()'), 'downloaded Blob survives process restart');

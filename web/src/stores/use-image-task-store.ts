@@ -5,6 +5,7 @@ import { buildApiUrl, useConfigStore, type AiConfig } from "./use-config-store";
 import { ImageTaskManager, imageCredentialFingerprint, imageTaskRequest, type ImageTask, type ImageTaskTarget, type TaskImage } from "@/services/api/image-tasks";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
+import { imageSizeMismatch } from "@/lib/image-request-size";
 
 const storage = localforage.createInstance({ name: "infinite-canvas", storeName: "image_tasks" });
 const logs = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
@@ -57,7 +58,7 @@ export const imageTasks: ImageTaskManager = new ImageTaskManager({
 });
 
 export type AsyncImageOptions = { signal?: AbortSignal; onTask?: (id: string) => void | Promise<void>; taskTarget?: ImageTaskTarget; taskLogId?: string };
-export type GeneratedImageResult = { id: string; dataUrl: string; taskId?: string; stored?: UploadedImage };
+export type GeneratedImageResult = { id: string; dataUrl: string; taskId?: string; stored?: UploadedImage; requestedSize?: string };
 
 export async function requestDurableImage(config: AiConfig, prompt: string, path: string, body: Record<string, unknown> | FormData, options?: AsyncImageOptions, references?: ReferenceImage[]): Promise<GeneratedImageResult[]> {
     const id = nanoid();
@@ -68,6 +69,7 @@ export async function requestDurableImage(config: AiConfig, prompt: string, path
     }));
     const saved = await imageTasks.submit({
         id, credential: await imageCredentialFingerprint(config.apiKey), model: config.model, prompt,
+        requestedSize: body instanceof FormData ? String(body.get("size") || "") : typeof body.size === "string" ? body.size : undefined,
         config: { model: config.model, imageModel: config.imageModel, quality: config.quality, size: config.size, count: config.count },
         ...(options?.taskTarget ? { target: options.taskTarget } : {}), logId: options?.taskLogId || `async-${id}`, createdAt: Date.now(),
         ...(savedReferences.length ? { references: savedReferences } : {}),
@@ -84,8 +86,9 @@ export async function storedTaskImage(image: TaskImage): Promise<UploadedImage> 
     return { ...image, url };
 }
 
-export function storeGeneratedImage(image: GeneratedImageResult, options?: { signal?: AbortSignal }) {
-    return image.stored ? Promise.resolve(image.stored) : uploadImage(image.dataUrl, options);
+export async function storeGeneratedImage(image: GeneratedImageResult, options?: { signal?: AbortSignal }) {
+    const stored = image.stored || await uploadImage(image.dataUrl, options);
+    return { ...stored, resolutionWarning: stored.resolutionWarning || imageSizeMismatch(image.requestedSize, stored) };
 }
 
 let started = false;
