@@ -21,8 +21,16 @@ app.whenReady().then(async () => {
     configurePermissions(win.webContents.session);
     const js = code => win.webContents.executeJavaScript(code);
     const wait = async code => { const end = Date.now() + 15000; while (!(typeof code === 'function' ? await code() : await js(code))) { if (Date.now() > end) throw Error('Image details wait failed: ' + code); await new Promise(resolve => setTimeout(resolve, 25)); } };
+    const resize = async (width, height) => {
+        const size = win.getSize();
+        if (size[0] !== width || size[1] !== height) await new Promise(resolve => { win.once('resize', resolve); win.setSize(width, height); });
+        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        win.focus(); await wait('document.hasFocus()');
+    };
     const click = async (selector, clickCount = 1) => {
+        await wait('!document.querySelector(".ant-modal") || document.querySelector(".ant-modal").getAnimations({subtree:true}).every(animation=>animation.playState!=="running")');
         const point = await js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+        win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
         win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount, ...point }); win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount, ...point });
     };
     const downloaded = new Promise((resolve, reject) => win.webContents.session.on('will-download', (_event, item) => {
@@ -31,13 +39,14 @@ app.whenReady().then(async () => {
     }));
     try {
         await win.loadURL(process.argv[2]); await wait('Boolean(window.imageDetailsTest)'); const before = await js('imageDetailsTest.node()');
+        win.show(); if (process.platform === 'darwin') app.focus({ steal: true }); win.focus(); await wait('document.hasFocus()');
         await click('[data-node-id="detail-fixture"] > .relative', 2);
         await wait('document.querySelector("[aria-label=图片信息]")?.textContent.includes("4096 × 2048 px")');
         await js('imageDetailsTest.remove()'); await wait('!document.querySelector("[aria-label=图片详情内容]")');
         for (const dark of [false, true]) {
             await js(`imageDetailsTest.theme(${dark})`);
             for (const width of [1280, 640]) {
-                win.setSize(width, 900); await click('#open-details');
+                await resize(width, 900); await click('#open-details');
                 await wait('document.querySelector("[aria-label=图片信息]")?.textContent.includes("4096 × 2048 px")');
                 await wait('!document.querySelector(".ant-modal-wrap .ant-modal")?.className.includes("zoom")');
                 const layout = await js(`(()=>{const m=document.querySelector('.ant-modal'),s=document.querySelector('[aria-label="图片详情内容"]'),i=document.querySelector('[aria-label="图片信息"]'),r=m.getBoundingClientRect();return{left:r.left,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,overflow:s.scrollWidth>s.clientWidth,info:i.textContent}})()`);
@@ -72,7 +81,7 @@ app.whenReady().then(async () => {
                 await wait('!document.querySelector("[aria-label=图片详情内容]")');
             }
         }
-        win.setSize(1280, 900); await js('imageDetailsTest.open("second")'); await wait('document.querySelector("[aria-label=图片信息]").textContent.includes("240 × 480 px")');
+        await resize(1280, 900); await js('imageDetailsTest.open("second")'); await wait('document.querySelector("[aria-label=图片信息]").textContent.includes("240 × 480 px")');
         await click('button[aria-label="上一张"]'); await wait('document.querySelector("[aria-label=图片信息]").textContent.includes("4096 × 2048 px")');
         win.show(); win.focus(); await wait('document.hasFocus()');
         await wait('!document.querySelector(".ant-modal-wrap .ant-modal")?.className.includes("zoom")');
@@ -83,10 +92,10 @@ app.whenReady().then(async () => {
         assert.equal(await js('imageDetailsTest.node()'), before, 'viewing, switching and downloading never edit the node');
         await click('button[aria-pressed=true]'); await wait('!document.querySelector("[aria-label=图片信息]")');
         await click('button[aria-pressed=false]'); await wait('Boolean(document.querySelector("[aria-label=图片信息]"))');
-        win.setSize(640, 600); await wait('document.querySelector(".ant-modal").getBoundingClientRect().bottom<=innerHeight');
+        await resize(640, 600); await wait('document.querySelector(".ant-modal").getBoundingClientRect().bottom<=innerHeight');
         await js('imageDetailsTest.missing()'); await wait('document.querySelector("[role=alert]")?.textContent.includes("原图暂时无法读取")');
         await js('imageDetailsTest.recover()'); await js(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='重新读取').click()`); await wait('document.querySelector("[aria-label=图片信息]").textContent.includes("4096 × 2048 px")');
         console.log('IMAGE_DETAILS_OK: original offline pixels and bytes, natural dimensions, primary/batch navigation, 1:1, keyboard, themes, narrow layout, download and missing-file recovery');
-    } catch (error) { console.error(error.stack); if (process.env.ONEYES_TEST_IMAGE_DETAIL_ARTIFACTS) await writeFile(join(process.env.ONEYES_TEST_IMAGE_DETAIL_ARTIFACTS, 'image-details-failure.png'), (await win.webContents.capturePage()).toPNG()); process.exitCode = 1; }
+    } catch (error) { console.error(error.stack); console.error('IMAGE_DETAIL_STATE', await js('JSON.stringify({focused:document.hasFocus(),active:document.activeElement?.outerHTML,zoom:document.querySelector("[aria-live=polite]")?.textContent,viewport:document.querySelector("[aria-label^=图片预览]")?.getBoundingClientRect().toJSON(),modal:document.querySelector(".ant-modal")?.getBoundingClientRect().toJSON()})')); if (process.env.ONEYES_TEST_IMAGE_DETAIL_ARTIFACTS) await writeFile(join(process.env.ONEYES_TEST_IMAGE_DETAIL_ARTIFACTS, 'image-details-failure.png'), (await win.webContents.capturePage()).toPNG()); process.exitCode = 1; }
     finally { if (oldClipboard.length) await clipboard.write(oldClipboard); else clipboard.clear(); win.destroy(); app.exit(process.exitCode || 0); }
 }).catch(error => { console.error(error.stack); app.exit(1); });

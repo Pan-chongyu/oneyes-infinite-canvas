@@ -68,15 +68,16 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean, o
     useEffect(() => {
         if (!open || !viewportElement) return;
         const updateSize = () => {
-            const width = viewportElement.clientWidth;
-            const height = viewportElement.clientHeight;
+            // Scrollbars must not refit the original after switching to 1:1.
+            const width = options.actualSize ? viewportElement.offsetWidth : viewportElement.clientWidth;
+            const height = options.actualSize ? viewportElement.offsetHeight : viewportElement.clientHeight;
             setViewportSize((current) => (current.width === width && current.height === height ? current : { width, height }));
         };
         updateSize();
         const observer = new ResizeObserver(updateSize);
         observer.observe(viewportElement);
         return () => observer.disconnect();
-    }, [open, viewportElement]);
+    }, [open, viewportElement, options.actualSize]);
 
     const baseSize = fitImage(image, viewportSize);
     const zoomLimit = options.actualSize && image && baseSize.width ? Math.max(maxZoom, image.width / baseSize.width) : maxZoom;
