@@ -136,6 +136,7 @@ jobs:
       - run: npm run test:video-workflow
       - run: npm run test:playback
       - run: npm run test:images
+      - run: npm run test:image-details
       - run: npm run test:plugins
       - run: npm run test:webdav
       - run: npm run test:creators

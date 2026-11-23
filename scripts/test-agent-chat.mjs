@@ -12,6 +12,7 @@ const { createServer, build, preview } = await import(pathToFileURL(webRequire.r
 const { default: react } = await import(pathToFileURL(webRequire.resolve('@vitejs/plugin-react')).href);
 const updates = process.argv.includes('--updates');
 const images = process.argv.includes('--images');
+const imageDetails = process.argv.includes('--image-details');
 const webdav = process.argv.includes('--webdav');
 const plugins = process.argv.includes('--plugins');
 const videos = process.argv.includes('--videos');
@@ -22,8 +23,8 @@ const collaboration = process.argv.includes('--collaboration');
 const playback = process.argv.includes('--playback');
 const videoWorkflow = process.argv.includes('--video-workflow');
 const modelCatalog = process.argv.includes('--models');
-const fixture = modelCatalog?'model-catalog':videoWorkflow?'video-workflow':playback?'playback':collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
-const server = videoWorkflow||playback||collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
+const fixture = imageDetails?'image-details':modelCatalog?'model-catalog':videoWorkflow?'video-workflow':playback?'playback':collaboration?'collaboration':studio?'studio':director ? 'director' : creators ? 'creator-tools' : videos ? 'video-protocol' : plugins ? 'canvas-plugins' : images ? 'image-tasks' : updates ? 'desktop-update' : webdav ? 'webdav-sync' : 'agent-chat';
+const server = imageDetails||videoWorkflow||playback||collaboration||studio||director || creators ? await directorFixture({ build, react, builtinPlugins, fixture }) : (images || videos) ? await imageFixtureServer({ build, preview, react, builtinPlugins, videos }) : await createServer({
     configFile: false, root: resolve('web'), logLevel: 'error',
     resolve: { alias: { '@': resolve('web/src') } }, define: { __APP_VERSION__: JSON.stringify('test') },
     plugins: [react(), builtinPlugins(), { name: 'chat-fixture', configureServer(server) {
@@ -43,6 +44,7 @@ try {
     if(studio)env.CANVAS_STUDIO_TEST_ROOT=server.root;
     if(collaboration)env.CANVAS_COLLABORATION_TEST_ROOT=server.root;
     if(playback)env.CANVAS_PLAYBACK_TEST_ROOT=server.root;
+    if(imageDetails)env.CANVAS_IMAGE_DETAILS_TEST_ROOT=server.root;
     if(videoWorkflow)env.CANVAS_VIDEO_WORKFLOW_TEST_ROOT=server.root;
     const pluginProfile = videoWorkflow||studio||plugins || director ? await mkdtemp(join(tmpdir(), 'canvas-plugin-restart-')) : null;
     if (pluginProfile) env[videoWorkflow?'CANVAS_VIDEO_WORKFLOW_TEST_PROFILE':studio?'CANVAS_STUDIO_TEST_PROFILE':director ? 'CANVAS_DIRECTOR_TEST_PROFILE' : 'CANVAS_PLUGIN_TEST_PROFILE'] = pluginProfile;

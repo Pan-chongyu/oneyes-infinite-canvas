@@ -7,7 +7,7 @@ const maxZoom = 4;
 const zoomStep = 1.2;
 const viewportPadding = 16;
 
-export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
+export function useImageEditorViewport(image: ImageSize | null, open: boolean, options: { actualSize?: boolean; dragToPan?: boolean } = {}) {
     const viewportNodeRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const panRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
@@ -31,6 +31,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
 
     useEffect(() => {
         if (!open) return;
+        if (options.dragToPan) return;
         const releaseSpace = () => {
             spacePressedRef.current = false;
             setSpacePressed(false);
@@ -62,7 +63,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             window.removeEventListener("blur", releaseSpace);
             spacePressedRef.current = false;
         };
-    }, [open]);
+    }, [open, options.dragToPan]);
 
     useEffect(() => {
         if (!open || !viewportElement) return;
@@ -78,6 +79,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
     }, [open, viewportElement]);
 
     const baseSize = fitImage(image, viewportSize);
+    const zoomLimit = options.actualSize && image && baseSize.width ? Math.max(maxZoom, image.width / baseSize.width) : maxZoom;
     const stageSize = { width: baseSize.width * zoom, height: baseSize.height * zoom };
     const contentSize = {
         width: Math.max(viewportSize.width, stageSize.width),
@@ -107,7 +109,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             const stage = stageRef.current;
             if (!viewport || !stage || !baseSize.width || !baseSize.height) return;
 
-            const boundedZoom = clamp(nextZoom, minZoom, maxZoom);
+            const boundedZoom = clamp(nextZoom, minZoom, zoomLimit);
             if (Math.abs(boundedZoom - zoom) < 0.001) return;
 
             const viewportRect = viewport.getBoundingClientRect();
@@ -122,7 +124,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             zoomAnchorRef.current = { zoom: boundedZoom, ratioX, ratioY, viewportX, viewportY };
             setZoom(boundedZoom);
         },
-        [baseSize.height, baseSize.width, zoom],
+        [baseSize.height, baseSize.width, zoom, zoomLimit],
     );
 
     useEffect(() => {
@@ -137,14 +139,15 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
     }, [open, setZoomAround, viewportElement, zoom]);
 
     const startPan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-        if (event.button !== 1 && !(event.button === 0 && spacePressedRef.current)) return;
+        if (event.button !== 1 && !(event.button === 0 && (spacePressedRef.current || options.dragToPan))) return;
         event.preventDefault();
         event.stopPropagation();
         const viewport = event.currentTarget;
+        if (options.dragToPan) viewport.focus({ preventScroll: true });
         panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, scrollLeft: viewport.scrollLeft, scrollTop: viewport.scrollTop };
         viewport.setPointerCapture(event.pointerId);
         setIsPanning(true);
-    }, []);
+    }, [options.dragToPan]);
     const movePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
         const pan = panRef.current;
         if (!pan || event.pointerId !== pan.pointerId) return;
@@ -182,12 +185,13 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             onPointerCancelCapture: stopPan,
             onAuxClick: preventAuxClick,
         },
-        canZoomIn: zoom < maxZoom,
+        canZoomIn: zoom < zoomLimit,
         canZoomOut: zoom > minZoom,
         imageScale: image ? stageSize.width / image.width : 0,
         zoomIn: () => setZoomAround(zoom * zoomStep),
         zoomOut: () => setZoomAround(zoom / zoomStep),
         resetZoom: () => setZoomAround(minZoom),
+        actualSize: () => image && baseSize.width && setZoomAround(image.width / baseSize.width),
         contentStyle: { width: contentSize.width, height: contentSize.height } satisfies CSSProperties,
         stageStyle: {
             left: stageOffset.left,
