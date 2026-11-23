@@ -1,0 +1,321 @@
+const fs = require('node:fs/promises');
+const { createReadStream } = require('node:fs');
+const path = require('node:path');
+const { createHash } = require('node:crypto');
+const { FEED, RELEASE_ROOT, CHECK_INTERVAL, readManifest, newer } = require('./update-policy.cjs');
+const { applyDelta } = require('./update-delta.cjs');
+const { downloadBlocks } = require('./update-blockmap.cjs');
+
+async function fileHash(file, progress) {
+    const hash = createHash('sha256');
+    let bytes = 0;
+    for await (const chunk of createReadStream(file)) { hash.update(chunk); bytes += chunk.length; progress?.(bytes); }
+    return hash.digest('hex');
+}
+async function validateFile(file, entry, progress) {
+    const info = await fs.lstat(file);
+    if (!info.isFile() || info.size !== entry.size || await fileHash(file, progress && (bytes => progress(Math.floor(bytes / entry.size * 100)))) !== entry.sha256) throw new Error('更新包校验失败，已停止安装。请重新下载');
+}
+function createUpdater({ currentVersion, directory, target, fetcher, install, changed = () => {}, onError = () => {}, onRecovered = () => {}, publicKey, enabled = true, feed = FEED, installerCache }) {
+    const root = path.join(directory, 'ota');
+    let state = { status: 'idle', currentVersion, version: '', progress: 0, downloaded: 0, total: 0, notes: '', error: '', supported: enabled, mode: 'full', phase: '', reused: 0 };
+    let selected, entry, saved, operation, installation, checking, timer, closed = false;
+    const controller = new AbortController();
+    const recovered = (stage, operation) => { try { onRecovered(stage, operation); } catch {} };
+    const emit = patch => { state = { ...state, ...patch }; changed({ ...state }); };
+    const failure = error => {
+        const stage = state.status === 'installing' ? 'install' : state.status === 'downloading' ? 'download' : 'check';
+        try { onError(error, stage, stage === 'install' ? 'update-installer' : stage === 'check' ? 'update-feed' : state.mode === 'delta' ? 'update-delta' : 'update-package'); } catch {}
+        emit({ status: 'error', error: error.userMessage || (/^(更新|未找到|当前|无法识别|请将)/.test(error.message) ? error.message : '连接更新服务失败，请检查网络或代理后重试') });
+    };
+    const serial = action => {
+        if (operation) return operation;
+        operation = action().catch(error => {
+            if (!closed && !installation) failure(error);
+        }).finally(() => { operation = null; });
+        return operation;
+    };
+    async function cleanup(keep = '') {
+        await fs.mkdir(root, { recursive: true, mode: 0o700 });
+        for (const name of await fs.readdir(root)) {
+            if (name === keep || name === `base-${currentVersion}` || name === 'install-error.txt' || name === `installed-${currentVersion}.ok`) continue;
+            await fs.rm(path.join(root, name), { recursive: true, force: true });
+        }
+    }
+    async function chooseTarget() {
+        try { return selected ||= await target(); }
+        catch (error) { error.userMessage = error.message; emit({ supported: false }); throw error; }
+    }
+    async function restore() {
+        const destination = await chooseTarget();
+        // Older updaters leave the just-installed full package here. Promote it
+        // before cleanup so the first delta-enabled release can use it next time.
+        const installed = path.join(root, currentVersion);
+        try {
+            const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(file => fs.readFile(path.join(installed, file), 'utf8')));
+            const base = readManifest(text, signature, destination, publicKey);
+            if (base.version === currentVersion) {
+                await validateFile(path.join(installed, base.file), base);
+                await fs.rm(path.join(root, `base-${currentVersion}`), { recursive: true, force: true });
+                await fs.rename(installed, path.join(root, `base-${currentVersion}`));
+            }
+        } catch {}
+        // NSIS keeps its installer in its own per-user cache, including first
+        // installs and manual upgrades. Adopt it only after fixed-key validation;
+        // never download a full old installer merely to enable a delta.
+        if (destination.platform === 'win32' && installerCache) {
+            const folder = path.join(root, `base-${currentVersion}`), stage = folder + '.staging';
+            let cached;
+            try {
+                const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(file => fs.readFile(path.join(folder, file), 'utf8')));
+                const base = readManifest(text, signature, destination, publicKey);
+                if (base.version === currentVersion) { await validateFile(path.join(folder, base.file), base); cached = base; }
+            } catch {}
+            if (cached) try { await validateFile(installerCache, cached); await fs.rm(installerCache); } catch { /* Preserve unrelated or unverifiable installer bytes. */ }
+            if (!cached) try {
+                if (!(await fs.lstat(installerCache)).isFile()) throw Error('No cached installer');
+                const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(async name => (await response(`${RELEASE_ROOT}/download/v${currentVersion}/${name}`)).text()));
+                const base = readManifest(text, signature, destination, publicKey);
+                if (base.version !== currentVersion) throw Error('Cached version mismatch');
+                await validateFile(installerCache, base);
+                await fs.rm(stage, { recursive: true, force: true }); await fs.mkdir(stage, { recursive: true, mode: 0o700 });
+                await fs.copyFile(installerCache, path.join(stage, base.file), fs.constants.COPYFILE_FICLONE);
+                await validateFile(path.join(stage, base.file), base);
+                await fs.writeFile(path.join(stage, 'canvas-latest.json'), text, { mode: 0o600 });
+                await fs.writeFile(path.join(stage, 'canvas-latest.json.sig'), signature, { mode: 0o600 });
+                await fs.rm(folder, { recursive: true, force: true }); await fs.rename(stage, folder);
+                // Remove the duplicate only if it still contains these bytes.
+                await validateFile(installerCache, base); await fs.rm(installerCache);
+            } catch { await fs.rm(stage, { recursive: true, force: true }).catch(() => {}); }
+        }
+        let pending;
+        for (const name of (await fs.readdir(root).catch(() => [])).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))) {
+            if (!/^\d+\.\d+\.\d+$/.test(name) || !newer(name, currentVersion)) continue;
+            const folder = path.join(root, name);
+            try {
+                const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(file => fs.readFile(path.join(folder, file), 'utf8')));
+                const candidate = readManifest(text, signature, destination, publicKey);
+                if (candidate.version !== name) continue;
+                pending ||= { text, signature, folder };
+                await validateFile(path.join(folder, candidate.file), candidate);
+                entry = candidate; saved = { text, signature, folder };
+                await cleanup(name);
+                recovered('download', 'update-package');
+                let transfer = { total: entry.size, reused: 0, mode: 'full' };
+                try {
+                    const info = JSON.parse(await fs.readFile(path.join(folder, 'download-info.json'), 'utf8'));
+                    if (info.sha256 === entry.sha256 && ['full', 'delta'].includes(info.mode) && Number.isSafeInteger(info.total) && info.total >= 0 && Number.isSafeInteger(info.reused) && info.reused >= 0 && info.total + info.reused === entry.size) transfer = info;
+                } catch {}
+                emit({ status: 'ready', version: entry.version, notes: entry.notes, progress: 100, downloaded: transfer.total, total: transfer.total, reused: transfer.reused, mode: transfer.mode });
+                return true;
+            } catch {}
+        }
+        await cleanup(pending ? path.basename(pending.folder) : '');
+        return false;
+    }
+    async function response(url, init = {}) {
+        const result = await fetcher(url, { ...init, signal: checking ? AbortSignal.any([controller.signal, checking.signal]) : controller.signal, cache: 'no-store' });
+        if (!result.ok) { await result.body?.cancel(); throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status }); }
+        return result;
+    }
+    async function downloadBytes(url, file, size, sha256, notify = true) {
+        const partial = file + '.part', receipt = partial + '.json';
+        const discard = async () => { await fs.rm(partial, { force: true }); await fs.rm(receipt, { force: true }); };
+        try { await validateFile(file, { size, sha256 }); return; } catch {}
+        let offset = 0, validator, invalid = false, resumable = true;
+        try {
+            const info = await fs.lstat(partial), saved = JSON.parse(await fs.readFile(receipt, 'utf8'));
+            if (info.isFile() && info.size <= size && saved.url === url && saved.size === size && saved.sha256 === sha256) {
+                offset = info.size; validator = saved.validator;
+            } else await discard();
+        } catch { await discard(); }
+        try {
+            if (offset === size) {
+                await validateFile(partial, { size, sha256 });
+                await fs.rename(partial, file); await fs.rm(receipt, { force: true }); return;
+            }
+            let result = await fetcher(url, { signal: controller.signal, cache: 'no-store', headers: offset ? { Range: `bytes=${offset}-`, ...(validator ? { 'If-Range': validator } : {}) } : {} });
+            const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(result.headers.get('content-range') || '');
+            const validRange = result.status === 206 && range && Number(range[1]) === offset && Number(range[2]) >= offset && Number(range[2]) < size && Number(range[3]) === size;
+            if (offset && (result.status === 416 || result.status === 206 && !validRange)) {
+                await result.body?.cancel(); await discard(); offset = 0;
+                result = await fetcher(url, { signal: controller.signal, cache: 'no-store' });
+            } else if (result.status === 200) offset = 0;
+            if (!result.ok) { resumable = false; await result.body?.cancel(); throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status }); }
+            if (result.status !== 200 && !(validRange && offset)) { invalid = true; await result.body?.cancel(); throw new Error('更新包续传响应无效，请重试'); }
+            if (!result.body) throw new Error('更新包下载失败，请重试');
+            const etag = result.headers.get('etag');
+            await fs.writeFile(receipt, JSON.stringify({ url, size, sha256, ...(etag && !etag.startsWith('W/') ? { validator: etag } : {}) }), { mode: 0o600 });
+            const hash = createHash('sha256');
+            if (offset) for await (const chunk of createReadStream(partial)) hash.update(chunk);
+            const handle = await fs.open(partial, offset ? 'a' : 'w', 0o600);
+            let bytes = offset;
+            if (notify) emit({ downloaded: bytes, progress: Math.floor(bytes / size * 100) });
+            try {
+                for await (const chunk of result.body) {
+                    bytes += chunk.length;
+                    if (bytes > size) { invalid = true; throw new Error('更新包长度无效，请重试'); }
+                    hash.update(chunk); await handle.writeFile(chunk);
+                    const progress = Math.floor(bytes / size * 100);
+                    if (notify && progress !== state.progress) emit({ downloaded: bytes, progress });
+                }
+            } finally { try { await handle.sync(); } finally { await handle.close(); } }
+            if (bytes < size) throw new Error('更新包下载中断，重试后将继续下载');
+            if (notify) emit({ phase: 'verifying' });
+            if (hash.digest('hex') !== sha256) { await discard(); throw new Error('更新包校验失败，请重新下载'); }
+            await fs.rename(partial, file);
+            await fs.rm(receipt, { force: true });
+        } catch (error) {
+            if (invalid || offset === size) await discard();
+            error.resumableDownload = resumable && !invalid && !/更新包(校验失败|长度无效)/.test(error.message);
+            throw error;
+        }
+    }
+    async function findBase(delta, blockmap = false) {
+        if (!blockmap && (!delta || delta.from !== currentVersion)) return null;
+        const folder = path.join(root, `base-${currentVersion}`);
+        try {
+            const [text, signature] = await Promise.all(['canvas-latest.json', 'canvas-latest.json.sig'].map(file => fs.readFile(path.join(folder, file), 'utf8')));
+            const savedBase = readManifest(text, signature, await chooseTarget(), publicKey);
+            if (savedBase.version !== currentVersion || (blockmap ? !savedBase.blockmap : savedBase.file !== delta.baseFile || savedBase.size !== delta.baseSize || savedBase.sha256 !== delta.baseSha256)) return null;
+            const file = path.join(folder, savedBase.file);
+            await validateFile(file, savedBase);
+            return blockmap ? { file, folder, entry: savedBase } : file;
+        } catch { return null; }
+    }
+    async function downloadFull() {
+        emit({ status: 'downloading', mode: 'full', phase: '', error: '', progress: 0, downloaded: 0, total: entry.size, reused: 0 });
+        await downloadBytes(entry.url, path.join(saved.folder, entry.file), entry.size, entry.sha256);
+    }
+    async function download() {
+        await cleanup(entry.version);
+        await fs.mkdir(saved.folder, { recursive: true, mode: 0o700 });
+        await fs.writeFile(path.join(saved.folder, 'canvas-latest.json'), saved.text, { mode: 0o600 });
+        await fs.writeFile(path.join(saved.folder, 'canvas-latest.json.sig'), saved.signature, { mode: 0o600 });
+        const blockBase = entry.blockmap ? await findBase(undefined, true) : null;
+        const base = blockBase ? null : await findBase(entry.delta);
+        if (blockBase) {
+            const output = path.join(saved.folder, entry.file + '.blocks.part');
+            emit({ status: 'downloading', mode: 'delta', phase: 'planning', error: '', progress: 0, downloaded: 0, total: 0, reused: 0 });
+            try {
+                const oldMap = blockBase.entry.blockmap, newMap = entry.blockmap;
+                const oldMapFile = path.join(blockBase.folder, oldMap.file), newMapFile = path.join(saved.folder, newMap.file);
+                await downloadBytes(oldMap.url, oldMapFile, oldMap.size, oldMap.sha256, false);
+                await downloadBytes(newMap.url, newMapFile, newMap.size, newMap.sha256, false);
+                await downloadBlocks({ baseFile: blockBase.file, oldMapFile, newMapFile, base: blockBase.entry, entry, outputFile: output, fetcher, signal: controller.signal, changed: emit });
+                emit({ phase: 'reconstructing' });
+                await validateFile(output, entry);
+                await fs.rename(output, path.join(saved.folder, entry.file));
+                await fs.rm(output + '.json', { force: true });
+            } catch (error) {
+                if (closed || error.resumableDownload || ['ENOSPC', 'EACCES', 'EPERM', 'EIO'].includes(error.code)) throw error;
+                await fs.rm(output, { force: true }); await fs.rm(output + '.json', { force: true });
+                await downloadFull();
+            }
+        } else if (base && entry.delta.size < entry.size) {
+            try {
+                const delta = entry.delta, patch = path.join(saved.folder, delta.file), output = path.join(saved.folder, entry.file + '.delta.part');
+                emit({ status: 'downloading', mode: 'delta', phase: '', error: '', progress: 0, downloaded: 0, total: delta.size });
+                await downloadBytes(delta.url, patch, delta.size, delta.sha256);
+                await fs.rm(output, { force: true });
+                emit({ phase: 'reconstructing' });
+                await applyDelta({ baseFile: base, patchFile: patch, outputFile: output, targetSize: entry.size, signal: controller.signal });
+                await validateFile(output, entry);
+                await fs.rename(output, path.join(saved.folder, entry.file));
+                await fs.rm(patch, { force: true });
+            } catch (error) {
+                if (closed || error.resumableDownload) throw error;
+                await fs.rm(path.join(saved.folder, entry.file + '.delta.part'), { force: true });
+                for (const suffix of ['', '.part', '.part.json']) await fs.rm(path.join(saved.folder, entry.delta.file + suffix), { force: true });
+                // A missing/corrupt base or patch must never block an update.
+                // Re-fetching the signed full installer is the safe fallback.
+                await downloadFull();
+            }
+        } else {
+            await downloadFull();
+        }
+        await fs.writeFile(path.join(saved.folder, 'canvas-latest.json'), saved.text, { mode: 0o600 });
+        await fs.writeFile(path.join(saved.folder, 'canvas-latest.json.sig'), saved.signature, { mode: 0o600 });
+        // Keep the verified map beside the installer so the next update works
+        // even when the old release's network resource is unavailable.
+        if (entry.blockmap) {
+            const map = entry.blockmap;
+            try { await downloadBytes(map.url, path.join(saved.folder, map.file), map.size, map.sha256, false); }
+            catch (error) { if (closed) throw error; }
+        }
+        await fs.writeFile(path.join(saved.folder, 'download-info.json'), JSON.stringify({ sha256: entry.sha256, mode: state.mode, total: state.total, reused: state.mode === 'delta' ? entry.size - state.total : 0 }), { mode: 0o600 });
+        recovered('download', 'update-package');
+        if (state.mode === 'delta') recovered('download', 'update-delta');
+        emit({ status: 'ready', downloaded: state.total, progress: 100, phase: '' });
+    }
+    return {
+        state: () => ({ ...state }),
+        check() { return serial(async () => {
+            if (!enabled || closed || installation || state.status === 'installing') return;
+            checking = new AbortController();
+            fetcher.reset?.();
+            const check = checking;
+            emit({ status: 'checking', phase: '', error: '' });
+            const destination = await chooseTarget();
+            const restored = await restore();
+            if (check.signal.aborted || closed) return;
+            let text, signature;
+            try {
+                [text, signature] = await Promise.all([feed, feed + '.sig'].map(async url => (await response(url)).text()));
+            } catch (error) { if (restored) return; throw error; }
+            if (check.signal.aborted || closed) return;
+            const candidate = readManifest(text, signature, destination, publicKey, currentVersion);
+            recovered('check', 'update-feed');
+            if (restored && !newer(candidate.version, entry.version)) return;
+            if (!newer(candidate.version, currentVersion)) { emit({ status: 'current', version: '', notes: '', progress: 0 }); return; }
+            entry = candidate; saved = { text, signature, folder: path.join(root, entry.version) };
+            emit({ version: entry.version, notes: entry.notes });
+            await download();
+        }); },
+        apply() {
+            if (installation) return installation;
+            if (!enabled || closed || state.status !== 'ready' || !saved) return;
+            const ready = saved;
+            checking?.abort();
+            emit({ status: 'installing', phase: 'verifying', progress: 0, error: '' });
+            installation = (async () => {
+                const verified = readManifest(ready.text, ready.signature, await chooseTarget(), publicKey, currentVersion);
+                if (!newer(verified.version, currentVersion)) throw new Error('更新版本无效，请重新检查');
+                const file = path.join(ready.folder, verified.file);
+                await validateFile(file, verified, progress => { if (progress !== state.progress) emit({ progress }); });
+                if (closed) return;
+                emit({ phase: 'preparing', progress: 0 });
+                try { await install({ ...selected, file, version: verified.version, sha256: verified.sha256, folder: ready.folder, root }, phase => emit({ phase, progress: 0 })); }
+                catch (error) { error.userMessage = error.message; throw error; }
+            })().catch(error => { if (!closed) failure(error); }).finally(() => { installation = null; });
+            return installation;
+        },
+        async start() {
+            if (!enabled) return;
+            await fs.mkdir(root, { recursive: true, mode: 0o700 });
+            try {
+                const error = await fs.readFile(path.join(root, 'install-error.txt'), 'utf8');
+                await fs.rm(path.join(root, 'install-error.txt'), { force: true });
+                if (error) {
+                    const detail = {
+                        'windows-prepare': 'Windows 更新助手未能读取更新文件，请检查安全软件和文件权限后重试',
+                        'windows-integrity': '更新包校验失败，已停止安装，请重新检查更新',
+                        'windows-installer': 'Windows 安装未完成，请完成系统授权，并检查安全软件及安装目录权限后重试',
+                        'windows-version': 'Windows 安装程序未替换为新版本，请检查安装目录权限后重试',
+                        'windows-launch': '更新已安装但未能重新打开，请重新启动 OneYes Canvas',
+                    }[error.trim()];
+                    const message = detail || '上次更新未完成，请点击重试；Windows 请检查系统授权或安全软件，macOS 请确认应用位于“应用程序”，Linux 请完成系统授权';
+                    emit({ status: 'installing' });
+                    failure(Object.assign(new Error(message), { userMessage: message, diagnosticOperation: 'update-installer' }));
+                }
+            } catch {}
+            if (state.status !== 'error') {
+                try { await fs.access(path.join(root, `installed-${currentVersion}.ok`)); recovered('install', 'update-installer'); } catch {}
+            }
+            if (state.status !== 'error') await this.check();
+            timer = setInterval(() => void this.check(), CHECK_INTERVAL); timer.unref?.();
+        },
+        close() { closed = true; controller.abort(); clearInterval(timer); },
+    };
+}
+module.exports = { createUpdater, validateFile, fileHash };

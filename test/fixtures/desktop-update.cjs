@@ -69,17 +69,28 @@ async function nativeResume() {
     const { createServer } = require('node:http');
     const { generateKeyPairSync, sign, createHash } = require('node:crypto');
     const { readFile, rm } = require('node:fs/promises');
-    const { createUpdater } = require('../../desktop/updater.cjs');
+    const { legacyUpdate } = require('./legacy-update.cjs');
+    const { createUpdater } = legacyUpdate('updater.cjs');
+    const { createReleaseFetcher } = legacyUpdate('release-fetch.cjs');
+    const native = require('../../desktop/native-fetch.cjs').createNativeFetch(net);
     const { filename, RELEASE_ROOT } = require('../../desktop/update-policy.cjs');
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     const payload = Buffer.from('native signed update fixture '.repeat(128)), prefix = payload.subarray(0, 256);
     const file = filename('0.21.0', 'win32', 'x64', 'nsis');
-    const text = JSON.stringify({ schema: 1, version: '0.21.0', notes: 'fixture', platforms: { 'win32-x64-nsis': { file, size: payload.length, sha256: createHash('sha256').update(payload).digest('hex'), url: `${RELEASE_ROOT}/download/v0.21.0/${file}` } } });
+    const text = JSON.stringify({ schema: 1, version: '0.21.0', notes: 'fixture', platforms: { 'win32-x64-nsis': { file, size: payload.length, sha256: createHash('sha256').update(payload).digest('hex'), url: `${RELEASE_ROOT}/download/v0.21.0/${file}`, rangeBlockmap: { file: file + '.blockmap', url: `${RELEASE_ROOT}/download/v0.21.0/${file}.blockmap`, size: 1, sha256: 'a'.repeat(64) } } } });
     const signature = sign(null, Buffer.from(text), privateKey).toString('base64');
-    let pending, first = true, installs = 0;
+    let pending, first = true, installs = 0, apiCalls = 0;
     const ranges = [];
     const server = createServer((request, response) => {
         if (request.url === '/probe') { response.end(); return; }
+        if (/\/releases\/(?:latest|tags\/v0.21.0)$/.test(request.url)) {
+            apiCalls++; response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ assets: ['canvas-latest.json', 'canvas-latest.json.sig', file].map((name, i) => ({ name, id: i + 1, state: 'uploaded' })) })); return;
+        }
+        if (request.url.includes('/releases/assets/')) {
+            apiCalls++; const name = ['canvas-latest.json', 'canvas-latest.json.sig', file][Number(request.url.split('/').at(-1)) - 1];
+            response.writeHead(302, { Location: `https://release-assets.githubusercontent.com/fixture/${name}` }); response.end(); return;
+        }
+        assert.ok(!request.url.endsWith('.blockmap'), 'the old updater must ignore the new range map');
         if (request.url.endsWith('.sig')) { response.end(signature); return; }
         if (request.url.endsWith('.json')) { response.end(text); return; }
         ranges.push(request.headers.range);
@@ -100,8 +111,8 @@ async function nativeResume() {
     }
     const directory = join(app.getPath('userData'), 'native-ota');
     const origin = `http://127.0.0.1:${server.address().port}`;
-    const options = { currentVersion: '0.20.20', directory, publicKey, target: async () => ({ platform: 'win32', arch: 'x64', format: 'nsis' }),
-        fetcher: (url, init) => net.fetch(origin + new URL(url).pathname, init),
+    const options = { currentVersion: '0.20.207', directory, publicKey, target: async () => ({ platform: 'win32', arch: 'x64', format: 'nsis' }),
+        fetcher: createReleaseFetcher({ request: (url, init) => native(origin + new URL(url).pathname, init) }),
         install: async plan => { assert.deepEqual(await readFile(plan.file), payload); installs++; },
         changed: state => { if (state.downloaded === prefix.length && pending) { pending.destroy(); pending = null; } },
     };
@@ -113,7 +124,8 @@ async function nativeResume() {
         await restarted.check(); assert.equal(restarted.state().status, 'ready');
         await restarted.apply(); assert.equal(installs, 1);
         assert.deepEqual(ranges, [undefined, `bytes=${prefix.length}-`]);
-        console.log('NATIVE_OTA_RESUME_OK: Electron HTTP socket interruption, restored prefix, Range/If-Range, complete-file hash before installation');
+        assert.equal(apiCalls, 10);
+        console.log('NATIVE_OTA_RESUME_OK: unmodified v0.20.207 engine and API resolver, new signed feed, socket interruption, Range/If-Range, complete-file hash before installation');
     } finally { updater.close(); restarted.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
 }
 async function nativeBlockResume(platform,arch,format) {
@@ -128,7 +140,8 @@ async function nativeBlockResume(platform,arch,format) {
     const release = (version, bytes) => {
         const file = filename(version, platform, arch, format), url = `${RELEASE_ROOT}/download/v${version}/${file}`, blockmap = map(bytes);
         const entry = { file, url, size: bytes.length, sha256: hash(bytes), blockmap: { file: file + '.blockmap', url: url + '.blockmap', size: blockmap.length, sha256: hash(blockmap) } };
-        const text = JSON.stringify({ schema: 1, version, notes: 'native blocks', platforms: { [`${platform}-${arch}-${format}`]: entry } });
+        const published = version === '1.0.0' ? entry : { ...entry, rangeBlockmap: entry.blockmap, blockmap: undefined };
+        const text = JSON.stringify({ schema: 1, version, notes: 'native blocks', platforms: { [`${platform}-${arch}-${format}`]: published } });
         return { entry, text, signature: sign(null, Buffer.from(text), privateKey).toString('base64'), blockmap };
     };
     const old = release('1.0.0', base), current = release('1.0.1', next), ranges = [];

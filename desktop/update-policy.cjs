@@ -29,7 +29,9 @@ function readManifest(text, signature, target, publicKey = PUBLIC_KEY, currentVe
             delta = { from: candidate.from, file: candidate.file, url: candidate.url, size: candidate.size, sha256: candidate.sha256, baseFile: candidate.baseFile, baseSize: candidate.baseSize, baseSha256: candidate.baseSha256, targetSha256: candidate.targetSha256, targetSize: candidate.targetSize };
         }
     }
-    const map = entry.blockmap, mapName = name + '.blockmap';
+    // Legacy updaters spend one API request per range. New feeds advertise
+    // range maps separately so those clients take the signed full package once.
+    const map = entry.rangeBlockmap ?? entry.blockmap, mapName = name + '.blockmap';
     const blockmap = map?.file === mapName && map.url === `${RELEASE_ROOT}/download/v${data.version}/${mapName}` && /^[a-f0-9]{64}$/.test(map.sha256) && Number.isSafeInteger(map.size) && map.size > 0 ? { file: map.file, url: map.url, size: map.size, sha256: map.sha256 } : undefined;
     return { version: data.version, notes: data.notes, file: entry.file, url: entry.url, size: entry.size, sha256: entry.sha256, ...(delta ? { delta } : {}), ...(blockmap ? { blockmap } : {}) };
 }

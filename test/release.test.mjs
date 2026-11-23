@@ -8,6 +8,7 @@ import {generateKeyPairSync,verify,sign,createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {prepareBlockmaps} from '../scripts/prepare-ota-blockmaps.mjs';
 const require=createRequire(import.meta.url),{filename,platformKey,RELEASE_ROOT,readManifest}=require('../desktop/update-policy.cjs');
+const {readManifest:legacyManifest}=require('./fixtures/legacy-update.cjs').legacyUpdate('update-policy.cjs');
 
 test('release source version, lock and tag file agree before building native packages',async()=>{
   const [pkg,lock,tag]=await Promise.all(['package.json','package-lock.json','VERSION'].map(file=>readFile(file,'utf8')));
@@ -36,11 +37,15 @@ test('release requires all twelve native installers and hashes RPM architecture 
     const text=await readFile(join(dir,'canvas-latest.json'),'utf8'),signature=await readFile(join(dir,'canvas-latest.json.sig'),'utf8');
     assert.ok(verify(null,Buffer.from(text),publicKey,Buffer.from(signature.trim(),'base64')));
     assert.equal(Object.keys(JSON.parse(text).platforms).length,10);
-    assert.equal(JSON.parse(text).platforms['win32-x64-nsis'].blockmap.file,filename(version,'win32','x64','nsis')+'.blockmap');
+    assert.equal(JSON.parse(text).platforms['win32-x64-nsis'].rangeBlockmap.file,filename(version,'win32','x64','nsis')+'.blockmap');
     assert.equal((await readFile(join(dir,'SHA256SUMS-blockmaps.txt'),'utf8')).trim().split('\n').length,10);
     for(const [key,entry] of Object.entries(JSON.parse(text).platforms)){
       const [platform,arch,format]=key.split('-');
       assert.equal(readManifest(text,signature,{platform,arch,format},publicKey).blockmap.file,entry.file+'.blockmap');
+      const legacy=legacyManifest(text,signature,{platform,arch,format},publicKey);
+      assert.equal(legacy.blockmap,undefined,'legacy clients must use the signed full package without per-range API calls');
+      assert.equal(legacy.url,entry.url);assert.equal(legacy.sha256,entry.sha256);
+      assert.equal(entry.blockmap,undefined,'publishing a legacy range map would reactivate the API storm');
     }
     assert.ok(JSON.parse(text).platforms['linux-arm64-rpm'].file.endsWith('Linux-aarch64.rpm'));
     const baseDir=await mkdtemp(join(tmpdir(),'canvas-release-base-'));

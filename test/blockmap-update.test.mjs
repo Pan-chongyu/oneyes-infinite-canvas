@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 const require = createRequire(import.meta.url);
 const { createUpdater } = require('../desktop/updater.cjs');
 const { createReleaseFetcher } = require('../desktop/release-fetch.cjs');
+const { legacyUpdate } = require('./fixtures/legacy-update.cjs');
 const { filename, RELEASE_ROOT, readManifest } = require('../desktop/update-policy.cjs');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -29,7 +30,8 @@ async function fixture(t, { platform = 'win32', arch = 'x64', format = 'nsis', s
     function release(version, bytes, map) {
         const file = filename(version, platform, arch, format), url = `${RELEASE_ROOT}/download/v${version}/${file}`;
         const entry = { file, url, size: bytes.length, sha256: hash(bytes), blockmap: { file: file + '.blockmap', url: url + '.blockmap', size: map.length, sha256: hash(map) } };
-        const text = JSON.stringify({ schema: 1, version, notes: 'Windows 增量更新', platforms: { [key]: entry } });
+        const published = version === '1.0.0' ? entry : { ...entry, rangeBlockmap: entry.blockmap, blockmap: undefined };
+        const text = JSON.stringify({ schema: 1, version, notes: 'Windows 增量更新', platforms: { [key]: published } });
         return { entry, text, signature: sign(null, Buffer.from(text), privateKey).toString('base64') };
     }
     const previous = release('1.0.0', base, oldMap), current = release(nextVersion, next, newMap);
@@ -90,6 +92,28 @@ test('a macOS ARM64 update with 100 changed ranges reconstructs under the anonym
     assert.equal(f.requests.filter(r => r.url === f.current.entry.url).length, 100);
     assert.equal(resolutions, 5); assert.equal(apiCalls, 8);
     await updater.apply(); assert.deepEqual(await readFile(f.installs[0].file), f.next);
+});
+
+test('unmodified v0.20.207 updaters upgrade all ten targets without range API storms', async t => {
+    const { createUpdater: legacyUpdater } = legacyUpdate('updater.cjs'), { createReleaseFetcher: legacyFetcher } = legacyUpdate('release-fetch.cjs');
+    for (const platform of ['win32', 'darwin', 'linux']) for (const arch of ['x64', 'arm64']) for (const format of { win32: ['nsis'], darwin: ['zip'], linux: ['AppImage', 'deb', 'rpm'] }[platform]) await t.test(`${platform}-${arch}-${format}`, async t => {
+        const f = await fixture(t, { platform, arch, format, scenario: 'many-ranges' });
+        const resources = [`${RELEASE_ROOT}/latest/download/canvas-latest.json`, `${RELEASE_ROOT}/latest/download/canvas-latest.json.sig`, f.current.entry.url];
+        let apiCalls = 0, installs = 0;
+        const updater = legacyUpdater({ ...f.options, fetcher: legacyFetcher({ request: async (url, init = {}) => {
+            if (url.startsWith('https://api.github.com/')) {
+                if (++apiCalls > 60) return new Response(null, { status: 403 });
+                if (url.includes('/releases/assets/')) return new Response(null, { status: 302, headers: { location: `https://release-assets.githubusercontent.com/${url.split('/').at(-1)}` } });
+                return Response.json({ assets: resources.map((url, i) => ({ name: url.split('/').at(-1), id: i + 1, state: 'uploaded' })) });
+            }
+            const resource = resources[Number(url.split('/').at(-1)) - 1]; assert.ok(resource);
+            assert.equal(new Headers(init.headers).get('range'), null, 'legacy upgrades must never request the 100 changed ranges');
+            return f.options.fetcher(resource, init);
+        } }), install: async plan => { assert.deepEqual(await readFile(plan.file), f.next); installs++; } }); t.after(() => updater.close());
+        await updater.check(); assert.equal(updater.state().status, 'ready'); assert.equal(updater.state().mode, 'full');
+        assert.equal(f.requests.filter(r => r.url === f.current.entry.url).length, 1); assert.equal(apiCalls, 5);
+        await updater.apply(); assert.equal(installs, 1);
+    });
 });
 
 test('cached block maps stay available offline, skipped versions use the installed base, and restart preserves actual download savings', async t => {
@@ -161,7 +185,7 @@ test('a corrupt resumed prefix never reaches the installer, and block map URLs s
     const file = join(f.directory, 'ota/1.0.1', f.current.entry.file + '.blocks.part');
     await writeFile(file, Buffer.alloc(71)); await f.updater.check();
     assert.equal(f.updater.state().mode, 'full'); await f.updater.apply(); assert.deepEqual(await readFile(f.installs[0].file), f.next);
-    const manifest = JSON.parse(f.current.text); manifest.platforms['win32-x64-nsis'].blockmap.url = 'https://invalid.test/map';
+    const manifest = JSON.parse(f.current.text); manifest.platforms['win32-x64-nsis'].rangeBlockmap.url = 'https://invalid.test/map';
     const text = JSON.stringify(manifest), signature = sign(null, Buffer.from(text), privateKey).toString('base64');
     assert.equal(readManifest(text, signature, { platform: 'win32', arch: 'x64', format: 'nsis' }, publicKey).blockmap, undefined);
 });

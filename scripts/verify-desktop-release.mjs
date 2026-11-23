@@ -42,7 +42,7 @@ for(const {platform,arch,format} of selectedTargets){
     const mapFile=file+'.blockmap',mapPath=join(root,mapFile);
     await readBlockmap(mapPath,size);
     const sha256=await fileHash(mapPath),mapSize=(await stat(mapPath)).size;
-    platforms[platformKey({platform,arch,format})].blockmap={file:mapFile,url:`${RELEASE_ROOT}/download/v${version}/${mapFile}`,size:mapSize,sha256};
+    platforms[platformKey({platform,arch,format})].rangeBlockmap={file:mapFile,url:`${RELEASE_ROOT}/download/v${version}/${mapFile}`,size:mapSize,sha256};
     blockSums.push(`${sha256}  ${mapFile}`);
   }
 }
@@ -56,10 +56,10 @@ if(blockReports){
   if(!baseRoot)throw new Error('Pinned OTA base manifest is required');
   const [baseText,baseSignature]=await Promise.all(['canvas-latest.json','canvas-latest.json.sig'].map(name=>readFile(join(baseRoot,name),'utf8')));
   for(const target of selectedTargets){
-    const key=platformKey(target),entry=platforms[key],base=readManifest(baseText,baseSignature,target,publicKey);
+    const key=platformKey(target),entry=platforms[key],map=entry.rangeBlockmap,base=readManifest(baseText,baseSignature,target,publicKey);
     if(!require('semver').lt(base.version,version))throw new Error('Block map base must be older than release');
     const report=JSON.parse(await readFile(join(root,`OTA-BLOCKS-${key}.json`),'utf8'));
-    if(report.version!==version||report.target!==key||report.from!==base.version||report.baseSha256!==base.sha256||report.sha256!==entry.sha256||report.size!==entry.size||report.blockmap?.sha256!==entry.blockmap.sha256||report.blockmap?.size!==entry.blockmap.size||report.blockmap?.file!==entry.blockmap.file||!Number.isSafeInteger(report.downloadBytes)||report.downloadBytes<0||!Number.isSafeInteger(report.reusedBytes)||report.reusedBytes<0||report.downloadBytes+report.reusedBytes!==entry.size)throw new Error(`Invalid block reconstruction report for ${key}`);
+    if(report.version!==version||report.target!==key||report.from!==base.version||report.baseSha256!==base.sha256||report.sha256!==entry.sha256||report.size!==entry.size||report.blockmap?.sha256!==map.sha256||report.blockmap?.size!==map.size||report.blockmap?.file!==map.file||!Number.isSafeInteger(report.downloadBytes)||report.downloadBytes<0||!Number.isSafeInteger(report.reusedBytes)||report.reusedBytes<0||report.downloadBytes+report.reusedBytes!==entry.size)throw new Error(`Invalid block reconstruction report for ${key}`);
     console.log(`${key}: verified changed bytes ${report.downloadBytes} / full ${entry.size}; reused ${report.reusedBytes}`);
   }
 }
