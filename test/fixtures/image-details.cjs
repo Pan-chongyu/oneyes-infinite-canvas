@@ -57,8 +57,12 @@ app.whenReady().then(async () => {
             assert.deepEqual(nativeImage.createFromBuffer(Buffer.from(copied.image)).getSize(), { width, height });
             assert.equal(await js('imageDetailsTest.drags()'), drags, 'copy must not start a node drag');
             await click('#paste-image-target');
-            const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
-            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers });
+            // Injected key events do not invoke Cocoa's edit-menu accelerators.
+            if (process.platform === 'darwin') win.webContents.paste();
+            else {
+                const modifiers = ['control'];
+                win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers });
+            }
             await wait('Boolean(imageDetailsTest.pasted())');
             assert.deepEqual(await js('imageDetailsTest.pasted()'), { width, height, alpha });
         };
@@ -80,7 +84,7 @@ app.whenReady().then(async () => {
         await assert.rejects(writeClipboardImage(clipboard, 'file:///private-image.png'));
         assert.equal(await clipboard.readText(), 'preserve clipboard on failure');
         await js('imageDetailsTest.restore()');
-        console.log('IMAGE_NODE_COPY_OK: download adjacency, native clipboard, actual keyboard paste, original JPEG pixels, PNG alpha, primary/batch/single, themes, no drag, missing/corrupt image preserves clipboard');
+        console.log('IMAGE_NODE_COPY_OK: download adjacency, native clipboard, actual system paste, original JPEG pixels, PNG alpha, primary/batch/single, themes, no drag, missing/corrupt image preserves clipboard');
         await click('[data-node-id="detail-fixture"] > .relative', 2);
         await wait('document.querySelector("[aria-label=图片信息]")?.textContent.includes("4096 × 2048 px")');
         await js('imageDetailsTest.remove()'); await wait('!document.querySelector("[aria-label=图片详情内容]")');
