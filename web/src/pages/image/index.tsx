@@ -128,19 +128,18 @@ export default function ImagePage() {
     }, [imageHistoryRevision]);
 
     useEffect(() => {
-        const recover = async () => {
-            const completed = await Promise.all(imageTasks.filter(task => task.images.some((image, index) => (image.resultIndex ?? index) === 0) && resultsRef.current.some(result => result.taskId === task.id && result.status !== "success")).map(async task => {
-                const original = task.images.find((image, index) => (image.resultIndex ?? index) === 0)!;
-                return { task, id: original.id, stored: await storedTaskImage(original) };
-            }));
-            if (!completed.length) return;
-            setResults(previous => previous.map(result => {
-                const item = completed.find(item => item.task.id === result.taskId);
-                if (!item || result.status === "success") return result;
-                return { ...result, status: "success", image: { id: item.id, taskId: item.task.id, dataUrl: item.stored.url, ...item.stored, durationMs: Date.now() - item.task.createdAt }, error: undefined };
-            }));
-        };
-        void recover().catch(() => undefined); // The task retains its original receipt for recovery.
+        let cancelled = false;
+        for (const task of imageTasks.filter(task => resultsRef.current.some(result => result.taskId === task.id && result.status !== "success"))) {
+            const original = task.images.find((image, index) => (image.resultIndex ?? index) === 0);
+            if (!original) continue;
+            void storedTaskImage(original).then(stored => {
+                if (cancelled) return;
+                setResults(previous => cancelled ? previous : previous.map(result => result.taskId !== task.id || result.status === "success" ? result : {
+                    ...result, status: "success", image: { id: original.id, taskId: task.id, dataUrl: stored.url, ...stored, durationMs: Date.now() - task.createdAt }, error: undefined,
+                }));
+            }).catch(() => undefined); // Keep its receipt; other ready images still display.
+        }
+        return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [imageReadyRevision]);
 

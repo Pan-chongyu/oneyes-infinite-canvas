@@ -37,11 +37,11 @@ type ImageReadOptions = { signal?: AbortSignal; storageKey?: string };
 export async function uploadImage(input: string | Blob, options?: ImageReadOptions): Promise<UploadedImage> {
     throwIfAborted(options?.signal);
     if (options?.storageKey) {
+        const known = storedImages.get(options.storageKey);
+        if (known) return known;
         const cached = await getImageBlob(options.storageKey);
         throwIfAborted(options.signal);
         if (cached) {
-            const known = storedImages.get(options.storageKey);
-            if (known) { queueImagePreview(options.storageKey); return known; }
             const url = objectUrls.get(options.storageKey) || URL.createObjectURL(cached);
             objectUrls.set(options.storageKey, url);
             const meta = await loadImageMeta(url, options);

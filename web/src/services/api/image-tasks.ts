@@ -110,6 +110,7 @@ export class ImageTaskManager {
         await this.initialize();
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         let task: ImageTask = { ...seed, status: "submitting", images: [], pollMs: MEDIA_POLL_INTERVAL_MS };
+        let completedReply: ImageTaskReply | undefined;
         await this.put(task); // A failed local write must prevent the paid request.
         try {
             await options?.onTask?.(task.id);
@@ -120,18 +121,23 @@ export class ImageTaskManager {
         }
         try {
             // Do not abort submission on a UI cancellation: retain its receipt first.
-            const { value, pollMs } = await this.deps.submit(path, body, key);
+            const reply = await this.deps.submit(path, body, key);
+            const { value, pollMs } = reply;
             const remoteId = value.task_id || value.id;
             if (!remoteId || !/^[a-zA-Z0-9_-]+$/.test(remoteId)) throw new Error("服务端未返回有效任务编号");
             task = { ...task, remoteId, status: "processing", pollMs: pollMs || task.pollMs, ...(value.expires_at ? { expiresAt: value.expires_at * 1000 } : {}) };
             await this.put(task); // Receipt must be durable before the first poll.
+            if (value.status === "completed") completedReply = reply;
         } catch (error) {
             reportError("image", "submit", error);
             const rejected = error instanceof ImageTaskHttpError && error.status >= 400 && error.status < 500 && error.status !== 408;
             await this.put({ ...task, status: rejected ? "failed" : "uncertain", error: rejected ? error.message : "提交响应中断，暂时无法确认是否受理。请先检查官网用量，避免重复扣费；不会自动重发。" });
             throw new Error(this.tasks.get(task.id)!.error);
         }
-        this.schedule(task.id, task.pollMs);
+        // A completed submission already contains the result; do not wait for a
+        // timer and another GET before downloading the very same originals.
+        if (completedReply) void this.refresh(task.id, completedReply);
+        else this.schedule(task.id, task.pollMs);
         return this.waitFor(task.id, options?.signal);
     }
 
@@ -156,7 +162,7 @@ export class ImageTaskManager {
         });
     }
 
-    async refresh(id: string) {
+    async refresh(id: string, completedReply?: ImageTaskReply) {
         const original = this.tasks.get(id);
         if (!original?.remoteId || this.busy.has(id) || ["completed", "failed", "uncertain", "paused"].includes(original.status)) return;
         clearTimeout(this.timers.get(id));
@@ -169,9 +175,13 @@ export class ImageTaskManager {
                 return;
             }
             if (!task.expectedImages || task.images.length < task.expectedImages) {
-                const key = await this.deps.credentials(task);
-                if (!key) { await this.put({ ...task, status: "credentials", error: "请恢复提交此任务时使用的 API Key，再继续取图。" }); return; }
-                const { value, pollMs } = await this.deps.poll(task.remoteId!, key);
+                let reply = completedReply;
+                if (!reply) {
+                    const key = await this.deps.credentials(task);
+                    if (!key) { await this.put({ ...task, status: "credentials", error: "请恢复提交此任务时使用的 API Key，再继续取图。" }); return; }
+                    reply = await this.deps.poll(task.remoteId!, key);
+                }
+                const { value, pollMs } = reply;
                 if (this.removed.has(id)) return;
                 if ((value.task_id || value.id) && (value.task_id || value.id) !== task.remoteId) throw new Error("任务编号不一致");
                 task = { ...task, pollMs: pollMs || task.pollMs, ...(value.expires_at ? { expiresAt: value.expires_at * 1000 } : {}) };

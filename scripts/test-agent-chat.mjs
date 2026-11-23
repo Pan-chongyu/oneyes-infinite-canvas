@@ -66,6 +66,12 @@ try {
         } finally { await rm(pluginProfile, { recursive: true, force: true }); }
     }
     if (images && !process.exitCode) {
+        const deliveryArgs = [resolve('test/fixtures/image-delivery.cjs'), `http://127.0.0.1:${server.httpServer.address().port}`];
+        const deliveryEnv = { ...env, CANVAS_IMAGE_DELIVERY_PROFILE: join(server.root, 'delivery-profile') };
+        const deliveryChild = process.platform === 'linux' ? spawn('xvfb-run', ['-a', electron, ...deliveryArgs, '--no-sandbox'], { env: deliveryEnv, stdio: 'inherit' }) : spawn(electron, deliveryArgs, { env: deliveryEnv, stdio: 'inherit', windowsHide: true });
+        process.exitCode = await new Promise((resolve, reject) => { deliveryChild.once('error', reject); deliveryChild.once('exit', code => resolve(code ?? 1)); });
+    }
+    if (images && !process.exitCode) {
         const profile = await mkdtemp(join(tmpdir(), 'canvas-image-restart-'));
         try {
             for (const phase of ['submit', 'partial', 'restore', 'completed']) {

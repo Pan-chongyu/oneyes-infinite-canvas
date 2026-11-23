@@ -591,31 +591,39 @@ function InfiniteCanvasPage() {
             await durableImageTasks.initialize();
             if (cancelled) return;
             const nodesById = new Map(nodesRef.current.map(node => [node.id, node]));
-            const tasks = await Promise.all([...durableImageTasks.tasks.values()].filter(task => {
+            const tasks = [...durableImageTasks.tasks.values()].filter(task => {
                 const node = nodesById.get(task.target?.nodeId || "");
                 return task.target?.projectId === projectId && node && (node.metadata?.imageTaskId === task.id || node.metadata?.images?.some(image => image.imageTaskId === task.id));
-            }).map(async task => {
-                const original = task.images.find((image, index) => (image.resultIndex ?? index) === 0);
-                return { task, image: original ? await storedTaskImage(original) : undefined };
-            }));
-            if (cancelled) return;
-            const tasksByNode = new Map<string, typeof tasks>();
-            for (const item of tasks) {
-                const id = item.task.target!.nodeId;
-                const group = tasksByNode.get(id) || [];
-                group.push(item); tasksByNode.set(id, group);
-            }
+            });
             setNodes(previous => {
+                if (cancelled) return previous;
                 let changed = false;
                 const next = previous.map(node => {
                     const request = generationRequestsRef.current.get(node.id);
-                    let updated = failMissingCanvasImageTasks(node, durableImageTasks.tasks, projectId, Boolean(request && !request.controller.signal.aborted));
-                    for (const { task, image } of tasksByNode.get(node.id) || []) updated = applyCanvasImageTask(updated, task, image);
+                    const updated = failMissingCanvasImageTasks(node, durableImageTasks.tasks, projectId, Boolean(request && !request.controller.signal.aborted));
                     if (updated !== node) changed = true;
                     return updated;
                 });
                 return changed ? next : previous;
             });
+            // Apply each durable original as soon as it is readable. A missing
+            // or slow sibling must not hold every result behind Promise.all.
+            const results = await Promise.allSettled(tasks.map(async task => {
+                const original = task.images.find((image, index) => (image.resultIndex ?? index) === 0);
+                const image = original ? await storedTaskImage(original) : undefined;
+                if (cancelled) return;
+                setNodes(previous => {
+                    if (cancelled || durableImageTasks.tasks.get(task.id) !== task) return previous;
+                    let changed = false;
+                    const next = previous.map(node => {
+                        const updated = applyCanvasImageTask(node, task, image);
+                        if (updated !== node) changed = true;
+                        return updated;
+                    });
+                    return changed ? next : previous;
+                });
+            }));
+            if (!cancelled && results.some(result => result.status === 'rejected')) message.error("部分原图暂不可读，其余图片已继续显示；请保留原任务后重试取图，不会重新生成。");
         })().catch(() => { if (!cancelled) message.error("暂时无法恢复生图任务，请重新打开画布继续取图；不会重新提交生成。"); });
         return () => { cancelled = true; };
     }, [imageTasks, imageTaskTargets, message, projectId, projectLoaded]);

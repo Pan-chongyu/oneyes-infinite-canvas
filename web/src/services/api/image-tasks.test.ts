@@ -43,6 +43,40 @@ async function until(check: () => boolean) {
     assert.fail("Task did not reach expected state");
 }
 
+test('completed submission receipts download immediately after persistence without a timer, credentials lookup or duplicate GET', async () => {
+    let release!: () => void;
+    const durableReceipt = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture(new Map(), {
+        submit: async () => complete,
+        credentials: async () => { assert.fail('the completed reply already came from the submitted Key'); },
+        poll: async () => { assert.fail('do not query the same completed result again'); },
+    });
+    const put = f.deps.storage.put;
+    f.deps.storage.put = async task => { if (task.remoteId && !task.images.length) await durableReceipt; return put(task); };
+    const pending = f.manager.submit(seed, '/images/generations/async', {}, 'sk-test-private');
+    await until(() => f.saved.get('local')?.status === 'submitting');
+    assert.equal(f.calls.saves.length, 0, 'a usable image never outruns its durable receipt');
+    release();
+    assert.deepEqual(await pending, [image]);
+    assert.equal(f.saved.get('local')?.status, 'completed');
+    assert.equal(f.calls.saves.length, 1);
+});
+
+test('an immediate completed reply with missing or interrupted originals retains the receipt and resumes with GET only', async () => {
+    for (const missing of [false, true]) {
+        const f = fixture(new Map(), { submit: async () => missing ? { value: { id: 'imgtask_remote', status: 'completed' } } : complete,
+            saveImage: async () => { throw new TypeError('interrupted original'); } });
+        const pending = f.manager.submit(seed, '/images/generations/async', {}, 'sk-test-private');
+        await until(() => f.saved.get('local')?.status === 'waiting');
+        assert.equal(f.saved.get('local')?.remoteId, 'imgtask_remote');
+        assert.equal(f.calls.polls, 0);
+        f.deps.saveImage = async () => image;
+        await f.manager.resume('local');
+        assert.deepEqual(await pending, [image]);
+        assert.equal(f.calls.polls, 1);
+    }
+});
+
 test("receipt is persisted before polling, network recovery only queries the original paid task", async () => {
     let polls = 0;
     const f = fixture(new Map(), { poll: async () => { if (!polls++) throw new TypeError("offline"); return complete; } });
