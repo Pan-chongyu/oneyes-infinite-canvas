@@ -36,12 +36,13 @@ app.whenReady().then(async () => {
     protocol.handle('oneyes-canvas', request => net.fetch(route(request.url, root).file));
     const win = new BrowserWindow({ width: 1000, height: 860, show: false, webPreferences: { preload: join(__dirname, '../../desktop/preload.cjs'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
     const js = code => win.webContents.executeJavaScript(code);
-    const wait = async code => { const end = Date.now() + 20000; while (!await js(`Boolean(${code})`)) { if (Date.now() > end) throw Error('Setup wait failed: ' + code + '; ' + await js('document.body.innerText')); await new Promise(resolve => setTimeout(resolve, 25)); } };
+    const wait = async code => { const end = Date.now() + 20000; while (!await js(`Boolean(${code})`)) { if (Date.now() > end) throw Error('Setup wait failed: ' + code + '; ' + await js('document.body.innerText') + '; ' + await js('JSON.stringify(window.setupTrace)')); await new Promise(resolve => setTimeout(resolve, 25)); } };
     const click = async code => {
         await wait(code);
         await wait('[...document.getAnimations()].every(animation => animation.playState !== "running")');
         await js(`(${code}).scrollIntoView({block:'center',behavior:'instant'})`);
         await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        await wait('[...document.getAnimations()].every(animation => animation.playState !== "running")');
         const point = await js(`(()=>{const button=(${code}),rect=button.getBoundingClientRect(),x=Math.round(rect.x+rect.width/2),y=Math.round(rect.y+rect.height/2);if(!button.contains(document.elementFromPoint(x,y)))throw Error('Setup button is not reachable: '+button.textContent+' at '+x+','+y);return{x,y}})()`);
         win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
         win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });

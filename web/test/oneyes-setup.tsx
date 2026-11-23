@@ -14,6 +14,10 @@ import { queryClient } from '@/lib/query-client';
 
 await useConfigStore.persist.rehydrate();
 await useOneYesAccountStore.getState().restore();
+const trace: unknown[] = [];
+Object.assign(window, { setupTrace: trace });
+document.addEventListener('click', event => { const store = useConfigStore.getState(); trace.push({ button: (event.target as HTMLElement).closest('button')?.textContent, mode: store.setupMode, open: store.isSetupOpen, status: store.setupStatus }); });
+useConfigStore.subscribe((state, previous) => { if (state.isSetupOpen !== previous.isSetupOpen || state.setupMode !== previous.setupMode) trace.push({ mode: state.setupMode, open: state.isSetupOpen, status: state.setupStatus }); });
 function Fixture() {
     const [mounted, setMounted] = useState(true), [dark, setDark] = useState(false);
     Object.assign(window, { setupTest: {
