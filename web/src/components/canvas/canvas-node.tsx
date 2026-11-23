@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { VideoModelStatus } from '@/components/video-model-status';
 import { useConfigStore, isModelUnavailable } from '@/stores/use-config-store';
 import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
+import { useImageTransferStore } from '@/stores/use-image-task-store';
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
@@ -471,7 +472,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot && props.node.type === CanvasNodeType.Image) return <ImageNodeContent {...props} />;
     if (props.node.type === CanvasNodeType.Text && props.node.metadata?.texts?.length && (props.node.metadata.status !== "error" || props.node.metadata.texts.some((text) => text.content))) return <TextContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} message={props.node.type === CanvasNodeType.Video && props.node.metadata.loadingMessage ? videoErrorText(props.node.metadata.loadingMessage, { stage: 'poll' }) : props.node.metadata.loadingMessage} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} taskId={props.node.type === CanvasNodeType.Image ? props.node.metadata.imageTaskId : undefined} message={props.node.type === CanvasNodeType.Video && props.node.metadata.loadingMessage ? videoErrorText(props.node.metadata.loadingMessage, { stage: 'poll' }) : props.node.metadata.loadingMessage} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
@@ -510,15 +511,23 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
     );
 }
 
-function LoadingContent({ theme, message }: Pick<NodeContentRendererProps, "theme"> & { message?: string }) {
+function LoadingContent({ theme, message, taskId }: Pick<NodeContentRendererProps, "theme"> & { message?: string; taskId?: string }) {
     const { t } = useTranslation();
+    const progress = useImageTransferStore(state => taskId ? state.transfers[taskId]?.[0] : undefined);
+    const percent = progress?.phase === "download" && progress.totalBytes && progress.receivedBytes <= progress.totalBytes ? Math.floor(progress.receivedBytes / progress.totalBytes * 100) : undefined;
+    const label = progress?.phase === "saving" ? "正在读取并保存原图…" : progress?.phase === "download" ? progress.receivedBytes ? "正在取回原图…" : "正在连接原图…" : message;
+    if (progress?.image) return <div className="relative h-full w-full">
+        <img src={progress.image.url} alt="已取回的原图" draggable={false} className="pointer-events-none h-full w-full select-none object-contain" />
+        <div role="status" className="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[10px]" style={{ background: theme.toolbar.panel, color: theme.node.text }}><span aria-hidden="true" className="size-2.5 rounded-full border motion-safe:animate-spin" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />原图已显示，正在保存到本机</div>
+    </div>;
     return (
         <div role="status" aria-live="polite" className="flex h-full w-full flex-col items-center justify-center gap-2.5 px-4 text-center" style={{ color: theme.node.text }}>
             <div aria-hidden="true" className="size-6 rounded-full border-2 motion-safe:animate-spin" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
             <div className="space-y-1">
-                <div className="text-xs leading-5">{message || t("canvas.node.generating")}</div>
-                <div className="text-[10px] leading-4" style={{ color: theme.node.muted }}>{t("canvas.node.generationHint")}</div>
+                <div className="text-xs leading-5">{label || t("canvas.node.generating")}</div>
+                <div aria-live="off" className="text-[10px] tabular-nums leading-4" style={{ color: theme.node.muted }}>{progress?.phase === "download" && progress.receivedBytes ? `${formatBytes(progress.receivedBytes)}${percent !== undefined ? ` / ${formatBytes(progress.totalBytes!)} · ${percent}%` : ""}` : t("canvas.node.generationHint")}</div>
             </div>
+            {percent !== undefined && <div role="progressbar" aria-label="原图下载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-live="off" className="h-0.5 w-full max-w-32 overflow-hidden rounded-full" style={{ background: theme.node.stroke }}><div className="h-full origin-left motion-safe:transition-transform" style={{ background: theme.node.activeStroke, transform: `scaleX(${percent / 100})` }} /></div>}
         </div>
     );
 }
@@ -949,7 +958,7 @@ function ImageSlotStatus({ image }: { image?: CanvasNodeImage }) {
         <div className="flex h-full w-full items-center justify-center px-6 text-center" style={{ background: theme.node.fill, color: theme.node.text }}>
             <span className="text-xs leading-5">{image.errorDetails || t("canvas.node.failed")}</span>
         </div>
-    ) : <LoadingContent theme={theme} message={image?.loadingMessage} />;
+    ) : <LoadingContent theme={theme} taskId={image?.imageTaskId} message={image?.loadingMessage} />;
 }
 
 function ImageInfoBar({ node }: { node: CanvasNodeData }) {

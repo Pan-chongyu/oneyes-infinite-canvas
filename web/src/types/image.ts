@@ -6,3 +6,10 @@ export type ReferenceImage = {
     url?: string;
     storageKey?: string;
 };
+
+export type ImageTransferProgress = {
+    phase: "download" | "saving";
+    receivedBytes: number;
+    totalBytes?: number;
+    image?: { url: string; width: number; height: number };
+};

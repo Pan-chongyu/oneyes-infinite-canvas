@@ -4,12 +4,26 @@ import { nanoid } from "nanoid";
 import { buildApiUrl, useConfigStore, type AiConfig } from "./use-config-store";
 import { ImageTaskManager, imageCredentialFingerprint, imageTaskRequest, type ImageTask, type ImageTaskTarget, type TaskImage } from "@/services/api/image-tasks";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
-import type { ReferenceImage } from "@/types/image";
+import type { ImageTransferProgress, ReferenceImage } from "@/types/image";
 import { imageSizeMismatch } from "@/lib/image-request-size";
 
 const storage = localforage.createInstance({ name: "infinite-canvas", storeName: "image_tasks" });
 const logs = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 export const useImageTaskStore = create<{ tasks: ImageTask[]; error?: string }>(() => ({ tasks: [] }));
+// Transfer ticks stay in memory and repaint at most once per animation frame.
+// They never rewrite task receipts, canvas history or collaboration snapshots.
+export const useImageTransferStore = create<{ transfers: Record<string, Record<number, ImageTransferProgress>> }>(() => ({ transfers: {} }));
+const transfers = new Map<string, Record<number, ImageTransferProgress>>();
+let transferFrame: number | undefined;
+function transferProgress(id: string, index: number, value?: ImageTransferProgress) {
+    const next = { ...transfers.get(id) };
+    if (value) next[index] = value; else delete next[index];
+    if (Object.keys(next).length) transfers.set(id, next); else transfers.delete(id);
+    if (transferFrame === undefined) transferFrame = requestAnimationFrame(() => {
+        transferFrame = undefined;
+        useImageTransferStore.setState({ transfers: Object.fromEntries(transfers) });
+    });
+}
 const logWrites = new Map<string, Promise<unknown>>();
 let credentialKeys: string[] = [];
 let credentialEntries: Promise<Array<{ key: string; fingerprint: string }>> = Promise.resolve([]);
@@ -31,12 +45,13 @@ export const imageTasks: ImageTaskManager = new ImageTaskManager({
     },
     submit: (path, body, key) => imageTaskRequest(buildApiUrl("https://oneyes.ai", path), key, body),
     poll: (id, key) => imageTaskRequest(buildApiUrl("https://oneyes.ai", `/images/tasks/${encodeURIComponent(id)}`), key),
-    saveImage: async (source, id) => {
-        const image = await uploadImage(source, { storageKey: `image:task-${id}` });
+    saveImage: async (source, id, onProgress) => {
+        const image = await uploadImage(source, { storageKey: `image:task-${id}`, onProgress });
         // Remote-only fallbacks are not durable. Retry until the Blob is saved locally.
         if (!image.storageKey) throw new Error("图片尚未保存到本机");
         return { id, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType };
     },
+    progress: transferProgress,
     completed: task => {
         const write = (logWrites.get(task.logId) || Promise.resolve()).then(async () => {
             const group = [...imageTasks.tasks.values()].filter(item => item.logId === task.logId);

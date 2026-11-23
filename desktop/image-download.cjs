@@ -8,6 +8,11 @@ async function downloadImage(request, url, fetcher) {
         await response.body?.cancel();
         return new Response(null, { status: response.ok ? 502 : response.status });
     }
-    return new Response(response.body, { headers: { 'Content-Type': type, 'Cache-Control': 'no-store' } });
+    const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
+    // net.fetch may already have decompressed the body; only report the length
+    // when it describes the bytes actually forwarded to the renderer.
+    const length = response.headers.get('content-length');
+    if (!response.headers.get('content-encoding') && /^\d+$/.test(length || '') && Number.isSafeInteger(Number(length)) && Number(length) > 0) headers['Content-Length'] = length;
+    return new Response(response.body, { headers });
 }
 module.exports = { downloadImage };

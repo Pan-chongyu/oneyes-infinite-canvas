@@ -8,7 +8,8 @@ import '@/i18n';
 import '@/styles/globals.css';
 import CanvasProject from '@/pages/canvas/project';
 import { defaultConfig, useConfigStore } from '@/stores/use-config-store';
-import { imageTasks, initializeImageTasks, useImageTaskStore } from '@/stores/use-image-task-store';
+import { imageTasks, initializeImageTasks, useImageTaskStore, useImageTransferStore } from '@/stores/use-image-task-store';
+import { useThemeStore } from '@/stores/use-theme-store';
 import { useCanvasStore, flushCanvasStorage } from '@/stores/canvas/use-canvas-store';
 import { getImageBlob, uploadImage } from '@/services/image-storage';
 import { CanvasNodeType, type CanvasNodeData } from '@/types/canvas';
@@ -46,14 +47,46 @@ IDBObjectStore.prototype.get = function (key) {
     return request;
 };
 initializeImageTasks();
+let releaseMetadata!: () => void, releaseWrite!: () => void, metadataBlocked = false, writeSettled = false;
+const metadataGate = new Promise<void>(resolve => { releaseMetadata = resolve; });
+const writeGate = new Promise<void>(resolve => { releaseWrite = resolve; });
+const NativeImage = window.Image, nativePut = IDBObjectStore.prototype.put;
 Object.assign(window, { deliveryTest: {
     state: () => useImageTaskStore.getState().tasks,
+    progress: () => useImageTransferStore.getState().transfers.fast?.[0],
+    blocked: () => ({ metadataBlocked, writeSettled }),
+    theme: (theme: 'light' | 'dark') => useThemeStore.setState({ theme }),
     slowReads: () => slowReads,
     start: () => {
+        window.Image = new Proxy(NativeImage, { construct(target, args) {
+            const image = Reflect.construct(target, args) as HTMLImageElement;
+            let onLoad: ((event: Event) => void) | null = null;
+            image.addEventListener('load', event => { metadataBlocked = true; void metadataGate.then(() => onLoad?.call(image, event)); });
+            Object.defineProperty(image, 'onload', { configurable: true, get: () => onLoad, set: callback => { onLoad = callback; } });
+            return image;
+        } });
+        IDBObjectStore.prototype.put = function (value, key) {
+            const request = nativePut.call(this, value, key);
+            if (this.name !== 'image_files' || key !== 'image:task-fast-0') return request;
+            const transaction = this.transaction;
+            let onSuccess: ((event: Event) => void) | null = null;
+            transaction.addEventListener('complete', event => { writeSettled = true; void writeGate.then(() => onSuccess?.call(transaction, event)); });
+            Object.defineProperty(transaction, 'oncomplete', { configurable: true, get: () => onSuccess, set: callback => { onSuccess = callback; } });
+            return request;
+        };
         void imageCredentialFingerprint('fixture-private-key').then(credential => imageTasks.submit({
             id: 'fast', credential, model: config.model, prompt: '快速取图', logId: 'fast', createdAt: Date.now(), target: { projectId, nodeId: 'fast' },
             config: { model: config.model, imageModel: config.imageModel, size: config.size, quality: config.quality, count: '1' },
         }, '/images/generations/async', { model: 'gpt-image-2', prompt: '快速取图' }, 'fixture-private-key')).catch(error => console.error(error));
+    },
+    releaseMetadata: () => { window.Image = NativeImage; releaseMetadata(); },
+    releaseWrite: () => { IDBObjectStore.prototype.put = nativePut; releaseWrite(); },
+    pendingOriginal: async () => Array.from(new Uint8Array(await (await getImageBlob('image:task-fast-0'))!.arrayBuffer())),
+    invalidOriginal: async () => {
+        let displayed = false, failed = false;
+        try { await uploadImage(new Blob(['not an image'], { type: 'image/png' }), { storageKey: 'image:invalid-delivery', onProgress: value => { displayed ||= !!value.image; } }); }
+        catch { failed = true; }
+        return { failed, displayed, stored: !!await getImageBlob('image:invalid-delivery') };
     },
     bytes: async () => {
         const task = useImageTaskStore.getState().tasks.find(task => task.target?.nodeId === 'fast');

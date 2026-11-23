@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { withLocalProxy } from "@/stores/use-config-store";
 import { createImageThumbnail } from "@/lib/image-thumbnail";
+import type { ImageTransferProgress } from "@/types/image";
 
 export type UploadedImage = {
     resolutionWarning?: string;
@@ -32,7 +33,7 @@ const IMAGE_RESPONSE_ERROR = "ImageResponseError";
 
 type StoredImagePreview = { version: number; blob?: Blob };
 
-type ImageReadOptions = { signal?: AbortSignal; storageKey?: string };
+type ImageReadOptions = { signal?: AbortSignal; storageKey?: string; onProgress?: (value: ImageTransferProgress) => void };
 
 export async function uploadImage(input: string | Blob, options?: ImageReadOptions): Promise<UploadedImage> {
     throwIfAborted(options?.signal);
@@ -70,10 +71,22 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
     const storageKey = options?.storageKey || `image:${nanoid()}`;
     const url = URL.createObjectURL(blob);
     try {
-        const meta = await loadImageMeta(url, options);
+        options?.onProgress?.({ phase: "saving", receivedBytes: blob.size });
+        // Decode and persist the same original in parallel. Wait for both even
+        // on failure so cleanup cannot race a still-pending IndexedDB write.
+        let writeFailed = false;
+        const saving = store.setItem(storageKey, blob).catch(error => { writeFailed = true; throw error; });
+        const decoding = loadImageMeta(url, options).then(meta => {
+            // A decoded original may be shown while the write settles, but it
+            // is not a durable task result until both operations succeed.
+            if (meta && !writeFailed && !options?.signal?.aborted) options?.onProgress?.({ phase: "saving", receivedBytes: blob.size, image: { url, ...meta } });
+            return meta;
+        });
+        const [decoded, written] = await Promise.allSettled([decoding, saving]);
+        if (decoded.status === "rejected") throw decoded.reason;
+        if (written.status === "rejected") throw written.reason;
+        const meta = decoded.value;
         if (!meta) throw new Error(i18n.t("common.imageReadFailed"));
-        throwIfAborted(options?.signal);
-        await store.setItem(storageKey, blob);
         throwIfAborted(options?.signal);
         objectUrls.set(storageKey, url);
         const image = { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
@@ -89,11 +102,24 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
 
 export async function fetchImageBlob(url: string, options?: ImageReadOptions) {
     try {
+        options?.onProgress?.({ phase: "download", receivedBytes: 0 });
         const target = window.oneYesDesktop && /^https:\/\//i.test(url)
             ? `oneyes-canvas://app/image-download?url=${encodeURIComponent(url)}`
             : withLocalProxy(url);
         const response = await fetch(target, { signal: options?.signal, credentials: "omit" });
         if (!response.ok) throw Object.assign(namedError(IMAGE_RESPONSE_ERROR), { status: response.status });
+        if (options?.onProgress && response.body) {
+            const length = response.headers.get("content-length");
+            const total = length && /^\d+$/.test(length) && !response.headers.get("content-encoding") ? Number(length) : 0;
+            const totalBytes = Number.isSafeInteger(total) && total > 0 ? total : undefined;
+            let receivedBytes = 0;
+            const stream = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(chunk, controller) {
+                receivedBytes += chunk.byteLength;
+                options.onProgress!({ phase: "download", receivedBytes, totalBytes: totalBytes && receivedBytes <= totalBytes ? totalBytes : undefined });
+                controller.enqueue(chunk);
+            } }));
+            return await new Response(stream, { headers: response.headers }).blob();
+        }
         return await response.blob();
     } catch (error) {
         if (options?.signal?.aborted) throw abortReason(options.signal);

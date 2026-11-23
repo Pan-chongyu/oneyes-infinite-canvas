@@ -1,6 +1,6 @@
 import { reportError } from "../diagnostics";
 import { MEDIA_POLL_INTERVAL_MS } from "./media-request-policy";
-import type { ReferenceImage } from "../../types/image";
+import type { ImageTransferProgress, ReferenceImage } from "../../types/image";
 import { imageSizeMismatch } from "../../lib/image-request-size";
 
 export type ImageTaskTarget = { projectId: string; nodeId: string; imageId?: string };
@@ -31,7 +31,8 @@ export type ImageTaskDependencies = {
     credentials(task: ImageTask): Promise<string | undefined>;
     submit(path: string, body: Record<string, unknown> | FormData, key: string): Promise<ImageTaskReply>;
     poll(id: string, key: string): Promise<ImageTaskReply>;
-    saveImage(source: string, id: string): Promise<TaskImage>;
+    saveImage(source: string, id: string, onProgress?: (value: ImageTransferProgress) => void): Promise<TaskImage>;
+    progress?(id: string, index: number, value?: ImageTransferProgress): void;
     completed(task: ImageTask): Promise<void>;
     changed(tasks: ImageTask[]): void;
     online?(): boolean;
@@ -200,16 +201,20 @@ export class ImageTaskManager {
                 // Serialize only local checkpoints so out-of-order completions never overwrite each other.
                 const results = await Promise.allSettled(sources.map(async (source, index) => {
                     if (saved.has(index) || this.removed.has(id) || this.paused.has(id)) return;
-                    const image = await this.deps.saveImage(source, `${task.id}-${index}`);
-                    const checkpoint = checkpoints.then(async () => {
-                        if (this.removed.has(id)) return;
-                        const resolutionWarning = imageSizeMismatch(task.requestedSize, image);
-                        saved.set(index, { ...image, resultIndex: index, ...(resolutionWarning ? { resolutionWarning } : {}) });
-                        task = { ...task, images: [...saved.entries()].sort(([a], [b]) => a - b).map(([, value]) => value) };
-                        await this.put(task);
-                    });
-                    checkpoints = checkpoint.catch(() => undefined);
-                    await checkpoint;
+                    try {
+                        const image = await this.deps.saveImage(source, `${task.id}-${index}`, value => {
+                            if (!this.removed.has(id) && !this.paused.has(id)) this.deps.progress?.(id, index, value);
+                        });
+                        const checkpoint = checkpoints.then(async () => {
+                            if (this.removed.has(id)) return;
+                            const resolutionWarning = imageSizeMismatch(task.requestedSize, image);
+                            saved.set(index, { ...image, resultIndex: index, ...(resolutionWarning ? { resolutionWarning } : {}) });
+                            task = { ...task, images: [...saved.entries()].sort(([a], [b]) => a - b).map(([, value]) => value) };
+                            await this.put(task);
+                        });
+                        checkpoints = checkpoint.catch(() => undefined);
+                        await checkpoint;
+                    } finally { this.deps.progress?.(id, index); }
                 }));
                 const failure = results.find(result => result.status === "rejected");
                 if (failure?.status === "rejected") throw failure.reason;

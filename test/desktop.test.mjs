@@ -44,9 +44,14 @@ test('native image downloads preserve signed URLs and never forward app credenti
         calls++; assert.equal(target, url);
         assert.deepEqual(init.headers, { Accept: 'image/*' });
         assert.equal(init.credentials, 'omit'); assert.equal(init.redirect, 'error'); assert.equal(init.cache, 'no-store');
-        return new Response('image-bytes', { headers: { 'Content-Type': 'image/png' } });
+        return new Response('image-bytes', { headers: { 'Content-Type': 'image/png', 'Content-Length': '11' } });
     });
+    assert.equal(response.headers.get('content-length'), '11');
     assert.equal(await response.text(), 'image-bytes'); assert.equal(calls, 1);
+    for (const headers of [{ 'Content-Length': '10', 'Content-Encoding': 'gzip' }, { 'Content-Length': '-1' }, { 'Content-Length': '9007199254740992' }]) {
+        const result = await downloadImage(request, url, async () => new Response('image-bytes', { headers: { 'Content-Type': 'image/png', ...headers } }));
+        assert.equal(result.headers.get('content-length'), null, 'unknown decoded size must not create a false percentage');
+    }
     assert.equal((await downloadImage(new Request('https://app.test', { method: 'POST' }), url, () => { throw Error('must not run'); })).status, 405);
     assert.equal((await downloadImage(request, url, async () => new Response('<html>login</html>', { headers: { 'Content-Type': 'text/html' } }))).status, 502);
     assert.equal((await downloadImage(request, url, async () => new Response(null, { status: 403 }))).status, 403);

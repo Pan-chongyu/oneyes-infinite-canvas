@@ -77,6 +77,31 @@ test('an immediate completed reply with missing or interrupted originals retains
     }
 });
 
+test('transfer ticks never persist display URLs or complete a task before its original checkpoint, and clear after failure', async () => {
+    const ticks: unknown[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture(new Map([['local', processing()]]), {
+        progress: (id, index, value) => ticks.push({ id, index, value }),
+        saveImage: async (_source, _id, progress) => {
+            progress?.({ phase: 'download', receivedBytes: 24, totalBytes: 100 });
+            progress?.({ phase: 'saving', receivedBytes: 100, image: { url: 'blob:transient', width: 1024, height: 768 } });
+            await gate;
+            throw new Error('disk full');
+        },
+    });
+    await f.manager.initialize();
+    const pending = f.manager.refresh('local');
+    await until(() => ticks.length === 2);
+    assert.equal(f.saved.get('local')?.status, 'saving');
+    assert.equal(f.saved.get('local')?.images.length, 0);
+    assert.ok(!JSON.stringify([...f.saved.values()]).includes('blob:transient'));
+    release(); await pending;
+    assert.equal(f.saved.get('local')?.status, 'waiting');
+    assert.deepEqual(ticks.at(-1), { id: 'local', index: 0, value: undefined });
+    assert.equal(f.calls.submits, 0);
+});
+
 test("receipt is persisted before polling, network recovery only queries the original paid task", async () => {
     let polls = 0;
     const f = fixture(new Map(), { poll: async () => { if (!polls++) throw new TypeError("offline"); return complete; } });
@@ -317,7 +342,9 @@ test("canvas recovery updates only the original node/slot and preserves successf
     const marked = markCanvasImageTask([node], target, "local")[0];
     const task: ImageTask = { ...processing(), status: "completed", target, images: [image] };
     const saving = applyCanvasImageTask(marked, { ...task, status: "waiting", expectedImages: 1, images: [] });
-    assert.match(saving.metadata?.images?.[1].loadingMessage || "", /图片已生成/);
+    assert.match(saving.metadata?.images?.[1].loadingMessage || "", /正在重新连接/);
+    const downloading = applyCanvasImageTask(marked, { ...task, status: 'saving', expectedImages: 1, images: [] });
+    assert.match(downloading.metadata?.images?.[1].loadingMessage || '', /图片已生成/);
     const applied = applyCanvasImageTask(marked, task, { ...image, url: "blob:restored" });
     assert.equal(applied.metadata?.images?.[1].content, "blob:restored"); assert.equal(applied.metadata?.images?.[0].content, "old");
     assert.equal(applied.metadata?.content, "old"); assert.equal(applied.metadata?.status, "success");
