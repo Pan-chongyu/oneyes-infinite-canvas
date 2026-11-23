@@ -34,7 +34,7 @@ app.whenReady().then(async () => {
     try {
         await win.loadURL('oneyes-canvas://app/');
         const result = await win.webContents.executeJavaScript(`(async () => {
-            const surface = (w,h) => { const canvas = new OffscreenCanvas(w,h); return {canvas,ctx:canvas.getContext('2d')}; };
+            const surface = (w,h) => { const canvas = new OffscreenCanvas(w,h); return {canvas,ctx:canvas.getContext('2d',{willReadFrequently:true})}; };
             const process = async (script, data) => {
                 const worker = new Worker('/assets/'+script, {type:'module'});
                 try { return await new Promise((resolve,reject) => {
@@ -88,7 +88,10 @@ app.whenReady().then(async () => {
             const colorResult=await createImageBitmap(await process('${ai}',{operation:'superResolution',blob:colorBlob}));
             const colorOutput=surface(57,33);colorOutput.ctx.drawImage(colorResult,0,0);colorResult.close();
             const colorPixels=colorOutput.ctx.getImageData(0,0,57,33).data;
-            const alphaReference=surface(57,33);alphaReference.ctx.imageSmoothingQuality='high';alphaReference.ctx.drawImage(transparent.canvas,0,0,57,33);
+            // Match production's PNG decode and CPU readback surface. A GPU-backed
+            // renderer canvas uses a different high-quality resampler on macOS.
+            const alphaReference=surface(57,33),alphaBitmap=await createImageBitmap(colorBlob);
+            alphaReference.ctx.imageSmoothingEnabled=true;alphaReference.ctx.imageSmoothingQuality='high';alphaReference.ctx.drawImage(alphaBitmap,0,0,57,33);alphaBitmap.close();
             const expectedAlpha=alphaReference.ctx.getImageData(0,0,57,33).data;
             let alphaDelta=0;for(let i=3;i<colorPixels.length;i+=4)alphaDelta=Math.max(alphaDelta,Math.abs(colorPixels[i]-expectedAlpha[i]));
             const pixel=surface(1,1);pixel.ctx.fillStyle='#ff3030';pixel.ctx.fillRect(0,0,1,1);
@@ -106,7 +109,7 @@ app.whenReady().then(async () => {
         for(const comparison of result.seams)assert.ok(comparison.maximum<=1 && comparison.mean<0.01, 'tile crossings must match single-tile inference: '+JSON.stringify(result.seams));
         console.log('SUPER_RESOLUTION_SEAMS_OK: '+JSON.stringify(result.seams));
         assert.deepEqual(result.cut, [80,60]); assert.equal(result.alpha[2], 0); assert.ok(result.alpha[0] < result.alpha[1]);
-        assert.ok(result.alphaDelta<=1,'upscale must retain smoothly sampled original alpha');assert.deepEqual(result.tiny,[3,3]);
+        assert.ok(result.alphaDelta<=1,'upscale must retain smoothly sampled original alpha: '+result.alphaDelta);assert.deepEqual(result.tiny,[3,3]);
         assert.deepEqual(result.composition.slice(0,2), [4,3]);
         // Skia's premultiplied-alpha rounding differs by one byte across native backends.
         const [red,green,blue,opacity] = result.composition.slice(2);
