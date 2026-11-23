@@ -59,7 +59,7 @@ function SetupContent() {
         attemptedAccount.current = account.user.id;
         void configure();
     }, [beginner, manual, result, account.ready, account.busy, account.requires_2fa, account.user, configure]);
-    if (choosing) return <Modal open centered width={580} title={t("config.onboarding.title")} footer={null} onCancel={close}>
+    if (choosing) return <Modal open centered width={580} title={t("config.onboarding.title")} footer={null} onCancel={close} styles={{ body: { maxHeight: "calc(100dvh - 180px)", overflowY: "auto" } }}>
         <div className="pb-1 pt-5">
             <h2 className="mb-2 text-2xl font-semibold tracking-tight">{t("config.onboarding.chooseTitle")}</h2>
             <p className="mb-6 text-sm leading-relaxed text-muted-foreground">{t("config.onboarding.chooseHint")}</p>
@@ -76,7 +76,7 @@ function SetupContent() {
             <p className="mb-0 mt-4 text-xs leading-relaxed text-muted-foreground">{t("config.onboarding.choiceNote")}</p>
         </div>
     </Modal>;
-    return <Modal open centered width={580} title={t("config.onboarding.title")} footer={null} onCancel={close} closable={!busy} keyboard={!busy} mask={{ closable: !busy }}>
+    return <Modal open centered width={580} title={t("config.onboarding.title")} footer={null} onCancel={close} closable={!busy} keyboard={!busy} mask={{ closable: !busy }} styles={{ body: { maxHeight: "calc(100dvh - 180px)", overflowY: "auto" } }}>
         <div className="mb-6 mt-5"><Steps size="small" responsive={false} current={step} items={["login", "configure", "done"].map(key => ({ title: t(`config.onboarding.steps.${key}`) }))} /></div>
         <motion.div key={`${step}-${manual}`} initial={reduceMotion ? false : { opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.18 }}>
             <h2 className="mb-2 text-xl font-semibold tracking-tight">{t(`config.onboarding.${step === 0 ? "loginTitle" : result ? (verified.length ? "doneTitle" : "failedTitle") : "configureTitle"}`)}</h2>

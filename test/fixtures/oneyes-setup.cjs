@@ -40,7 +40,9 @@ app.whenReady().then(async () => {
     const click = async code => {
         await wait(code);
         await wait('[...document.getAnimations()].every(animation => animation.playState !== "running")');
-        const point = await js(`(()=>{const rect=(${code}).getBoundingClientRect();return{x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)}})()`);
+        await js(`(${code}).scrollIntoView({block:'center',behavior:'instant'})`);
+        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        const point = await js(`(()=>{const button=(${code}),rect=button.getBoundingClientRect(),x=Math.round(rect.x+rect.width/2),y=Math.round(rect.y+rect.height/2);if(!button.contains(document.elementFromPoint(x,y)))throw Error('Setup button is not reachable: '+button.textContent+' at '+x+','+y);return{x,y}})()`);
         win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
         win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
     };
@@ -98,6 +100,7 @@ app.whenReady().then(async () => {
 
         fail = 'groups'; await reset('beginner');
         await wait('!setupTest.state().busy && setupTest.state().error');
+        await new Promise(resolve => { win.once('resize', resolve); win.setSize(1000, 600); });
         assert.equal(calls.filter(op => op === 'groups').length, 1);
         await js('setupTest.theme(false)');
         assert.equal(calls.filter(op => op === 'groups').length, 1, 'failure/rerender must not trigger automatic retries');
@@ -107,6 +110,7 @@ app.whenReady().then(async () => {
         await wait(button('重新检查并配置'));
         await wait('!setupTest.state().busy && setupTest.state().error');
         assert.equal(calls.filter(op => op === 'groups').length, 2, 'returning from manual setup explicitly starts automatic setup again');
+        await new Promise(resolve => { win.once('resize', resolve); win.setSize(1000, 860); });
         fail = ''; await click(button('重新检查并配置')); await ready();
         assert.equal(calls.filter(op => op === 'create_key').length, 0);
 
