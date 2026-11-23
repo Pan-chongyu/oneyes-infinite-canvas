@@ -64,8 +64,28 @@ public class CanvasUpdateWindow : Form {
         base.WndProc(ref m);
         if (m.Msg == 0x84 && m.Result == (IntPtr)1) {
             var point = PointToClient(new Point(unchecked((short)m.LParam.ToInt64()), unchecked((short)(m.LParam.ToInt64() >> 16))));
-            if (point.Y < 72 * DeviceDpi / 96 && point.X < ClientSize.Width - 88 * DeviceDpi / 96) m.Result = (IntPtr)2;
+            if (point.Y < 38 * DeviceDpi / 96 && point.X >= 80 * DeviceDpi / 96) m.Result = (IntPtr)2;
         }
+    }
+}
+public class CanvasWindowButton : Button {
+    bool hovered;
+    public string Kind { get; set; }
+    public Color CircleColor { get; set; }
+    public CanvasWindowButton() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); }
+    protected override void OnMouseEnter(EventArgs e) { hovered = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hovered = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnPaint(PaintEventArgs e) {
+        var g = e.Graphics; g.Clear(BackColor); g.SmoothingMode = SmoothingMode.AntiAlias;
+        float scale = DeviceDpi / 96f, size = 12 * scale, x = (Width - size) / 2, y = (Height - size) / 2;
+        using (var fill = new SolidBrush(CircleColor)) using (var edge = new Pen(Color.FromArgb(45, ForeColor), scale)) {
+            g.FillEllipse(fill, x, y, size, size); g.DrawEllipse(edge, x, y, size, size);
+        }
+        if (Enabled && (hovered || (Focused && ShowFocusCues) || SystemInformation.HighContrast)) using (var pen = new Pen(ForeColor, scale)) {
+            if (Kind == "close") { g.DrawLine(pen, x + size * .3f, y + size * .3f, x + size * .7f, y + size * .7f); g.DrawLine(pen, x + size * .7f, y + size * .3f, x + size * .3f, y + size * .7f); }
+            else g.DrawLine(pen, x + size * .25f, y + size * .5f, x + size * .75f, y + size * .5f);
+        }
+        if (Focused && ShowFocusCues) using (var focus = new Pen(SystemColors.Highlight, scale)) g.DrawEllipse(focus, x - 3 * scale, y - 3 * scale, size + 6 * scale, size + 6 * scale);
     }
 }
 public class CanvasUpdateProgress : ProgressBar {
@@ -104,7 +124,7 @@ public class CanvasUpdateProgress : ProgressBar {
 '@
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = New-Object CanvasUpdateWindow
-    $form.ClientSize = New-Object System.Drawing.Size(432, 258)
+    $form.ClientSize = New-Object System.Drawing.Size(432, 304)
     $form.AutoScaleMode = 'Dpi'
     $form.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
     $form.FormBorderStyle = 'None'
@@ -112,74 +132,86 @@ public class CanvasUpdateProgress : ProgressBar {
     $form.MaximizeBox = $false
     $form.AccessibleName = 'OneYes Canvas 更新进度'
     $dark = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme -eq 0
-    # Match the Canvas panel palette; the helper remains independent of Electron.
-    $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#1f1d1a' } else { '#fbfaf7' }))
-    $form.ForeColor = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#f5f5f4' } else { '#292524' }))
-    $muted = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#a8a29e' } else { '#78716c' }))
-    $accent = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#9daaff' } else { '#4658d9' }))
-    $track = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#3a3631' } else { '#e7e5df' }))
+    # A macOS-style utility window, rendered natively without an Electron dependency.
+    $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#28282a' } else { '#f5f5f7' }))
+    $form.ForeColor = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#f5f5f7' } else { '#1d1d1f' }))
+    $muted = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#b2b2b8' } else { '#69696e' }))
+    $accent = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#64a5ff' } else { '#0065d1' }))
+    $track = [System.Drawing.ColorTranslator]::FromHtml($(if ($dark) { '#464648' } else { '#dedee2' }))
     if ([System.Windows.Forms.SystemInformation]::HighContrast) {
         $form.BackColor = [System.Drawing.SystemColors]::Window; $form.ForeColor = [System.Drawing.SystemColors]::WindowText
         $muted = $form.ForeColor; $accent = [System.Drawing.SystemColors]::Highlight; $track = [System.Drawing.SystemColors]::GrayText
     }
     try { $form.Icon = New-Object System.Drawing.Icon($plan.icon) } catch { $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($plan.executable) }
     $logo = New-Object System.Windows.Forms.PictureBox
-    $logo.SetBounds(24, 24, 28, 28)
+    $logo.SetBounds(192, 48, 48, 48)
     $logo.SizeMode = 'Zoom'
     $logoStream = [System.IO.MemoryStream]::new([System.IO.File]::ReadAllBytes($plan.logo))
     $logo.Image = [System.Drawing.Image]::FromStream($logoStream)
     $heading = New-Object System.Windows.Forms.Label
-    $heading.SetBounds(64, 18, 260, 22)
-    $heading.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+    $heading.SetBounds(96, 10, 240, 22)
+    $heading.TextAlign = 'MiddleCenter'
+    $heading.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
     $heading.Text = 'OneYes Canvas'
     $version = New-Object System.Windows.Forms.Label
-    $version.SetBounds(64, 42, 260, 20)
+    $version.SetBounds(24, 145, 384, 20)
+    $version.TextAlign = 'TopCenter'
     $version.ForeColor = $muted
     $version.Text = '更新至 v' + $plan.version
-    $minimize = New-Object System.Windows.Forms.Button
-    $close = New-Object System.Windows.Forms.Button
-    $minimize.SetBounds(344, 8, 40, 32)
-    $close.SetBounds(384, 8, 40, 32)
-    $minimize.Text = [char]0xE921; $close.Text = [char]0xE8BB
+    $minimize = New-Object CanvasWindowButton
+    $close = New-Object CanvasWindowButton
+    $zoom = New-Object CanvasWindowButton
+    $close.SetBounds(8, 8, 24, 24)
+    $minimize.SetBounds(32, 8, 24, 24)
+    $zoom.SetBounds(56, 8, 24, 24)
+    $close.Kind = 'close'; $minimize.Kind = 'minimize'
+    $close.CircleColor = [System.Drawing.ColorTranslator]::FromHtml('#ff5f57')
+    $minimize.CircleColor = [System.Drawing.ColorTranslator]::FromHtml('#febc2e')
+    $zoom.CircleColor = $track; $zoom.Enabled = $false; $zoom.TabStop = $false
+    $zoom.AccessibleName = '最大化（不可用）'
+    $minimize.Text = [char]0xE921; $close.Text = [char]0xE8BB; $zoom.Text = [char]0xE922
     $minimize.AccessibleName = '最小化'; $close.AccessibleName = '关闭'
-    foreach ($button in @($minimize, $close)) {
-        $button.Font = New-Object System.Drawing.Font('Segoe MDL2 Assets', 9)
+    $close.TabIndex = 0; $minimize.TabIndex = 1
+    foreach ($button in @($minimize, $close, $zoom)) {
         $button.FlatStyle = 'Flat'; $button.FlatAppearance.BorderSize = 0
-        $button.BackColor = $form.BackColor; $button.ForeColor = $muted
-        $button.FlatAppearance.MouseOverBackColor = $track
+        $button.BackColor = $form.BackColor; $button.ForeColor = [System.Drawing.Color]::FromArgb(80, 45, 32)
+        if ([System.Windows.Forms.SystemInformation]::HighContrast) { $button.CircleColor = [System.Drawing.SystemColors]::ButtonFace; $button.ForeColor = $form.ForeColor }
     }
     $minimize.Add_Click({ $form.WindowState = 'Minimized' })
     $close.Add_Click({ $form.Close() })
     $tooltip = New-Object System.Windows.Forms.ToolTip
     $tooltip.SetToolTip($minimize, '最小化到任务栏')
     $tooltip.SetToolTip($close, '最小化到任务栏，更新会继续')
-    foreach ($control in @($logo, $heading, $version)) { $control.Add_MouseDown({ param($sender, $event) if ($event.Button -eq 'Left') { $form.DragHeader() } }) }
+    $heading.Add_MouseDown({ param($sender, $event) if ($event.Button -eq 'Left') { $form.DragHeader() } })
     $status = New-Object System.Windows.Forms.Label
-    $status.SetBounds(24, 86, 384, 28)
-    $status.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 14, [System.Drawing.FontStyle]::Bold)
+    $status.SetBounds(24, 112, 384, 28)
+    $status.TextAlign = 'TopCenter'
+    $status.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 13, [System.Drawing.FontStyle]::Bold)
     $description = New-Object System.Windows.Forms.Label
-    $description.SetBounds(24, 122, 384, 36)
+    $description.SetBounds(24, 177, 384, 36)
+    $description.TextAlign = 'TopCenter'
     $description.ForeColor = $muted
     $progress = New-Object CanvasUpdateProgress
-    $progress.SetBounds(24, 168, 384, 6)
+    $progress.SetBounds(32, 221, 368, 5)
     $progress.BackColor = $form.BackColor; $progress.ForeColor = $accent; $progress.TrackColor = $track
     $progress.AccessibleName = '更新进度'
     $amount = New-Object System.Windows.Forms.Label
-    $amount.SetBounds(320, 183, 88, 20)
+    $amount.SetBounds(312, 238, 88, 20)
     $amount.TextAlign = 'TopRight'
     $amount.ForeColor = $accent
     $hint = New-Object System.Windows.Forms.Label
-    $hint.SetBounds(24, 183, 290, 20)
+    $hint.SetBounds(32, 238, 278, 20)
     $hint.ForeColor = $muted
     $hint.Text = '完成后自动打开，可最小化等待'
     $steps = @(0..3 | ForEach-Object {
         $label = New-Object System.Windows.Forms.Label
-        $label.SetBounds((24 + 100 * $_), 222, 84, 20)
+        $label.SetBounds((32 + 94 * $_), 272, 86, 20)
+        $label.TextAlign = 'TopCenter'
         $label.ForeColor = $muted
         $label
     })
     $back = New-Object System.Windows.Forms.Button
-    $back.SetBounds(288, 214, 120, 30)
+    $back.SetBounds(280, 266, 120, 28)
     $back.Text = '返回应用重试'
     $back.Visible = $false
     $back.FlatStyle = 'Flat'; $back.FlatAppearance.BorderSize = 0
@@ -188,7 +220,7 @@ public class CanvasUpdateProgress : ProgressBar {
         try { Start-Process -FilePath $plan.executable -WorkingDirectory $plan.destination; $form.Close() }
         catch { $description.Text = '请从开始菜单重新打开 OneYes Canvas，或从应用中心覆盖安装新版。' }
     })
-    $form.Controls.AddRange(@($logo, $heading, $version, $minimize, $close, $status, $description, $progress, $amount, $hint, $back) + $steps)
+    $form.Controls.AddRange(@($logo, $heading, $version, $close, $minimize, $zoom, $status, $description, $progress, $amount, $hint, $back) + $steps)
     $form.Add_FormClosing({ param($sender, $event)
         if (!$script:finished) { $event.Cancel = $true; $sender.WindowState = 'Minimized' }
     })

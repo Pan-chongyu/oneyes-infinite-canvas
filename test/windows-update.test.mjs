@@ -35,6 +35,7 @@ public class WindowProbe {
   public delegate bool Visitor(IntPtr hwnd, IntPtr param);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hwnd, Visitor visitor, IntPtr param);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr size, StringBuilder text);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, StringBuilder name, int size);
@@ -50,6 +51,13 @@ public class WindowProbe {
   public static bool Marquee(IntPtr hwnd) { bool result=false;EnumChildWindows(hwnd,(h,p)=>{var name=new StringBuilder(256);GetClassName(h,name,256);if(name.ToString().Contains("msctls_progress32"))result=(GetWindowLong(h,-16)&8)!=0;return true;},IntPtr.Zero);return result; }
   public static int HitHeader(IntPtr hwnd) { Rect r; GetWindowRect(hwnd,out r);return (int)SendMessage(hwnd,0x84,IntPtr.Zero,(IntPtr)(((r.Top+12)<<16)|((r.Left+180)&0xffff))); }
   public static void Button(IntPtr hwnd, string text) { EnumChildWindows(hwnd,(h,p)=>{if(Text(h)==text)PostMessage(h,0xF5,IntPtr.Zero,IntPtr.Zero);return true;},IntPtr.Zero); }
+  public static object[] Controls(IntPtr hwnd) {
+    var result=new List<object>(); Rect window;GetWindowRect(hwnd,out window);
+    EnumChildWindows(hwnd,(h,p)=>{var text=Text(h);if(text.Length==1&&(text[0]==0xE8BB||text[0]==0xE921||text[0]==0xE922)) {
+      Rect r;GetWindowRect(h,out r);var hit=SendMessage(hwnd,0x84,IntPtr.Zero,(IntPtr)((((r.Top+r.Bottom)/2)<<16)|(((r.Left+r.Right)/2)&0xffff)));
+      result.Add(new {text,left=r.Left-window.Left,top=r.Top-window.Top,width=r.Right-r.Left,enabled=IsWindowEnabled(h),hit=(int)hit});
+    }return true;},IntPtr.Zero);return result.ToArray();
+  }
   public static void Capture(IntPtr hwnd, string path) {
     Rect r;GetWindowRect(hwnd,out r);
     using(var image=new System.Drawing.Bitmap(r.Right-r.Left,r.Bottom-r.Top))using(var graphics=System.Drawing.Graphics.FromImage(image)) {
@@ -63,9 +71,13 @@ if($Action -eq 'restore'){[void][WindowProbe]::ShowWindow([IntPtr]$Handle,9)}
 if($Action -eq 'minimize-button'){[WindowProbe]::Button([IntPtr]$Handle,[string][char]0xE921)}
 if($Action -eq 'close-button'){[WindowProbe]::Button([IntPtr]$Handle,[string][char]0xE8BB)}
 if($Capture){[WindowProbe]::Capture([IntPtr]$Handle,$Capture)}
-@{visible=[WindowProbe]::IsWindowVisible([IntPtr]$Handle);minimized=[WindowProbe]::IsIconic([IntPtr]$Handle);title=[WindowProbe]::Text([IntPtr]$Handle);text=[WindowProbe]::Children([IntPtr]$Handle);marquee=[WindowProbe]::Marquee([IntPtr]$Handle);caption=([WindowProbe]::GetWindowLong([IntPtr]$Handle,-16)-band 0xC00000)-ne 0;headerHit=[WindowProbe]::HitHeader([IntPtr]$Handle)}|ConvertTo-Json -Compress
+@{visible=[WindowProbe]::IsWindowVisible([IntPtr]$Handle);minimized=[WindowProbe]::IsIconic([IntPtr]$Handle);title=[WindowProbe]::Text([IntPtr]$Handle);text=[WindowProbe]::Children([IntPtr]$Handle);buttons=[WindowProbe]::Controls([IntPtr]$Handle);marquee=[WindowProbe]::Marquee([IntPtr]$Handle);caption=([WindowProbe]::GetWindowLong([IntPtr]$Handle,-16)-band 0xC00000)-ne 0;headerHit=[WindowProbe]::HitHeader([IntPtr]$Handle)}|ConvertTo-Json -Depth 4 -Compress
 `);
-    const probe = async (ready, action = '', capture = '') => JSON.parse((await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', inspect, '-Handle', String(ready.window), '-Action', action, '-Capture', capture], { windowsHide: true, encoding: 'utf8' })).stdout);
+    const probe = async (ready, action = '', capture = '') => {
+        const { stdout, stderr } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', inspect, '-Handle', String(ready.window), '-Action', action, '-Capture', capture], { windowsHide: true, encoding: 'utf8' });
+        assert.ok(stdout.trim(), 'Native window inspection failed: ' + stderr);
+        return JSON.parse(stdout);
+    };
     const quote = value => '"' + value.replaceAll('$', '$$').replaceAll('"', '$\\"') + '"';
     for (const scenario of ['success', 'installer', 'version', 'integrity', 'launch', 'prepare']) {
         const folder = join(root, '更新 缓存 ' + scenario), destination = join(root, '安装 目录 ' + scenario), executable = join(destination, 'OneYes Canvas.exe');
@@ -118,6 +130,12 @@ if($Capture){[WindowProbe]::Capture([IntPtr]$Handle,$Capture)}
             assert.match(ui.title, /正在关闭旧版/);
             assert.equal(ui.caption, false, 'update content and title bar must share one surface');
             assert.equal(ui.headerHit, 2, 'integrated header must retain native window dragging');
+            const buttons = ['\uE8BB', '\uE921', '\uE922'].map(text => ui.buttons.find(button => button.text === text));
+            assert.ok(buttons.every(Boolean), 'macOS-style close, minimize and disabled zoom controls must exist');
+            assert.ok(buttons[0].left < buttons[1].left && buttons[1].left < buttons[2].left, 'traffic lights must be ordered at the left of the header');
+            assert.ok(buttons[0].left + buttons[0].width <= buttons[1].left && buttons[1].left + buttons[1].width <= buttons[2].left, 'window button hit areas must not overlap');
+            assert.ok(buttons.every(button => button.top >= 0 && button.left < 100 && button.hit === 1), 'window controls must not be swallowed by the draggable title area');
+            assert.equal(buttons[2].enabled, false, 'fixed-size updater must not offer a working maximize action');
             assert.ok(ui.text.some(text => text.includes('v0.21.0')), 'target version must be visible');
             if (scenario === 'success') {
                 await probe(ready, 'minimize-button'); ui = await probe(ready);
@@ -166,6 +184,7 @@ if($Capture){[WindowProbe]::Capture([IntPtr]$Handle,$Capture)}
                 assert.equal((await readFile(join(folder, 'install-error.txt'), 'utf8')).trim(), 'windows-' + scenario);
                 assert.deepEqual(await readFile(executable), await readFile(scenario === 'launch' ? next : old), 'failed installation must preserve the existing app');
                 ui = await probe(ready); assert.equal(ui.visible, true); assert.match(ui.title, /更新未完成/); assert.ok(ui.text.includes('返回应用重试'));
+                if (process.env.ONEYES_TEST_UPDATE_ARTIFACTS) await probe(ready, '', join(process.env.ONEYES_TEST_UPDATE_ARTIFACTS, `windows-failed-${scenario}.png`));
                 await probe(ready, 'close');
                 await wait(() => { try { process.kill(ready.pid, 0); return false; } catch { return true; } });
             }
