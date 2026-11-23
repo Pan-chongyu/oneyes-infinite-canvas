@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 const require = createRequire(import.meta.url);
 const { createUpdater } = require('../desktop/updater.cjs');
+const { createReleaseFetcher } = require('../desktop/release-fetch.cjs');
 const { filename, RELEASE_ROOT, readManifest } = require('../desktop/update-policy.cjs');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -21,8 +22,9 @@ export function blockmap(bytes, blockSize = 32) {
 async function fixture(t, { platform = 'win32', arch = 'x64', format = 'nsis', scenario = '', nextVersion = '1.0.1' } = {}) {
     const directory = await mkdtemp(join(tmpdir(), 'canvas-block-')); t.after(() => rm(directory, { recursive: true, force: true }));
     const target = { platform, arch, format }, key = `${platform}-${arch}-${format}`, requests = [], installs = [], states = [];
-    const base = Buffer.concat([Buffer.alloc(64, 1), Buffer.alloc(64, 2), Buffer.alloc(64, 3)]);
-    const next = Buffer.concat([Buffer.alloc(64, 3), Buffer.alloc(64, 4), Buffer.alloc(64, 1)]);
+    const blocks = Array.from({ length: 100 }, (_, i) => Buffer.alloc(32, i));
+    const base = scenario === 'many-ranges' ? Buffer.concat(blocks) : Buffer.concat([Buffer.alloc(64, 1), Buffer.alloc(64, 2), Buffer.alloc(64, 3)]);
+    const next = scenario === 'many-ranges' ? Buffer.concat(blocks.flatMap((block, i) => [block, Buffer.alloc(32, i + 150)])) : Buffer.concat([Buffer.alloc(64, 3), Buffer.alloc(64, 4), Buffer.alloc(64, 1)]);
     const oldMap = blockmap(base), newMap = blockmap(next);
     function release(version, bytes, map) {
         const file = filename(version, platform, arch, format), url = `${RELEASE_ROOT}/download/v${version}/${file}`;
@@ -67,6 +69,27 @@ test('all ten native OTA targets download only changed blocks and verify the sig
         const restarted = createUpdater({ ...f.options, fetcher: async () => { throw Error('offline'); } }); t.after(() => restarted.close());
         await restarted.check(); assert.equal(restarted.state().status, 'ready'); await restarted.apply(); assert.equal(f.installs.length, 2);
     });
+});
+
+test('a macOS ARM64 update with 100 changed ranges reconstructs under the anonymous API quota', async t => {
+    const f = await fixture(t, { platform: 'darwin', arch: 'arm64', format: 'zip', scenario: 'many-ranges' });
+    const resources = [`${RELEASE_ROOT}/latest/download/canvas-latest.json`, `${RELEASE_ROOT}/latest/download/canvas-latest.json.sig`, f.current.entry.url, f.current.entry.blockmap.url, f.previous.entry.blockmap.url];
+    let apiCalls = 0, resolutions = 0;
+    const fetcher = createReleaseFetcher({ request: async (url, init = {}) => {
+        if (url.startsWith('https://api.github.com/')) {
+            if (++apiCalls > 60) return new Response(null, { status: 403 });
+            if (url.includes('/releases/assets/')) { resolutions++; return new Response(null, { status: 302, headers: { location: `https://release-assets.githubusercontent.com/${url.split('/').at(-1)}` } }); }
+            return Response.json({ assets: resources.map((url, i) => ({ name: url.split('/').at(-1), id: i + 1, state: 'uploaded' })) });
+        }
+        assert.ok(url.startsWith('https://release-assets.githubusercontent.com/'), 'normal block updates do not need the fallback route');
+        const headers = new Headers(init.headers), Range = headers.get('range'), IfRange = headers.get('if-range');
+        return f.options.fetcher(resources[Number(url.split('/').at(-1)) - 1], { ...init, headers: { ...(Range ? { Range } : {}), ...(IfRange ? { 'If-Range': IfRange } : {}) } });
+    } });
+    const updater = createUpdater({ ...f.options, fetcher }); t.after(() => updater.close());
+    await updater.check(); assert.equal(updater.state().status, 'ready'); assert.equal(updater.state().mode, 'delta');
+    assert.equal(f.requests.filter(r => r.url === f.current.entry.url).length, 100);
+    assert.equal(resolutions, 5); assert.equal(apiCalls, 8);
+    await updater.apply(); assert.deepEqual(await readFile(f.installs[0].file), f.next);
 });
 
 test('cached block maps stay available offline, skipped versions use the installed base, and restart preserves actual download savings', async t => {

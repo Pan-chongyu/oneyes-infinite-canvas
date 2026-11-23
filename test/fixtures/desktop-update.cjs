@@ -9,16 +9,32 @@ async function nativeReleaseRedirect() {
     const { createNativeFetch } = require('../../desktop/native-fetch.cjs');
     const { createReleaseFetcher } = require('../../desktop/release-fetch.cjs');
     const native = createNativeFetch(net), payload = Buffer.from('official fixture bytes');
-    let downloads = 0, waiting, cancelled;
+    let downloads = 0, metadata = 0, resolutions = 0, fallbacks = 0, limited = '', expired = false, waiting, cancelled;
     const requested = new Promise(resolve => { waiting = resolve; }), disconnected = new Promise(resolve => { cancelled = resolve; });
     const server = createServer((request, response) => {
         if (request.url === '/probe') { response.end(); return; }
         if (request.url === '/wait') { request.on('close', cancelled); waiting(); return; }
-        if (request.url.endsWith('/latest')) { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ assets: [{ name: 'probe.bin', id: 1, state: 'uploaded' }] })); return; }
-        if (request.url.includes('/assets/1') || request.url === '/redirect') { response.writeHead(302, { Location: 'https://release-assets.githubusercontent.com/fixture/file' }); response.end(); return; }
-        if (request.url === '/fixture/file') {
+        if (request.url.endsWith('/latest')) {
+            metadata++;
+            if (limited === 'metadata') { response.writeHead(403); response.end(); return; }
+            response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ tag_name: 'v1', assets: [{ name: 'probe.bin', id: 1, state: 'uploaded' }] })); return;
+        }
+        if (request.url.includes('/assets/1')) {
+            resolutions++; assert.equal(request.headers['cache-control'], 'no-cache');
+            if (limited === 'asset' || resolutions > 60) { response.writeHead(403); response.end(); return; }
+            response.writeHead(302, { Location: `https://release-assets.githubusercontent.com/fixture/file/${resolutions}` }); response.end(); return;
+        }
+        if (request.url.endsWith('/download/probe.bin') || request.url.endsWith('/download/v1/probe.bin')) {
+            fallbacks++; assert.equal(request.headers.authorization, undefined); assert.equal(request.headers.cookie, undefined); assert.equal(request.headers['cache-control'], 'no-cache');
+            if (request.url.includes('/latest/download/')) { response.writeHead(302, { Location: 'https://github.com/owner/repo/releases/download/v1/probe.bin' }); response.end(); return; }
+            assert.ok(request.url.includes('/download/v1/'));
+            response.writeHead(302, { Location: 'https://release-assets.githubusercontent.com/fixture/file/fallback' }); response.end(); return;
+        }
+        if (request.url === '/redirect') { response.writeHead(302, { Location: 'https://release-assets.githubusercontent.com/fixture/file/1' }); response.end(); return; }
+        if (request.url.startsWith('/fixture/file/')) {
             downloads++; assert.equal(request.headers.authorization, undefined); assert.equal(request.headers.cookie, undefined);
             assert.equal(request.headers.range, 'bytes=2-'); assert.equal(request.headers['if-range'], '"fixture"');
+            if (expired && request.url.endsWith('/1')) { response.writeHead(403); response.end(); return; }
             response.writeHead(206, { 'Content-Range': `bytes 2-${payload.length - 1}/${payload.length}` }); response.end(payload.subarray(2)); return;
         }
         response.writeHead(503, { 'Content-Type': 'application/json' }); response.end('{"unavailable":true}');
@@ -33,13 +49,20 @@ async function nativeReleaseRedirect() {
         const redirect = await native(origin + '/redirect', { redirect: 'manual' });
         assert.equal(redirect.status, 302); assert.equal(downloads, 0); assert.equal(new URL(redirect.headers.get('location')).hostname, 'release-assets.githubusercontent.com');
         const download = createReleaseFetcher({ token: 'fixture-secret', request: (url, init) => native(origin + new URL(url).pathname, init) });
-        const response = await download('https://github.com/owner/repo/releases/latest/download/probe.bin', { headers: { Range: 'bytes=2-', 'If-Range': '"fixture"' } });
-        assert.equal(response.status, 206); assert.deepEqual(Buffer.from(await response.arrayBuffer()), payload.subarray(2)); assert.equal(downloads, 1);
+        const range = async () => {
+            const response = await download('https://github.com/owner/repo/releases/latest/download/probe.bin', { headers: { Range: 'bytes=2-', 'If-Range': '"fixture"', Cookie: 'private', Authorization: 'private' } });
+            assert.equal(response.status, 206); assert.deepEqual(Buffer.from(await response.arrayBuffer()), payload.subarray(2));
+        };
+        for (let i = 0; i < 100; i++) await range();
+        assert.equal(downloads, 100); assert.equal(metadata, 1); assert.equal(resolutions, 1); assert.equal(fallbacks, 0);
+        expired = true; await range(); assert.equal(resolutions, 2); assert.equal(downloads, 102);
+        for (const stage of ['metadata', 'asset']) { limited = stage; download.reset(); await range(); }
+        assert.equal(fallbacks, 3);
         const failed = await native(origin + '/failed', { redirect: 'manual' }); assert.equal(failed.status, 503); assert.deepEqual(await failed.json(), { unavailable: true });
         const abort = new AbortController(), pending = native(origin + '/wait', { redirect: 'manual', signal: abort.signal });
         await requested; abort.abort(); await assert.rejects(pending, { name: 'AbortError' }); await disconnected;
         await assert.rejects(native(origin + '/wait', { redirect: 'manual', signal: abort.signal }), { name: 'AbortError' });
-        console.log('NATIVE_RELEASE_API_OK: manual redirect headers, official asset range, no credential forwarding, HTTP failure and abort');
+        console.log('NATIVE_RELEASE_API_OK: 100 native byte ranges resolve once, expired URL renewal, rate-limited API fallback, no credential forwarding, HTTP failure and abort');
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
 async function nativeResume() {

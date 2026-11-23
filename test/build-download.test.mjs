@@ -112,11 +112,11 @@ test('tagged files, raw GitHub content and other origins keep their exact conten
     assert.equal(calls.at(-1).options.headers, undefined);
 });
 
-test('missing assets, upstream errors and untrusted redirects fail without extra download attempts', async () => {
+test('upstream errors try the official download entry while missing assets and untrusted redirects fail closed', async () => {
     const resource = 'https://github.com/owner/repo/releases/download/v1.2.3/original.bin';
     let calls = 0;
     const failed = createBuildDownloader({ request: async () => { calls++; return new Response('', { status: 503 }); } });
-    await assert.rejects(failed(resource), /503/); assert.equal(calls, 1);
+    await assert.rejects(failed(resource), /503/); assert.equal(calls, 2);
     const missing = createBuildDownloader({ request: async () => Response.json({ assets: [] }) });
     await assert.rejects(missing(resource), /unavailable/);
     for (const location of ['https://example.test/file', 'http://release-assets.githubusercontent.com/file', null]) {
@@ -127,4 +127,98 @@ test('missing assets, upstream errors and untrusted redirects fail without extra
         } });
         await assert.rejects(unsafe(resource), /Invalid GitHub build asset redirect/); assert.equal(calls, 2);
     }
+});
+
+test('more than the anonymous API quota of byte ranges share one asset address without leaking credentials', async () => {
+    const calls = [], payload = Buffer.from('fixture byte range'), resource = 'https://github.com/owner/repo/releases/download/v1/installer.zip';
+    const download = createReleaseFetcher({ token: 'fixture-secret', request: async (url, init) => {
+        calls.push({ url, init });
+        if (url.includes('/releases/tags/')) return Response.json({ assets: [{ name: 'installer.zip', id: 1, state: 'uploaded' }] });
+        if (url.includes('/releases/assets/')) {
+            assert.equal(init.cache, 'no-store'); assert.equal(init.headers['Cache-Control'], 'no-cache');
+            return new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/fixture' } });
+        }
+        assert.equal(url, 'https://release-assets.githubusercontent.com/fixture');
+        assert.deepEqual([...new Headers(init.headers)], [['if-range', '"fixture"'], ['range', 'bytes=0-17']]);
+        return new Response(payload, { status: 206 });
+    } });
+    for (let i = 0; i < 100; i++) {
+        const response = await download(resource, { headers: { Range: 'bytes=0-17', 'If-Range': '"fixture"', Cookie: 'private', Authorization: 'private' } });
+        assert.equal(response.status, 206); assert.deepEqual(Buffer.from(await response.arrayBuffer()), payload);
+    }
+    assert.equal(calls.filter(c => c.url.startsWith('https://api.github.com/')).length, 2, 'one metadata request and one asset resolution, independent of range count');
+    assert.equal(calls.filter(c => c.url.startsWith('https://release-assets.githubusercontent.com/')).length, 100);
+});
+
+test('expired asset addresses are renewed once and range failures retain their original semantics', async () => {
+    let resolutions = 0, downloads = 0;
+    const download = createReleaseFetcher({ request: async url => {
+        if (url.includes('/tags/')) return Response.json({ assets: [{ name: 'file.zip', id: 1, state: 'uploaded' }] });
+        if (url.includes('/assets/')) return new Response(null, { status: 302, headers: { location: `https://release-assets.githubusercontent.com/${++resolutions}` } });
+        downloads++;
+        return new Response(null, { status: downloads === 1 ? 206 : url.endsWith('/1') ? 403 : 416 });
+    } });
+    const resource = 'https://github.com/owner/repo/releases/download/v1/file.zip';
+    assert.equal((await download(resource)).status, 206);
+    assert.equal((await download(resource)).status, 416); assert.equal(resolutions, 2); assert.equal(downloads, 3);
+    assert.equal((await download(resource)).status, 416); assert.equal(resolutions, 2); assert.equal(downloads, 4);
+});
+
+test('rate limits and temporary API failures use only the official download route and preserve range validation', async t => {
+    for (const stage of ['metadata', 'asset']) for (const status of [403, 429, 503, 'offline']) await t.test(`${stage}-${status}`, async () => {
+        const calls = [], abort = new AbortController();
+        const download = createReleaseFetcher({ token: 'fixture-secret', request: async (url, init) => {
+            calls.push({ url, init }); assert.equal(init.signal, abort.signal);
+            if (url.startsWith('https://api.github.com/')) {
+                if (stage === 'asset' && url.endsWith('/latest')) return Response.json({ tag_name: 'v1', assets: [{ name: 'file.zip', id: 1, state: 'uploaded' }] });
+                if (status === 'offline') throw TypeError('fetch failed');
+                return new Response(null, { status });
+            }
+            assert.equal(new Headers(init.headers).has('authorization'), false); assert.equal(new Headers(init.headers).has('cookie'), false);
+            assert.equal(new Headers(init.headers).get('range'), 'bytes=2-'); assert.equal(new Headers(init.headers).get('if-range'), '"original"');
+            if (url.startsWith('https://github.com/')) {
+                assert.equal(init.redirect, 'manual'); assert.equal(init.headers['Cache-Control'], 'no-cache');
+                if (url.includes('/latest/download/')) {
+                    assert.equal(stage, 'metadata');
+                    return new Response(null, { status: 302, headers: { location: 'https://github.com/owner/repo/releases/download/v1/file.zip' } });
+                }
+                assert.equal(url, 'https://github.com/owner/repo/releases/download/v1/file.zip');
+                return new Response(null, { status: 302, headers: { location: 'https://objects.githubusercontent.com/fixture' } });
+            }
+            assert.equal(url, 'https://objects.githubusercontent.com/fixture'); return new Response('remaining bytes', { status: 206 });
+        } });
+        assert.equal((await download('https://github.com/owner/repo/releases/latest/download/file.zip', { signal: abort.signal, headers: { Range: 'bytes=2-', 'If-Range': '"original"', Cookie: 'private', Authorization: 'private' } })).status, 206);
+        assert.equal(calls.length, 4);
+    });
+    for (const status of [404, 'abort']) {
+        let calls = 0;
+        const download = createReleaseFetcher({ request: async () => { calls++; if (status === 'abort') throw new DOMException('aborted', 'AbortError'); return new Response(null, { status }); } });
+        await assert.rejects(download('https://github.com/owner/repo/releases/download/v1/file.zip'), status === 'abort' ? { name: 'AbortError' } : { status });
+        assert.equal(calls, 1, 'cancellation and missing release do not start another route');
+    }
+    for (const location of ['https://example.test/file', 'https://release-assets.githubusercontent.com:8443/file', 'https://private@objects.githubusercontent.com/file', 'https://github.com/other/repo/releases/download/v1/file.zip', 'https://github.com/owner/repo/releases/download/v1/other.zip', 'https://github.com/owner/repo/releases/download/v1/file.zip?token=private']) {
+        const download = createReleaseFetcher({ request: async url => url.startsWith('https://api.github.com/') ? new Response(null, { status: 403 }) : new Response(null, { status: 302, headers: { location } }) });
+        await assert.rejects(download('https://github.com/owner/repo/releases/latest/download/file.zip'), /Invalid GitHub build asset redirect/);
+    }
+});
+
+test('the rate-limited official fallback still rejects tampered manifests and packages before installation', async t => {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519'), payload = Buffer.from('signed package');
+    const target = { platform: 'darwin', arch: 'arm64', format: 'zip' }, file = filename('0.21.0', target.platform, target.arch, target.format);
+    const text = JSON.stringify({ schema: 1, version: '0.21.0', notes: 'fixture', platforms: { 'darwin-arm64-zip': { file, url: `${RELEASE_ROOT}/download/v0.21.0/${file}`, size: payload.length, sha256: createHash('sha256').update(payload).digest('hex') } } });
+    const signature = sign(null, Buffer.from(text), privateKey).toString('base64');
+    for (const scenario of ['original', 'tampered-manifest', 'tampered-package']) await t.test(scenario, async t => {
+        const directory = await mkdtemp(join(tmpdir(), 'canvas-quota-ota-')); t.after(() => rm(directory, { recursive: true, force: true }));
+        const fetcher = createReleaseFetcher({ request: async (url, init) => {
+            if (url.startsWith('https://api.github.com/')) return new Response(null, { status: 403 });
+            if (url.startsWith('https://github.com/')) return new Response(null, { status: 302, headers: { location: `https://release-assets.githubusercontent.com/${url.split('/').at(-1)}` } });
+            assert.equal(new Headers(init.headers).has('authorization'), false);
+            if (url.endsWith('.json')) return new Response(scenario === 'tampered-manifest' ? text.replace('0.21.0', '0.22.0') : text);
+            if (url.endsWith('.sig')) return new Response(signature);
+            assert.ok(url.endsWith(file)); return new Response(scenario === 'tampered-package' ? Buffer.alloc(payload.length) : payload);
+        } });
+        const updater = createUpdater({ currentVersion: '0.20.208', directory, target: async () => target, fetcher, publicKey, install: () => assert.fail('check must not install') }); t.after(() => updater.close());
+        await updater.check(); assert.equal(updater.state().status, scenario === 'original' ? 'ready' : 'error');
+        if (scenario === 'original') assert.deepEqual(await readFile(join(directory, 'ota/0.21.0', file)), payload);
+    });
 });
