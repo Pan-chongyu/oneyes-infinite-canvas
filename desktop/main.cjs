@@ -1,5 +1,5 @@
 const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, nativeTheme, Tray, Menu, nativeImage, powerMonitor, clipboard } = require('electron');
-const { readClipboard } = require('./clipboard.cjs');
+const { readClipboard, writeClipboardImage } = require('./clipboard.cjs');
 const { join, resolve } = require('node:path');
 const { createDiagnostics } = require('./diagnostics.cjs');
 const { createVault } = require('./vault.cjs');
@@ -158,6 +158,7 @@ app.whenReady().then(async () => {
         if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('oneyes-canvas://app/')) throw new Error('拒绝访问配置');
     };
     ipcMain.handle('clipboard:read', event => { trusted(event); return readClipboard(clipboard); });
+    ipcMain.handle('clipboard:writeImage', (event, bytes) => { trusted(event); return writeClipboardImage(clipboard, bytes); });
     ipcMain.handle('editor:open', (event, key) => { trusted(event); return editors.open(key); });
     ipcMain.handle('editor:close', event => { if (!editors.trusted(event)) throw new Error('拒绝访问剪辑窗口'); editors.close(event); });
     ipcMain.handle('editor:report', (event, stage, error) => { if (!editors.trusted(event)) throw new Error('拒绝访问剪辑窗口'); return diagnostics.report({component:'media',stage,error}); });

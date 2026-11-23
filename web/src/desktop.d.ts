@@ -2,7 +2,7 @@ export {};
 declare global {
     interface Window {
         oneYesDesktop?: {
-            clipboard?: { read(): Promise<{ image?: Uint8Array; type?: string; text?: string; files?: Array<{ name: string; image: Uint8Array; type: string }> }> };
+            clipboard?: { read(): Promise<{ image?: Uint8Array; type?: string; text?: string; files?: Array<{ name: string; image: Uint8Array; type: string }> }>; writeImage(bytes: Uint8Array): Promise<void> };
             videoTasks?: {
                 call(operation: 'list'): Promise<import('./services/video-recovery').VideoRecoveryJob[]>;
                 call(operation: 'prepare' | 'adopt', args: Record<string, unknown>): Promise<string>;

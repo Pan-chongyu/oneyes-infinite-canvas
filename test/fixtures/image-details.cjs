@@ -1,9 +1,10 @@
-const { app, BrowserWindow, protocol, net, clipboard, ClipboardItem } = require('electron');
+const { app, BrowserWindow, protocol, net, clipboard, ClipboardItem, ipcMain, nativeImage } = require('electron');
 const assert = require('node:assert/strict');
 const { join } = require('node:path');
 const { readFile, writeFile, mkdir } = require('node:fs/promises');
 const { route } = require('../../desktop/protocol.cjs');
 const { configurePermissions } = require('../../desktop/permissions.cjs');
+const { readClipboard, writeClipboardImage } = require('../../desktop/clipboard.cjs');
 const root = process.env.CANVAS_IMAGE_DETAILS_TEST_ROOT;
 app.setPath('userData', join(root, 'profile'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
@@ -17,7 +18,8 @@ app.whenReady().then(async () => {
         oldClipboard.push(new ClipboardItem(formats));
     }
     protocol.handle('oneyes-canvas', request => net.fetch(route(request.url, root).file));
-    const win = new BrowserWindow({ width: 1280, height: 900, show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+    const win = new BrowserWindow({ width: 1280, height: 900, show: false, webPreferences: { preload: join(__dirname, '../../desktop/preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+    ipcMain.handle('clipboard:writeImage', (event, bytes) => { assert.equal(event.sender, win.webContents); assert.equal(event.senderFrame, win.webContents.mainFrame); return writeClipboardImage(clipboard, bytes); });
     configurePermissions(win.webContents.session);
     const js = code => win.webContents.executeJavaScript(code);
     const wait = async code => { const end = Date.now() + 15000; while (!(typeof code === 'function' ? await code() : await js(code))) { if (Date.now() > end) throw Error('Image details wait failed: ' + code); await new Promise(resolve => setTimeout(resolve, 25)); } };
@@ -29,8 +31,11 @@ app.whenReady().then(async () => {
     };
     const click = async (selector, clickCount = 1) => {
         await wait('!document.querySelector(".ant-modal") || document.querySelector(".ant-modal").getAnimations({subtree:true}).every(animation=>animation.playState!=="running")');
+        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
         const point = await js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
         win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+        await wait(`(() => { const group = document.querySelector(${JSON.stringify(selector)}).closest('[data-image-actions]'); return !group || getComputedStyle(group).pointerEvents !== 'none'; })()`);
+        await wait(`(() => { const target = document.querySelector(${JSON.stringify(selector)}), hit = document.elementFromPoint(${point.x}, ${point.y}); return target === hit || target.contains(hit); })()`);
         win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount, ...point }); win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount, ...point });
     };
     const downloaded = new Promise((resolve, reject) => win.webContents.session.on('will-download', (_event, item) => {
@@ -40,6 +45,42 @@ app.whenReady().then(async () => {
     try {
         await win.loadURL(process.argv[2]); await wait('Boolean(window.imageDetailsTest)'); const before = await js('imageDetailsTest.node()');
         win.show(); if (process.platform === 'darwin') app.focus({ steal: true }); win.focus(); await wait('document.hasFocus()');
+        const copyButton = id => `[data-image-actions="${id}"] button[aria-label="复制图片到剪贴板"]`;
+        const copyAndPaste = async (id, width, height, alpha) => {
+            await clipboard.writeText('before image copy'); await js('imageDetailsTest.clearPaste()');
+            const drags = await js('imageDetailsTest.drags()');
+            await click(copyButton(id));
+            await wait(async () => Boolean((await readClipboard(clipboard)).image?.length));
+            await wait(`!document.querySelector(${JSON.stringify(copyButton(id))}).disabled`);
+            const copied = await readClipboard(clipboard);
+            assert.ok(copied.image?.length, 'clipboard contains an image, not its URL or filename');
+            assert.deepEqual(nativeImage.createFromBuffer(Buffer.from(copied.image)).getSize(), { width, height });
+            assert.equal(await js('imageDetailsTest.drags()'), drags, 'copy must not start a node drag');
+            await click('#paste-image-target');
+            const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers });
+            await wait('Boolean(imageDetailsTest.pasted())');
+            assert.deepEqual(await js('imageDetailsTest.pasted()'), { width, height, alpha });
+        };
+        for (const dark of [false, true]) {
+            await js(`imageDetailsTest.theme(${dark})`);
+            const layout = await js(`(() => { const buttons = document.querySelector('[data-image-actions="first"]').children; return { download: buttons[0].getBoundingClientRect().right, copy: buttons[1].getBoundingClientRect().left }; })()`);
+            assert.ok(layout.copy >= layout.download && layout.copy - layout.download <= 8, 'copy sits next to download');
+            await copyAndPaste('first', 4096, 2048, 255);
+            await js('imageDetailsTest.expanded(true)');
+            await wait('document.querySelector("[data-image-actions=second]")?.parentElement.getAnimations({subtree:true}).every(animation=>animation.playState!=="running")');
+            await copyAndPaste('second', 240, 480, 0);
+            await js('imageDetailsTest.expanded(false)');
+        }
+        await js('imageDetailsTest.plain()'); await copyAndPaste('primary', 4096, 2048, 255);
+        await js('imageDetailsTest.missingCopy()'); await clipboard.writeText('preserve clipboard on failure');
+        await click(copyButton('primary')); await wait('document.querySelector(".ant-message")?.textContent.includes("复制图片失败")');
+        assert.equal(await clipboard.readText(), 'preserve clipboard on failure');
+        await assert.rejects(writeClipboardImage(clipboard, new Uint8Array([1, 2, 3])));
+        await assert.rejects(writeClipboardImage(clipboard, 'file:///private-image.png'));
+        assert.equal(await clipboard.readText(), 'preserve clipboard on failure');
+        await js('imageDetailsTest.restore()');
+        console.log('IMAGE_NODE_COPY_OK: download adjacency, native clipboard, actual keyboard paste, original JPEG pixels, PNG alpha, primary/batch/single, themes, no drag, missing/corrupt image preserves clipboard');
         await click('[data-node-id="detail-fixture"] > .relative', 2);
         await wait('document.querySelector("[aria-label=图片信息]")?.textContent.includes("4096 × 2048 px")');
         await js('imageDetailsTest.remove()'); await wait('!document.querySelector("[aria-label=图片详情内容]")');

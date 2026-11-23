@@ -20,3 +20,25 @@ export async function readSystemClipboard(): Promise<File | File[] | string | nu
     }
     return null;
 }
+
+export async function writeImageToClipboard(original: Promise<Blob>) {
+    const png = original.then(async blob => {
+        const url = URL.createObjectURL(blob), image = new Image();
+        try {
+            image.src = url;
+            await image.decode();
+            const canvas = new OffscreenCanvas(image.naturalWidth, image.naturalHeight);
+            canvas.getContext("2d")!.drawImage(image, 0, 0);
+            return await canvas.convertToBlob({ type: "image/png" });
+        } finally { URL.revokeObjectURL(url); }
+    });
+    try {
+        if (window.oneYesDesktop?.clipboard?.writeImage) {
+            await window.oneYesDesktop.clipboard.writeImage(new Uint8Array(await (await png).arrayBuffer()));
+        } else {
+            // Start the browser write within the click gesture; conversion may finish later.
+            if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error("Clipboard unavailable");
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+        }
+    } catch (error) { void png.catch(() => {}); throw error; }
+}

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
+import { ChevronRight, ClipboardCopy, Copy, Download, Group, Image as ImageIcon, LoaderCircle, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { videoErrorText } from "@/lib/video-display-text";
@@ -19,6 +19,7 @@ import { VideoModelStatus } from '@/components/video-model-status';
 import { useConfigStore, isModelUnavailable } from '@/stores/use-config-store';
 import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 import { useImageTransferStore } from '@/stores/use-image-task-store';
+import { useCopyImage } from '@/hooks/use-copy-image';
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
@@ -791,6 +792,7 @@ function ImageContent({
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
+    const { copyImage, copying } = useCopyImage();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const images = node.metadata?.images || [];
     const batchCount = images.length;
@@ -834,11 +836,17 @@ function ImageContent({
                 )}
             </div>
             {primaryImage?.status === "error" ? <BatchImageFailureActions placement="left" onRetry={() => onRetryBatchImage?.(primaryImage.id)} onDelete={() => onDeleteBatchImage?.(primaryImage.id)} /> : null}
-            {primaryImage?.content ? (
-                <button type="button" className="pointer-events-none absolute left-2.5 top-2.5 z-30 flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-medium opacity-0 shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02] group-hover/node:pointer-events-auto group-hover/node:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownloadBatchImage?.(primaryImage.id))}>
+            {primaryContent ? (
+                <div data-image-actions={primaryImage?.id || "primary"} className="pointer-events-none absolute left-2.5 top-2.5 z-30 flex gap-1 opacity-0 transition-opacity group-hover/node:pointer-events-auto group-hover/node:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100" onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+                {primaryImage?.content && <button type="button" className="flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-medium backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownloadBatchImage?.(primaryImage.id))}>
                     <Download className="size-3" />
                     {t("common.download")}
+                </button>}
+                <button type="button" aria-label={t("canvas.imageTools.copyImage")} title={t("canvas.imageTools.copyImage")} disabled={copying} className="flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-medium backdrop-blur-md transition hover:scale-[1.02] disabled:opacity-60" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} onClick={event => { event.stopPropagation(); void copyImage(primaryImage?.content ? primaryImage : { content: primaryContent, storageKey: node.metadata?.storageKey }); }}>
+                    {copying ? <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" /> : <ClipboardCopy className="size-3" />}
+                    {t("common.copy")}
                 </button>
+                </div>
             ) : null}
             {isBatchRoot ? (
                 <button
@@ -864,6 +872,7 @@ function ImageContent({
 function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, onDuplicate, onDownload, onRetry, onDelete }: { node: CanvasNodeData; image: CanvasNodeImage; index: number; scale: number; onView: () => void; onSetPrimary: () => void; onDuplicate: () => void; onDownload: () => void; onRetry: () => void; onDelete: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
+    const { copyImage, copying } = useCopyImage();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const count = node.metadata?.images?.length || 0;
     const columns = Math.min(count, 4);
@@ -914,10 +923,13 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
             {image.content ? <img src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} />}
             {image.resolutionWarning && <div role="note" title={image.resolutionWarning} className="absolute inset-x-2 bottom-2 truncate rounded-md px-2 py-1 text-[10px]" style={{ background: theme.toolbar.panel, color: theme.node.text }}>尺寸与请求不一致 · {image.resolutionWarning}</div>}
             {image.content ? (
-                <div className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/node:pointer-events-auto group-hover/node:opacity-100">
+                <div data-image-actions={image.id} className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/node:pointer-events-auto group-hover/node:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
                     <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownload())}>
                         <Download className="size-3 shrink-0" />
                         <span className="truncate">{t("common.download")}</span>
+                    </button>
+                    <button type="button" aria-label={t("canvas.imageTools.copyImage")} title={t("canvas.imageTools.copyImage")} disabled={copying} className="flex h-8 shrink-0 items-center justify-center rounded-lg border px-2 backdrop-blur-md transition hover:scale-[1.02] disabled:opacity-60" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} onClick={event => { event.stopPropagation(); void copyImage(image); }}>
+                        {copying ? <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" /> : <ClipboardCopy className="size-3" />}
                     </button>
                     <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("canvas.node.createCopy")} onClick={(event) => (event.stopPropagation(), onDuplicate())}>
                         <Copy className="size-3 shrink-0" />

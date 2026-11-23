@@ -38,4 +38,11 @@ async function readClipboard(clipboard) {
     }
     return {};
 }
-module.exports = { readClipboard };
+async function writeClipboardImage(clipboard, bytes) {
+    if (!(bytes instanceof Uint8Array)) throw new Error('无效的剪贴板图片');
+    const { ClipboardItem, nativeImage } = require('electron');
+    const image = nativeImage.createFromBuffer(Buffer.from(bytes));
+    if (image.isEmpty()) throw new Error('无法读取要复制的图片');
+    await clipboard.write([new ClipboardItem({ 'image/png': new Blob([image.toPNG()], { type: 'image/png' }) })]);
+}
+module.exports = { readClipboard, writeClipboardImage };

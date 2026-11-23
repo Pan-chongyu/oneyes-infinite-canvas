@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const key = 'infinite-canvas:ai_config_store';
 function check(name) { if (name !== key) throw new Error('不支持的配置'); }
 contextBridge.exposeInMainWorld('oneYesDesktop', {
-    clipboard: { read: () => ipcRenderer.invoke('clipboard:read') },
+    clipboard: { read: () => ipcRenderer.invoke('clipboard:read'), writeImage: bytes => ipcRenderer.invoke('clipboard:writeImage', bytes) },
     videoTasks: {
         call: (operation, args) => ipcRenderer.invoke('video-tasks:call', operation, args),
         subscribe(callback) {
