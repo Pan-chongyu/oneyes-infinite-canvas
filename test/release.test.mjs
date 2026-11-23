@@ -116,6 +116,8 @@ test('release requires all twelve native installers and hashes RPM architecture 
 test('parallel release covers every OTA target and publishes only after all builds and delta jobs pass', async()=>{
   const {parse}=require('../canvas-agent/node_modules/yaml');
   const workflow=parse(await readFile('.github/workflows/desktop-release.yml','utf8'));
+  assert.equal(workflow.jobs.build['timeout-minutes'],'${{ matrix.timeout || 35 }}');
+  for(const target of workflow.jobs.build.strategy.matrix.include) assert.equal(target.timeout??35,target.platform==='Windows'&&target.arch==='arm64'?50:35,'only Windows ARM64 has the approved longer build deadline');
   for(const job of ['ota-base','delta','publish']) assert.equal(workflow.jobs[job]['runs-on'],'ubuntu-24.04');
   for(const job of ['build']) {
     const prepare=workflow.jobs[job].steps.findIndex(step=>step.uses==='./.github/actions/linux-network');

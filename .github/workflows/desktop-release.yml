@@ -68,6 +68,7 @@ jobs:
             platform: Windows
             arch: arm64
             target: win
+            timeout: 50
           - os: macos-15-intel
             platform: macOS
             arch: x64
@@ -86,7 +87,7 @@ jobs:
             target: linux
     name: ${{ matrix.platform }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: ${{ matrix.timeout || 35 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
