@@ -484,6 +484,28 @@ app.whenReady().then(async () => {
         console.log('NATIVE_RETIRED_CANVAS_BADGE_RECEIPT_RETRY_ALLOWED_NEW_GENERATION_DISABLED_OK');
         await js('modelTest.feedReset();modelTest.feedSync()');
         await js(`modelTest.selectVideo(${JSON.stringify('oneyes-minimax::' + displayModels.find(model => model.id === 'sd-2.5-fullblood').request_id)})`);
+        await js('showPreferenceLayout()');
+        await wait('Boolean(document.querySelector("[data-testid=config-preferences]"))');
+        const beforeLayout = await js('modelTest.state().config');
+        for (const width of [1000, 420]) for (const dark of [false, true]) {
+            if (win.getContentSize()[0] !== width) await new Promise(resolve => { win.once('resize', resolve); win.setContentSize(width, 900); });
+            await js(`setPreferenceTheme(${dark});scrollTo(0,0)`);
+            await wait(`innerWidth === ${width}`);
+            await wait(`document.documentElement.classList.contains('dark') === ${dark}`);
+            await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            const layout = await js('(()=>{const form=document.querySelector("[data-testid=config-preferences]"),buttons=[...form.querySelectorAll("[data-default-models] [role=combobox]")],panel=form.querySelector("[data-video-settings]");return {overflow:document.documentElement.scrollWidth>innerWidth,heights:buttons.map(button=>button.getBoundingClientRect().height),headings:[...form.querySelectorAll("h2")].map(h=>h.textContent),panel:panel.getBoundingClientRect().toJSON(),ratioButtons:[...panel.querySelectorAll("button")].filter(button=>button.textContent.includes(":" )).map(button=>button.getBoundingClientRect().height)}})()');
+            assert.equal(layout.overflow, false, 'preferences must fit wide and narrow windows');
+            assert.equal(new Set(layout.heights).size, 1, 'all default model triggers must align to the same height: ' + JSON.stringify(layout));
+            assert.equal(layout.headings.length, 6, 'all preference sections must remain accessible');
+            assert.ok(layout.ratioButtons.length && layout.ratioButtons.every(height => height <= 40), 'preference ratio choices must use the compact layout');
+            if (!process.env.CI) {
+                await js('Promise.all(document.getAnimations().filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})))');
+                await writeFile(`.secrets/qa-preferences-${width}-${dark ? 'dark' : 'light'}.png`, (await win.webContents.capturePage()).toPNG());
+            }
+        }
+        assert.deepEqual(await js('modelTest.state().config'), beforeLayout, 'resizing or changing theme must never change saved preferences');
+        console.log('NATIVE_PREFERENCES_LAYOUT_EQUAL_MODEL_HEIGHTS_COMPACT_RATIOS_NO_OVERFLOW_OR_SETTING_CHANGES_OK');
+        await new Promise(resolve => { win.once('resize', resolve); win.setSize(1000, 780); });
         await js('showMentionPreferences()');
         await wait('window.mentionTest && document.getElementById("auto-refresh-mention-images")');
         const asyncSwitch = 'document.getElementById("async-image-generation")';

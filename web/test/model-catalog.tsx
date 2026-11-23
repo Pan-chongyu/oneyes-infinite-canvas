@@ -59,13 +59,15 @@ function Probe() {
     const [open, setOpen] = useState(false);
     const [canvas, setCanvas] = useState(false);
     const [mentions, setMentions] = useState(false);
+    const [preferences, setPreferences] = useState(false);
     const [clipboard, setClipboard] = useState<React.ReactNode>(null);
     const [recovery, setRecovery] = useState(false);
     Object.assign(window, { showVideoRecovery: () => { useVideoRecoveryStore.setState({ open: true }); flushSync(() => setRecovery(true)); }, setRecoveryTheme: (theme: 'light' | 'dark') => flushSync(() => useThemeStore.getState().setTheme(theme)) });
     if (recovery) return <MemoryRouter><div className="p-6"><UserStatusActions /><VideoRecovery /></div></MemoryRouter>;
     Object.assign(window, { showClipboardCanvas: async () => { const fixture = await import("./canvas-clipboard"); await fixture.prepareClipboardCanvas(); flushSync(() => setClipboard(<fixture.ClipboardCanvas />)); } });
     if (clipboard) return clipboard;
-    Object.assign(window, { showModelCanvas: () => flushSync(() => setCanvas(true)), showMentionPreferences: () => flushSync(() => setMentions(true)) });
+    Object.assign(window, { showModelCanvas: () => flushSync(() => setCanvas(true)), showMentionPreferences: () => flushSync(() => { setPreferences(false); setMentions(true); }), showPreferenceLayout: () => flushSync(() => setPreferences(true)), setPreferenceTheme: (dark: boolean) => useThemeStore.getState().setTheme(dark ? 'dark' : 'light') });
+    if (preferences) return <main className="min-h-screen bg-background px-6 py-6 text-foreground"><div className="mx-auto max-w-5xl"><h1 className="mb-1 text-xl font-semibold">配置与用户偏好</h1><p className="mb-5 text-sm text-muted-foreground">OneYes 接入、模型选择、同步与本地存储</p><AppConfigPanel initialTab="preferences" /></div></main>;
     if (mentions) return <MentionPreferences />;
     if (canvas) return <ConfigCanvas />;
     return <div className="p-6">

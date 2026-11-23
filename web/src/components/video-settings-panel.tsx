@@ -28,10 +28,11 @@ type VideoSettingsPanelProps = {
     showTitle?: boolean;
     showModelDetails?: boolean;
     validateReferences?: boolean;
+    compact?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, model, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, showModelDetails = true, validateReferences = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, model, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, showModelDetails = true, validateReferences = true, compact = false, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
     useVideoCatalogStore(state => state.catalog);
     const selectedModel = model || config.model || config.videoModel;
@@ -67,7 +68,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
 
     return (
         <ImageSettingsTheme theme={theme}>
-            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+            <div data-video-settings className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
                 {info && showModelDetails ? (
                     <div className="space-y-1 text-xs leading-relaxed" aria-label="当前视频模型">
@@ -78,7 +79,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
                 {configError ? <p role="alert" className="border-l-2 pl-3 text-xs font-medium leading-5" style={{ color: theme.node.text, borderColor: theme.node.text }}>{configError} 当前设置已保留，请主动选择支持的参数。</p> : null}
                 {info?.id.startsWith('grok-imagine-video') ? <p role="status" className="text-xs leading-5" style={{ color: theme.node.muted }}>支持文字和参考图片生成，不支持参考视频、视频编辑或上传参考音频。</p> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
+                    <div className={compact ? "grid grid-cols-3 gap-2" : "grid grid-cols-4 gap-2.5"}>
                         {resolutionOptions.map((item) => (
                             <OptionPill key={item.value} selected={resolution.toLowerCase() === item.value.toLowerCase()} disabled={referenceLimited && item.value === "1080"} theme={theme} onClick={() => selectResolution(item.value)}>
                                 {item.label}
@@ -104,12 +105,12 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
                                 key={item.value}
                                 type="button"
                                 aria-pressed={selectedRatio === item.value}
-                                className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
+                                className={`flex cursor-pointer items-center justify-center rounded-xl border bg-transparent text-sm transition hover:opacity-80 motion-reduce:transition-none ${compact ? 'h-9 gap-2' : 'h-[72px] flex-col gap-1.5'}`}
                                 style={{ borderColor: selectedRatio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={() => applySize(resolution, item.value)}
                             >
-                                <SizePreview width={item.width} height={item.height} color={theme.node.text} />
+                                <SizePreview width={item.width} height={item.height} color={theme.node.text} compact={compact} />
                                 <span>{item.value === "auto" ? t("settingsPanels.common.auto") : item.value}</span>
                             </button>
                         ))}
@@ -230,7 +231,7 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
 
 function SettingGroup({ title, color, children }: { title: string; color: string; children: ReactNode }) {
     return (
-        <div className="space-y-2.5">
+        <div data-video-group className="space-y-2.5">
             <div className="text-xs font-medium" style={{ color }}>
                 {title}
             </div>
@@ -288,10 +289,10 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: 
     );
 }
 
-function SizePreview({ width, height, color }: { width: number; height: number; color: string }) {
+function SizePreview({ width, height, color, compact = false }: { width: number; height: number; color: string; compact?: boolean }) {
     if (!width || !height) return null;
     const longSide = Math.max(width, height);
-    const previewWidth = Math.max(10, Math.round((width / longSide) * 26));
-    const previewHeight = Math.max(10, Math.round((height / longSide) * 26));
-    return <span className="rounded-[3px] border-2" style={{ width: previewWidth, height: previewHeight, borderColor: color }} />;
+    const previewWidth = Math.max(compact ? 6 : 10, Math.round((width / longSide) * (compact ? 16 : 26)));
+    const previewHeight = Math.max(compact ? 6 : 10, Math.round((height / longSide) * (compact ? 16 : 26)));
+    return <span aria-hidden="true" className={`shrink-0 rounded-[2px] ${compact ? 'border' : 'border-2'}`} style={{ width: previewWidth, height: previewHeight, borderColor: color }} />;
 }

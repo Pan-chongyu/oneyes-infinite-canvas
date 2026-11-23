@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ConfigVideoDefaults } from './config-video-defaults';
+import styles from './config-preferences.module.css';
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
@@ -186,27 +187,35 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         key: "preferences",
                         label: t("config.tabs.preferences"),
                         children: (
-                            <Form layout="vertical" requiredMark={false}>
-                                <div className="mb-2 text-sm font-semibold">{t("config.preferences.defaultModels")}</div>
-                                <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                            <Form layout="vertical" requiredMark={false} className={styles.preferences} data-testid="config-preferences">
+                                <section className={styles.section} aria-labelledby="default-models-heading">
+                                    <header>
+                                        <h2 id="default-models-heading">{t("config.preferences.defaultModels")}</h2>
+                                        <p>{t("config.preferences.defaultModelsDescription")}</p>
+                                    </header>
+                                    <div className={styles.fields} data-default-models>
                                     {modelGroups.map((group) => (
                                         <Form.Item key={group.modelKey} label={t(group.labelKey)} className="mb-0">
                                             <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} fullWidth />
                                         </Form.Item>
                                     ))}
-                                </div>
+                                    </div>
+                                </section>
                                 <ConfigVideoDefaults />
-                                <div className="mb-2 text-sm font-semibold">{t("config.preferences.generation")}</div>
-                                <Form.Item className="mb-4">
-                                    <div className="flex items-center justify-between gap-4">
+                                <section className={styles.section} aria-labelledby="generation-heading">
+                                    <header>
+                                        <h2 id="generation-heading">{t("config.preferences.generation")}</h2>
+                                        <p>{t("config.preferences.generationDescription")}</p>
+                                    </header>
+                                    <div className={styles.content}>
+                                    <div className={styles.switchRow}>
                                         <div>
                                             <label htmlFor="async-image-generation" className="text-sm">{t("config.preferences.asyncImageGeneration")}</label>
-                                            <div id="async-image-generation-help" className="mt-1 text-xs opacity-60">{t(config.asyncImageGeneration ? "config.preferences.asyncImageGenerationDescription" : "config.preferences.streamingImageGenerationDescription")}</div>
+                                            <p id="async-image-generation-help">{t(config.asyncImageGeneration ? "config.preferences.asyncImageGenerationDescription" : "config.preferences.streamingImageGenerationDescription")}</p>
                                         </div>
                                         <Switch id="async-image-generation" aria-describedby="async-image-generation-help" checked={config.asyncImageGeneration} onChange={checked => checked ? updateConfig("asyncImageGeneration", true) : setConfirmStreaming(true)} />
                                     </div>
-                                </Form.Item>
-                                <div className="grid gap-4 md:grid-cols-4">
+                                    <div className={styles.fields}>
                                     <Form.Item label={t("config.preferences.canvasImageCount")} extra={t("config.preferences.canvasImageCountDescription")} className="mb-4">
                                         <Input
                                             type="number"
@@ -220,6 +229,49 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                     <Form.Item label={t("config.preferences.imageResolution")} className="mb-4">
                                         <Select value={inferMediaScale(config.size)} options={imageResolutionOptions} onChange={(scale) => updateConfig("size", selectImageSize(scale, inferMediaRatio(config.size)))} />
                                     </Form.Item>
+                                    </div>
+                                    </div>
+                                </section>
+                                <section className={styles.section} aria-labelledby="canvas-behavior-heading">
+                                    <header>
+                                        <h2 id="canvas-behavior-heading">{t("config.preferences.canvasBehavior")}</h2>
+                                        <p>{t("config.preferences.canvasBehaviorDescription")}</p>
+                                    </header>
+                                    <div className={styles.content}>
+                                        <Form.Item label={t("config.preferences.regenerateBehavior")}>
+                                            <Radio.Group value={config.nodeRegenerateBehavior} onChange={(event) => updateConfig("nodeRegenerateBehavior", event.target.value)} className={styles.radioChoices}>
+                                                <Radio value="overwrite">
+                                                    <span className="block text-sm font-medium">{t("config.preferences.regenerateBehaviorOverwrite")}</span>
+                                                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">{t("config.preferences.regenerateBehaviorOverwriteDescription")}</span>
+                                                </Radio>
+                                                <Radio value="new-node">
+                                                    <span className="block text-sm font-medium">{t("config.preferences.regenerateBehaviorNewNode")}</span>
+                                                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">{t("config.preferences.regenerateBehaviorNewNodeDescription")}</span>
+                                                </Radio>
+                                            </Radio.Group>
+                                        </Form.Item>
+                                        <div className="mt-5">
+                                            <div className={styles.switchRow}>
+                                                <label htmlFor="auto-focus-on-select">{t("config.preferences.autoFocusOnSelect")}</label>
+                                                <Switch id="auto-focus-on-select" checked={config.autoFocusOnSelect} onChange={(checked) => updateConfig("autoFocusOnSelect", checked)} />
+                                            </div>
+                                            <div className={styles.switchRow}>
+                                                <div>
+                                                    <label htmlFor="auto-refresh-mention-images">{t("config.preferences.autoRefreshMentionImages")}</label>
+                                                    <p id="auto-refresh-mention-images-help">{t("config.preferences.autoRefreshMentionImagesDescription")}</p>
+                                                </div>
+                                                <Switch id="auto-refresh-mention-images" aria-describedby="auto-refresh-mention-images-help" checked={config.autoRefreshMentionImages} onChange={(checked) => updateConfig("autoRefreshMentionImages", checked)} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section className={styles.section} aria-labelledby="audio-defaults-heading">
+                                    <header>
+                                        <h2 id="audio-defaults-heading">{t("config.preferences.audioDefaults")}</h2>
+                                        <p>{t("config.preferences.audioDefaultsDescription")}</p>
+                                    </header>
+                                    <div className="min-w-0 space-y-4">
+                                    <div className="grid gap-4 sm:grid-cols-3">
                                     <Form.Item label={t("config.preferences.audioVoice")} className="mb-4">
                                         <Select value={config.audioVoice} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />
                                     </Form.Item>
@@ -237,40 +289,19 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             onBlur={(event) => updateConfig("audioSpeed", normalizeAudioSpeedValue(event.target.value))}
                                         />
                                     </Form.Item>
-                                </div>
-                                <Form.Item label={t("config.preferences.regenerateBehavior")} className="mb-4">
-                                    <Radio.Group value={config.nodeRegenerateBehavior} onChange={(event) => updateConfig("nodeRegenerateBehavior", event.target.value)} className="flex flex-col gap-2">
-                                        <Radio value="overwrite">
-                                            <span className="block text-sm font-medium">{t("config.preferences.regenerateBehaviorOverwrite")}</span>
-                                            <span className="mt-0.5 block text-xs opacity-60">{t("config.preferences.regenerateBehaviorOverwriteDescription")}</span>
-                                        </Radio>
-                                        <Radio value="new-node">
-                                            <span className="block text-sm font-medium">{t("config.preferences.regenerateBehaviorNewNode")}</span>
-                                            <span className="mt-0.5 block text-xs opacity-60">{t("config.preferences.regenerateBehaviorNewNodeDescription")}</span>
-                                        </Radio>
-                                    </Radio.Group>
-                                </Form.Item>
-                                <Form.Item className="mb-4">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <span className="text-sm">{t("config.preferences.autoFocusOnSelect")}</span>
-                                        <Switch checked={config.autoFocusOnSelect} onChange={(checked) => updateConfig("autoFocusOnSelect", checked)} />
                                     </div>
-                                </Form.Item>
-                                <Form.Item className="mb-4">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div>
-                                            <label htmlFor="auto-refresh-mention-images" className="text-sm">{t("config.preferences.autoRefreshMentionImages")}</label>
-                                            <div id="auto-refresh-mention-images-help" className="mt-1 text-xs opacity-60">{t("config.preferences.autoRefreshMentionImagesDescription")}</div>
-                                        </div>
-                                        <Switch id="auto-refresh-mention-images" aria-describedby="auto-refresh-mention-images-help" checked={config.autoRefreshMentionImages} onChange={(checked) => updateConfig("autoRefreshMentionImages", checked)} />
-                                    </div>
-                                </Form.Item>
-                                <Form.Item label={t("config.preferences.audioInstructions")} className="mb-4">
+                                    <Form.Item label={t("config.preferences.audioInstructions")}>
                                     <Input.TextArea rows={2} value={config.audioInstructions} placeholder={t("config.preferences.audioInstructionsPlaceholder")} onChange={(event) => updateConfig("audioInstructions", event.target.value)} />
-                                </Form.Item>
-                                <Form.Item label={t("config.preferences.systemPrompt")} className="mb-0">
-                                    <Input.TextArea rows={4} value={config.systemPrompt} placeholder={t("config.preferences.systemPromptPlaceholder")} onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
-                                </Form.Item>
+                                    </Form.Item>
+                                    </div>
+                                </section>
+                                <section className={styles.section} aria-labelledby="system-prompt-heading">
+                                    <header>
+                                        <h2 id="system-prompt-heading">{t("config.preferences.systemPrompt")}</h2>
+                                        <p>{t("config.preferences.systemPromptDescription")}</p>
+                                    </header>
+                                    <Input.TextArea aria-label={t("config.preferences.systemPrompt")} rows={4} value={config.systemPrompt} placeholder={t("config.preferences.systemPromptPlaceholder")} onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
+                                </section>
                             </Form>
                         ),
                     },
