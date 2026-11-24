@@ -30,7 +30,13 @@ export default {
     },
     settingsPanels: {
         common: { auto: "Auto", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Maximum" },
-        image: { title: "Image settings", quality: "Quality", size: "Size", align16: "Align to multiples of 16", align16Hint: "Round dimensions up to the next multiple of 16 after input", resolution: "Resolution", aspectRatio: "Aspect ratio", transparent: "Transparent background", transparentHint: "Generate an image without a background when supported by the model", count: "Image count", images: "{{count}} images" },
+        image: {
+            title: "Image settings", quality: "Quality", size: "Size", align16: "Align to multiples of 16", align16Hint: "Round dimensions up to the next multiple of 16 after input", resolution: "Resolution", aspectRatio: "Aspect ratio", transparent: "Transparent background", transparentHint: "Generate an image without a background when supported by the model", count: "Image count", images: "{{count}} images",
+            nativeSize: "Native", nativeSizeWithRatio: "Model-native pixels · {{ratio}} aspect ratio", sunburstSizeHint: "This Sunburst endpoint can return the model's native pixel dimensions. Choose Native to set the aspect ratio alone.",
+            nativeGeometryInstruction: "The final image must use a {{ratio}} aspect ratio at the model's native dimensions. Compose the content below for this canvas.",
+            fixedGeometryInstruction: "Set the final image canvas to {{pixels}} pixels at a {{ratio}} aspect ratio. Compose the content below for this canvas.",
+            referenceGeometryInstruction: "Reframe the reference content for the output canvas and preserve its key details.",
+        },
         video: { title: "Video settings", quality: "Quality", size: "Size", seconds: "Seconds", mode: "Mode", modes: { frames: "First & last frame", reference: "General reference" }, resolution: "Resolution", ratio: "Aspect ratio", duration: "Duration", smart: "Smart", output: "Output", generateAudio: "Generate audio", watermark: "Add watermark", adaptive: "Adaptive", sizes: { landscape: "Landscape", portrait: "Portrait", square: "Square", widescreen: "Widescreen", tall: "Tall", auto: "Auto" }, ratios: { landscape: "Landscape", portrait: "Portrait", square: "Square", standardLandscape: "Standard landscape", standardPortrait: "Standard portrait", cinematic: "Cinematic", adaptive: "Adaptive" } },
         audio: { title: "Audio settings", voice: "Voice", format: "Format", speed: "Speed", instructions: "Voice instructions", instructionsPlaceholder: "For example: natural, warm, and suitable for narration." },
         text: { title: "Text settings", reasoning: "Reasoning effort", count: "Generation count" },

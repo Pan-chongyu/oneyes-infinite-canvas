@@ -38,6 +38,21 @@ function fixture(saved = new Map<string, ImageTask>(), overrides: Partial<ImageT
     };
     return { manager: new ImageTaskManager(deps), calls, saved, deps };
 }
+
+test("native aspect selection stays with the original receipt during restart", async () => {
+    const task = { ...processing(), model: "default::gpt-image-2.6-sunburst", requestedSize: "1024x1024", requestedAspectRatio: "1:1" };
+    for (const [width, height] of [[1254, 1254], [941, 1672]]) {
+        const f = fixture(new Map([[task.id, task]]), { saveImage: async () => ({ ...image, width, height }) });
+        await f.manager.resumeAll();
+        const completed = f.saved.get(task.id)!;
+        assert.equal(completed.status, "completed");
+        assert.equal(completed.images[0].width, width);
+        assert.equal(completed.images[0].height, height);
+        if (width === height) assert.equal(completed.images[0].resolutionWarning, undefined);
+        else assert.match(completed.images[0].resolutionWarning!, /请求 1:1.*941×1672/);
+        assert.equal(f.calls.submits, 0);
+    }
+});
 async function until(check: () => boolean) {
     for (let n = 0; n < 100; n++) { if (check()) return; await new Promise(resolve => setImmediate(resolve)); }
     assert.fail("Task did not reach expected state");

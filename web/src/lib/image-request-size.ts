@@ -25,6 +25,11 @@ export function resolveImageRequestSize(size: string): string | undefined {
     return `${width}x${height}`;
 }
 
+export function nativeImageAspectRatio(size: string) {
+    const selection = parseImageSizeSelection(size);
+    return selection?.scale === "auto" && selection.ratio !== "auto" ? selection.ratio : undefined;
+}
+
 /** Native Gemini accepts a tier and ratio, not arbitrary pixel dimensions. */
 export function resolveGeminiImageConfig(config: { size: string }) {
     const value = String(config.size || "").trim();
@@ -40,8 +45,16 @@ export function resolveGeminiImageConfig(config: { size: string }) {
     return Object.keys(image).length ? { imageConfig: image } : {};
 }
 
-export function imageSizeMismatch(expected: string | undefined, image: { width: number; height: number }) {
+export function imageSizeMismatch(expected: string | undefined, image: { width: number; height: number }, expectedAspectRatio?: string) {
+    if (!(image.width > 0 && image.height > 0)) return;
+    const ratio = expectedAspectRatio && parseAspectRatio(expectedAspectRatio);
+    if (ratio) {
+        // A native output can round either edge to the nearest whole pixel.
+        const { width, height } = image;
+        if (Math.round(height * ratio.width / ratio.height) === width || Math.round(width * ratio.height / ratio.width) === height) return;
+        return `请求 ${expectedAspectRatio}，上游返回 ${width}×${height}，画幅比例不符。已保留原图。`;
+    }
     const pixels = expected && parsePixelSize(expected);
-    return pixels && image.width > 0 && image.height > 0 && (pixels.width !== image.width || pixels.height !== image.height)
+    return pixels && (pixels.width !== image.width || pixels.height !== image.height)
         ? `请求 ${pixels.width}×${pixels.height}，上游返回 ${image.width}×${image.height}。已保留原图，未缩放或重新生成。` : undefined;
 }

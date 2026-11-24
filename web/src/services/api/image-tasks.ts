@@ -13,6 +13,7 @@ export type ImageTask = {
     prompt: string;
     config: { model: string; imageModel: string; size: string; quality: string; count: string };
     requestedSize?: string;
+    requestedAspectRatio?: string;
     target?: ImageTaskTarget;
     references?: ReferenceImage[];
     logId: string;
@@ -207,7 +208,7 @@ export class ImageTaskManager {
                         });
                         const checkpoint = checkpoints.then(async () => {
                             if (this.removed.has(id)) return;
-                            const resolutionWarning = imageSizeMismatch(task.requestedSize, image);
+                            const resolutionWarning = imageSizeMismatch(task.requestedSize, image, task.requestedAspectRatio);
                             saved.set(index, { ...image, resultIndex: index, ...(resolutionWarning ? { resolutionWarning } : {}) });
                             task = { ...task, images: [...saved.entries()].sort(([a], [b]) => a - b).map(([, value]) => value) };
                             await this.put(task);

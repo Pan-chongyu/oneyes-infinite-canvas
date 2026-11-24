@@ -73,9 +73,9 @@ export const imageTasks: ImageTaskManager = new ImageTaskManager({
 });
 
 export type AsyncImageOptions = { signal?: AbortSignal; onTask?: (id: string) => void | Promise<void>; taskTarget?: ImageTaskTarget; taskLogId?: string };
-export type GeneratedImageResult = { id: string; dataUrl: string; taskId?: string; stored?: UploadedImage; requestedSize?: string };
+export type GeneratedImageResult = { id: string; dataUrl: string; taskId?: string; stored?: UploadedImage; requestedSize?: string; requestedAspectRatio?: string };
 
-export async function requestDurableImage(config: AiConfig, prompt: string, path: string, body: Record<string, unknown> | FormData, options?: AsyncImageOptions, references?: ReferenceImage[]): Promise<GeneratedImageResult[]> {
+export async function requestDurableImage(config: AiConfig, prompt: string, path: string, body: Record<string, unknown> | FormData, options?: AsyncImageOptions & Pick<ImageTask, "requestedAspectRatio">, references?: ReferenceImage[]): Promise<GeneratedImageResult[]> {
     const id = nanoid();
     const savedReferences = await Promise.all((references || []).map(async reference => {
         const storageKey = reference.storageKey || (await uploadImage(reference.dataUrl)).storageKey;
@@ -85,6 +85,7 @@ export async function requestDurableImage(config: AiConfig, prompt: string, path
     const saved = await imageTasks.submit({
         id, credential: await imageCredentialFingerprint(config.apiKey), model: config.model, prompt,
         requestedSize: body instanceof FormData ? String(body.get("size") || "") : typeof body.size === "string" ? body.size : undefined,
+        ...(options?.requestedAspectRatio ? { requestedAspectRatio: options.requestedAspectRatio } : {}),
         config: { model: config.model, imageModel: config.imageModel, quality: config.quality, size: config.size, count: config.count },
         ...(options?.taskTarget ? { target: options.taskTarget } : {}), logId: options?.taskLogId || `async-${id}`, createdAt: Date.now(),
         ...(savedReferences.length ? { references: savedReferences } : {}),
@@ -103,7 +104,7 @@ export async function storedTaskImage(image: TaskImage): Promise<UploadedImage> 
 
 export async function storeGeneratedImage(image: GeneratedImageResult, options?: { signal?: AbortSignal }) {
     const stored = image.stored || await uploadImage(image.dataUrl, options);
-    return { ...stored, resolutionWarning: stored.resolutionWarning || imageSizeMismatch(image.requestedSize, stored) };
+    return { ...stored, resolutionWarning: stored.resolutionWarning || imageSizeMismatch(image.requestedSize, stored, image.requestedAspectRatio) };
 }
 
 let started = false;

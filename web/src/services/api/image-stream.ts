@@ -5,6 +5,10 @@ type Options = { signal?: AbortSignal; onPartial?: (image: string) => void };
 export function isOneYes(baseUrl: string) {
     try { return ["https://oneyes.ai", "https://api.oneyes.ai"].includes(new URL(baseUrl).origin); } catch { return false; }
 }
+
+export function isOneYesSunburst(model: string, baseUrl: string) {
+    return model === "gpt-image-2.6-sunburst" && isOneYes(baseUrl);
+}
 function failure(status: number) {
     if (status === 524) return "OneYes 上游响应超时（524）。请先在用量记录中确认结果，再手动重试，避免重复扣费。";
     if (status === 401 || status === 403) return "OneYes API Key 无效或当前分组无权使用此模型，请打开「配置 → 连接诊断」检查 Key 是否被删除，并修复连接。";

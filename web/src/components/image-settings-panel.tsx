@@ -4,9 +4,10 @@ import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions, parsePixelSize, readMediaDimensions, selectImageSize } from "@/lib/media-size";
-import { resolveGeminiImageConfig, resolveImageRequestSize } from "@/lib/image-request-size";
-import { resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
+import { inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions, parseAspectRatio, parsePixelSize, readMediaDimensions, selectImageSize } from "@/lib/media-size";
+import { nativeImageAspectRatio, resolveGeminiImageConfig, resolveImageRequestSize } from "@/lib/image-request-size";
+import { isOneYesSunburst } from "@/services/api/image-stream";
+import { modelOptionName, resolveModelChannel, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
     { value: "auto", labelKey: "auto" },
@@ -40,20 +41,28 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
-    const selectedScale = inferMediaScale(activeSize);
+    const model = config.model || config.imageModel;
+    const channel = resolveModelChannel(config, model);
+    const gemini = channel.apiFormat === "gemini";
+    const sunburst = !gemini && isOneYesSunburst(modelOptionName(model), channel.baseUrl) && !resolveModelScript(config, model);
+    // A legacy ratio by itself is still an explicit request at the 1K preset.
+    const selectedScale = sunburst && parseAspectRatio(activeSize) ? "1k" : inferMediaScale(activeSize);
+    const usesNativeSize = sunburst && selectedScale === "auto";
     const selectedRatio = inferMediaRatio(activeSize);
     const dimensions = readMediaDimensions(activeSize, selectedScale, selectedRatio);
     const applySize = (scale: string, ratio: string) => onConfigChange("size", selectImageSize(scale, ratio));
     const selectScale = (scale: string) => applySize(scale, selectedRatio);
     const selectRatio = (ratio: string) => applySize(selectedScale, ratio);
     let sizeHint = "", sizeError = "";
-    const gemini = resolveModelChannel(config, config.model || config.imageModel).apiFormat === "gemini";
     try {
         if (gemini) {
             const image = resolveGeminiImageConfig(config).imageConfig;
             sizeHint = [image?.imageSize, image?.aspectRatio].filter(Boolean).join(" · ");
         } else {
-            sizeHint = resolveImageRequestSize(activeSize)?.replace("x", " × ") || "";
+            const requestedSize = resolveImageRequestSize(activeSize);
+            sizeHint = usesNativeSize
+                ? t("settingsPanels.image.nativeSizeWithRatio", { ratio: nativeImageAspectRatio(activeSize) || t("settingsPanels.common.auto") })
+                : requestedSize?.replace("x", " × ") || "";
         }
     } catch (error) { sizeError = (error as Error).message; }
     const updateDimension = (key: "width" | "height", value: number | null) => {
@@ -88,7 +97,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.size")}</SettingTitle>
-                        {!gemini && <div className="flex items-center gap-2">
+                        {!gemini && !usesNativeSize && <div className="flex items-center gap-2">
                             <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
                                 {t("settingsPanels.image.align16")}
                             </span>
@@ -97,7 +106,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </span>
                         </div>}
                     </div>
-                    {!gemini && <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                    {!gemini && !usesNativeSize && <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
                         <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">↔</span>
                         <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
@@ -109,10 +118,11 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <div className="grid grid-cols-4 gap-2.5">
                         {mediaScaleOptions.map((value) => (
                             <OptionPill key={value} selected={selectedScale === value} theme={theme} onClick={() => selectScale(value)}>
-                                {value === "auto" ? t("settingsPanels.common.auto") : value}
+                                {value === "auto" ? t(sunburst ? "settingsPanels.image.nativeSize" : "settingsPanels.common.auto") : value}
                             </OptionPill>
                         ))}
                     </div>
+                    {sunburst && !usesNativeSize && <p className="text-xs leading-5" style={{ color: theme.node.muted }}>{t("settingsPanels.image.sunburstSizeHint")}</p>}
                     {!gemini && selectedScale === "4k" && <p className="text-xs leading-5" style={{ color: theme.node.muted }}>4K 档按像素总量与比例匹配，具体宽高以上方尺寸为准。</p>}
                 </div>
                 <div className="space-y-2.5">

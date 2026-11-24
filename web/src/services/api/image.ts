@@ -1,5 +1,5 @@
 import { reportError } from "../diagnostics";
-import { isOneYes, requestImageStream } from "./image-stream";
+import { isOneYes, isOneYesSunburst, requestImageStream } from "./image-stream";
 import { requestDurableImage, type AsyncImageOptions, type GeneratedImageResult } from "@/stores/use-image-task-store";
 import axios from "axios";
 
@@ -11,8 +11,8 @@ import { readFileAsDataUrl } from "@/lib/image-utils";
 import { prepareReferenceFiles } from "./image-references";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
-import { inferMediaScale } from "@/lib/media-size";
-import { resolveImageRequestSize, resolveGeminiImageConfig } from "@/lib/image-request-size";
+import { inferMediaRatio, inferMediaScale } from "@/lib/media-size";
+import { nativeImageAspectRatio, resolveImageRequestSize, resolveGeminiImageConfig } from "@/lib/image-request-size";
 import type { ReferenceImage } from "@/types/image";
 import { referenceFileMaxBytes, type ReferenceFileMaxBytes } from '@/lib/video-material-policy';
 
@@ -217,6 +217,19 @@ function readStatusError(status: number | undefined, fallback: string) {
 function withSystemPrompt(config: AiConfig, prompt: string) {
     const systemPrompt = config.systemPrompt.trim();
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
+}
+
+function openAIImageOutput(config: AiConfig, prompt: string, edit: boolean): { prompt: string; requestedSize?: string; requestedAspectRatio?: string } {
+    const requestedSize = resolveImageRequestSize(config.size);
+    const text = withSystemPrompt(config, prompt);
+    if (!requestedSize || !isOneYesSunburst(config.model, config.baseUrl)) return { prompt: text, requestedSize };
+    const ratio = inferMediaRatio(config.size);
+    const requestedAspectRatio = nativeImageAspectRatio(config.size);
+    const geometry = requestedAspectRatio
+        ? i18n.t("settingsPanels.image.nativeGeometryInstruction", { ratio })
+        : i18n.t("settingsPanels.image.fixedGeometryInstruction", { pixels: requestedSize.replace("x", "×"), ratio });
+    const reframe = edit ? ` ${i18n.t("settingsPanels.image.referenceGeometryInstruction")}` : "";
+    return { prompt: `${geometry}${reframe}\n\n${text}`, requestedSize, requestedAspectRatio };
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -636,15 +649,15 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         }
     }
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveImageRequestSize(config.size);
+    const { prompt: requestPrompt, ...dimensions } = openAIImageOutput(requestConfig, prompt, false);
     const background = normalizeBackground(config.background);
     try {
         const requestBody = {
                 model: requestConfig.model,
-                prompt: withSystemPrompt(requestConfig, prompt),
+                prompt: requestPrompt,
                 n,
                 ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
+                ...(dimensions.requestedSize ? { size: dimensions.requestedSize } : {}),
                 ...(background ? { background } : {}),
                 // gpt-image models reject response_format; they always return b64.
                 ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
@@ -653,10 +666,10 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         const url = aiApiUrl(requestConfig, "/images/generations");
         const headers = aiHeaders(requestConfig, "application/json");
         const oneYes = isOneYes(requestConfig.baseUrl);
-        if (oneYes && asyncImages) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/generations/async", requestBody, options);
+        if (oneYes && asyncImages) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/generations/async", requestBody, { ...options, requestedAspectRatio: dimensions.requestedAspectRatio });
         const payload = oneYes ? await requestImageStream(url, requestBody, headers, options || {}) : (await axios.post<ImageApiResponse>(url, requestBody, { headers, signal: options?.signal, timeout: 0 })).data;
         const images = await parseImagePayload(payload);
-        return images.map(image => ({ ...image, requestedSize: requestSize }));
+        return images.map(image => ({ ...image, ...dimensions }));
     } catch (error) {
 
         reportError("image", "request", error);
@@ -706,11 +719,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveImageRequestSize(config.size);
+    const { prompt: upstreamPrompt, ...dimensions } = openAIImageOutput(requestConfig, requestPrompt, true);
     const background = normalizeBackground(config.background);
     const formData = new FormData();
     formData.set("model", requestConfig.model);
-    formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
+    formData.set("prompt", upstreamPrompt);
     formData.set("n", String(n));
     // gpt-image models reject response_format; they always return b64.
     if (!/gpt-image/.test(requestConfig.model)) {
@@ -720,8 +733,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (quality) {
         formData.set("quality", quality);
     }
-    if (requestSize) {
-        formData.set("size", requestSize);
+    if (dimensions.requestedSize) {
+        formData.set("size", dimensions.requestedSize);
     }
     if (background) {
         formData.set("background", background);
@@ -732,10 +745,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     try {
         const url = aiApiUrl(requestConfig, "/images/edits"), headers = aiHeaders(requestConfig);
         const oneYes = isOneYes(requestConfig.baseUrl);
-        if (oneYes && asyncImages) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/edits/async", formData, options, references);
+        if (oneYes && asyncImages) return await requestDurableImage({ ...requestConfig, model: config.model || config.imageModel }, prompt, "/images/edits/async", formData, { ...options, requestedAspectRatio: dimensions.requestedAspectRatio }, references);
         const payload = oneYes ? await requestImageStream(url, formData, headers, options || {}) : (await axios.post<ImageApiResponse>(url, formData, { headers, signal: options?.signal, timeout: 0 })).data;
         const images = await parseImagePayload(payload);
-        return images.map(image => ({ ...image, requestedSize: requestSize }));
+        return images.map(image => ({ ...image, ...dimensions }));
     } catch (error) {
 
         reportError("image", "request", error);

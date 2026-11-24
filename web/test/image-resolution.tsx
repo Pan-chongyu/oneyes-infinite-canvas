@@ -7,7 +7,7 @@ import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { defaultConfig, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import { requestEdit, requestGeneration } from "@/services/api/image";
-import { storeGeneratedImage } from "@/stores/use-image-task-store";
+import { storeGeneratedImage, useImageTaskStore } from "@/stores/use-image-task-store";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { buildGenerationConfig, generationModePatch } from "@/lib/canvas/node-generation-config";
 import { applyNodeConfigPatch } from "@/lib/canvas/canvas-node-factory";
@@ -21,6 +21,27 @@ axios.defaults.adapter = async request => {
     const body = edit ? undefined : typeof request.data === "string" ? JSON.parse(request.data) : request.data;
     requests.push({ size: edit ? request.data.get("size") : body?.size, gemini: body?.generationConfig?.imageConfig, edit });
     return { data: body?.contents ? { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: pixel } }] } }] } : { data: [{ b64_json: pixel }] }, status: 200, statusText: "OK", config: request, headers: {} };
+};
+const sunburstRequests: Array<{ path: string; model: unknown; size: unknown; prompt: unknown; images: number }> = [];
+let upstreamDimensions = { width: 1254, height: 1254 };
+const fetchFixture = window.fetch.bind(window);
+window.fetch = async (url, options) => {
+    const target = new URL(String(url), location.href);
+    if (target.hostname !== "oneyes.ai" && target.hostname !== "api.oneyes.ai") return fetchFixture(url, options);
+    if (options?.method !== "POST" || !/^\/v1\/images\/(generations|edits)(\/async)?$/.test(target.pathname)) {
+        throw Error("Unexpected OneYes request in resolution fixture");
+    }
+    const form = options.body instanceof FormData ? options.body : undefined;
+    const body = form ? Object.fromEntries(form) : JSON.parse(String(options.body));
+    sunburstRequests.push({ path: target.pathname, model: body.model, size: body.size, prompt: body.prompt, images: form?.getAll("image").length || 0 });
+    const canvas = document.createElement("canvas");
+    canvas.width = upstreamDimensions.width;
+    canvas.height = upstreamDimensions.height;
+    const data = [{ b64_json: canvas.toDataURL("image/png").split(",")[1] }];
+    if (target.pathname.endsWith("/async")) {
+        return Response.json({ task_id: `img_fixture_${sunburstRequests.length}`, status: "completed", result: { data } }, { status: 202 });
+    }
+    return new Response(`data: ${JSON.stringify({ data })}\n\n`, { headers: { "content-type": "text/event-stream" } });
 };
 const base: AiConfig = { ...defaultConfig, size: "1k@16:9", count: "1", model: "fixture::gpt-image-2", imageModel: "fixture::gpt-image-2", videoModel: "fixture::grok-imagine-video", channels: [{ ...defaultConfig.channels[0], id: "fixture", apiKey: "fixture-only-key", baseUrl: "https://fixture.invalid/v1", models: [{ name: "gpt-image-2", capability: "image" }, { name: "grok-imagine-video", capability: "video" }] }] };
 const referenceCanvas = document.createElement("canvas");
@@ -41,6 +62,19 @@ function Fixture() {
         copyNode: () => setNode(previous => ({ ...JSON.parse(JSON.stringify(previous)), id: "copy" })),
         mode: (mode: "image" | "video" | "text" | "audio") => setNode(previous => applyNodeConfigPatch(previous, generationModePatch(config, previous, mode))),
         custom: () => { setShowNode(false); setConfig({ ...base, size: "1600x1008" }); },
+        sunburst: () => {
+            const name = "gpt-image-2.6-sunburst", model = "fixture::" + name;
+            setShowNode(false);
+            setConfig({ ...base, size: "1:1", model, imageModel: model,
+                channels: [{ ...base.channels[0], baseUrl: "https://oneyes.ai", models: [{ name, capability: "image" }] }] });
+        },
+        sunburstRequests: () => sunburstRequests,
+        upstreamDimensions: (width: number, height: number) => { upstreamDimensions = { width, height }; },
+        asyncImages: (enabled: boolean) => useConfigStore.setState(state => ({ config: { ...state.config, asyncImageGeneration: enabled } })),
+        task: () => {
+            const task = useImageTaskStore.getState().tasks[0];
+            return task && { requestedSize: task.requestedSize, requestedAspectRatio: task.requestedAspectRatio, prompt: task.prompt };
+        },
         requests: () => requests,
         theme: (value: boolean) => { setDark(value); document.documentElement.classList.toggle("dark", value); },
         reset: () => setConfig(base),

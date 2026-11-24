@@ -130,6 +130,42 @@ app.whenReady().then(async () => {
         await changeMode('image');
         assert.equal(await js('resolutionTest.size()'), '4k@16:9');
         console.log('IMAGE_RESOLUTION_OK: real light/dark panel clicks, exact JSON/multipart sizes, native Gemini tiers, preflight rejection and preserved original pixels');
+        await js('resolutionTest.sunburst()');
+        await wait('resolutionTest.size() === "1:1" && document.querySelector("[data-image-size-hint]").textContent.trim() === "1024 × 1024"');
+        for (const asyncImages of [true, false]) {
+            await js(`resolutionTest.asyncImages(${asyncImages})`);
+            for (const edit of [false, true]) {
+                const original = await js(`resolutionTest.generate(${edit})`);
+                assert.match(original.warning, /请求 1024×1024.*1254×1254/);
+                const request = await js('resolutionTest.sunburstRequests().at(-1)');
+                assert.equal(request.path, `/v1/images/${edit ? 'edits' : 'generations'}${asyncImages ? '/async' : ''}`);
+                assert.equal(request.size, '1024x1024');
+                assert.equal(request.model, 'gpt-image-2.6-sunburst');
+                assert.match(request.prompt, /^最终输出画布设为 1024×1024 像素，宽高比为 1:1/);
+                assert.equal(request.images, Number(edit));
+                assert.equal(request.prompt.includes('重新构图到指定画幅'), edit);
+                assert.match(request.prompt, /fixture$/);
+            }
+        }
+        await choose('原生尺寸');
+        await wait('resolutionTest.size() === "auto@1:1" && document.querySelector("[data-image-size-hint]").textContent.includes("模型原生像素")');
+        assert.equal(await js('[...document.querySelectorAll("label input[type=number]")].some(input => /^(W|H)$/.test(input.parentElement.textContent.trim()))'), false);
+        await js('resolutionTest.asyncImages(true)');
+        const native = await js('resolutionTest.generate(true)');
+        assert.deepEqual(native, { width: 1254, height: 1254, warning: undefined });
+        assert.deepEqual(await js('resolutionTest.task()'), { requestedSize: '1024x1024', requestedAspectRatio: '1:1', prompt: 'fixture' });
+        const nativeRequest = await js('resolutionTest.sunburstRequests().at(-1)');
+        assert.match(nativeRequest.prompt, /宽高比为 1:1，像素尺寸使用模型原生规格/);
+        assert.doesNotMatch(nativeRequest.prompt, /1024×1024/);
+        await js('resolutionTest.upstreamDimensions(941, 1672)');
+        assert.match((await js('resolutionTest.generate(true)')).warning, /请求 1:1.*941×1672.*画幅比例不符/);
+        await choose('9:16');
+        await wait('resolutionTest.size() === "auto@9:16"');
+        await js('resolutionTest.asyncImages(false)');
+        assert.deepEqual(await js('resolutionTest.generate(false)'), { width: 941, height: 1672, warning: undefined });
+        assert.equal(await js('resolutionTest.sunburstRequests().length'), 7, 'each action submits once');
+        console.log('SUNBURST_GEOMETRY_OK: exact payload, native aspect selection, reference reframing, pixel and ratio discrepancies retained, async and stream parity');
+        await win.webContents.session.clearStorageData();
         await win.loadURL(new URL('/__image-generation', process.argv[2]).href);
         await wait('window.generationTest && Array.from(document.querySelectorAll("[data-node-id=generate] button")).some(b => b.textContent.trim() === "开始生成")');
         await js('Array.from(document.querySelectorAll("[data-node-id=generate] button")).find(b => b.textContent.trim() === "开始生成").click()');
