@@ -48,3 +48,10 @@ test("a lower resolution upstream image is retained and reported without interpo
     assert.equal(imageSizeMismatch(undefined, { width: 1024, height: 1024 }), undefined);
     assert.match(imageSizeMismatch("3840x2160", { width: 1536, height: 864 })!, /请求 3840×2160，上游返回 1536×864/);
 });
+
+test("custom image dimensions retain their actual ratio instead of a neighbouring preset", () => {
+    assert.equal(inferMediaRatio("1600x1008"), "1600:1008");
+    assert.equal(inferMediaRatio("2560x1440"), "16:9");
+    assert.equal(inferMediaRatio("1360x2048"), "2:3", "an aligned named preset retains its original ratio");
+    assert.throws(() => resolveImageRequestSize(selectImageSize("4k", inferMediaRatio("1600x1008"))), /没有该比例/);
+});

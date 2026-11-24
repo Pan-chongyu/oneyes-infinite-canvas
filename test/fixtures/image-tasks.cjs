@@ -80,6 +80,8 @@ app.whenReady().then(async () => {
             await wait('resolutionTest.size() === "1k@16:9"');
             await choose('4k');
             await wait('resolutionTest.size() === "4k@16:9" && document.querySelector("[data-image-size-hint]").textContent.includes("3840")');
+            await js('document.querySelector("input[type=number]").focus(); document.querySelector("input[type=number]").blur()');
+            assert.equal(await js('resolutionTest.size()'), '4k@16:9', 'unedited width/height do not erase the selected tier');
             for (const edit of [false, true]) {
                 const original = await js(`resolutionTest.generate(${edit})`);
                 assert.equal(original.width, 1, 'the small upstream image must never be enlarged to fake the requested size');
@@ -100,6 +102,33 @@ app.whenReady().then(async () => {
             assert.match(await js('resolutionTest.reject()'), /不支持/);
             assert.equal(await js('resolutionTest.requests().length'), count, 'unsupported combinations must stop before the paid POST');
         }
+        await js('resolutionTest.custom()');
+        await wait('resolutionTest.size() === "1600x1008"');
+        assert.equal(await js('document.querySelector("[data-image-size-hint]").textContent.trim()'), '1600 × 1008');
+        await js('document.querySelector("input[type=number]").focus(); document.querySelector("input[type=number]").blur()');
+        assert.equal(await js('resolutionTest.size()'), '1600x1008', 'focus/blur must not rewrite unedited dimensions');
+        await js('resolutionTest.generate(false)');
+        assert.equal(await js('resolutionTest.requests().at(-1).size'), '1600x1008');
+        await js('resolutionTest.showNode()');
+        await wait('document.querySelector("[data-config-node-settings]")');
+        const changeMode = async mode => {
+            await js(`[...document.querySelectorAll('.ant-segmented-item')].find(item=>item.textContent.trim()===${JSON.stringify({ image: '生图', video: '视频', text: '文本', audio: '音频' }[mode])}).click()`);
+            await wait(`resolutionTest.node().metadata.generationMode === "${mode}"`);
+        };
+        await changeMode('video');
+        await js('resolutionTest.videoSize(); resolutionTest.copyNode()');
+        await wait('resolutionTest.size() === "9:16"');
+        await changeMode('image');
+        await wait('resolutionTest.size() === "4k@16:9"');
+        for (const edit of [false, true]) {
+            await js(`resolutionTest.generate(${edit})`);
+            assert.equal(await js('resolutionTest.requests().at(-1).size'), '3840x2160', 'a copied config node retains image resolution after video switching');
+        }
+        await changeMode('text'); await changeMode('video');
+        assert.equal(await js('resolutionTest.size()'), '9:16', 'video size remains separate');
+        assert.equal(await js('resolutionTest.node().metadata.vquality'), '720');
+        await changeMode('image');
+        assert.equal(await js('resolutionTest.size()'), '4k@16:9');
         console.log('IMAGE_RESOLUTION_OK: real light/dark panel clicks, exact JSON/multipart sizes, native Gemini tiers, preflight rejection and preserved original pixels');
         await win.loadURL(new URL('/__image-generation', process.argv[2]).href);
         await wait('window.generationTest && Array.from(document.querySelectorAll("[data-node-id=generate] button")).some(b => b.textContent.trim() === "开始生成")');

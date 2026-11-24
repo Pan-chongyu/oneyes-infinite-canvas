@@ -78,15 +78,12 @@ export function inferMediaRatio(size: string, fallback = "1:1") {
     if (mediaRatioOptions.some((item) => item.value === size)) return size;
     const pixels = parsePixelSize(size) || parseAspectRatio(size);
     if (!pixels) return fallback;
-    const target = pixels.width / pixels.height;
-    return mediaRatioOptions
-        .filter((item) => item.value !== "auto")
-        .reduce((best, item) => {
-            const current = item.width / item.height;
-            const bestOption = mediaRatioOptions.find((option) => option.value === best);
-            const bestRatio = (bestOption?.width || 1) / Math.max(1, bestOption?.height || 1);
-            return Math.abs(current - target) < Math.abs(bestRatio - target) ? item.value : best;
-        }, fallback);
+    const preset = Object.values(imageSizePresets).flatMap(items => Object.entries(items)).find(([, value]) => value === size.toLowerCase());
+    if (preset) return preset[0];
+    const exact = mediaRatioOptions.find(item => item.value !== "auto" && item.width * pixels.height === item.height * pixels.width);
+    if (exact) return exact.value;
+    // Custom dimensions must not silently become a neighbouring named ratio.
+    return `${pixels.width}:${pixels.height}`;
 }
 
 export function computeMediaSize(scale: string, ratio: string) {

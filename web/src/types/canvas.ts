@@ -67,6 +67,7 @@ export type CanvasNodeMetadata = {
     model?: string;
     reasoningEffort?: "auto" | "low" | "medium" | "high" | "xhigh";
     size?: string;
+    generationSizes?: Partial<Record<"image" | "video", string>>;
     quality?: string;
     background?: string;
     count?: number;
