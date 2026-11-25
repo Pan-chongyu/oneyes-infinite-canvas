@@ -404,7 +404,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }}
             >
                 <div
-                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot ? "overflow-visible" : "overflow-hidden"}`}
+                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot || hasImageContent ? "overflow-visible" : "overflow-hidden"}`}
                     style={
                         {
                             background: isGroup ? "transparent" : hasImageContent || hasVideoContent || transparentBg ? "transparent" : theme.node.fill,
@@ -767,6 +767,9 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
     );
 }
 
+const imageActionsClass = "pointer-events-none flex max-w-full flex-wrap items-center gap-1 opacity-0 transition-opacity group-hover/node:pointer-events-auto group-hover/node:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
+const imageActionButtonClass = "inline-flex h-8 min-w-8 shrink-0 items-center justify-center gap-1 rounded-lg border px-2 text-[10px] leading-none font-medium whitespace-nowrap backdrop-blur-md transition-[filter,opacity] hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-1 disabled:opacity-60";
+
 function ImageContent({
     node,
     batchExpanded,
@@ -797,6 +800,8 @@ function ImageContent({
     const images = node.metadata?.images || [];
     const batchCount = images.length;
     const isBatchRoot = batchCount > 1;
+    const actionLabelClass = isBatchRoot ? "hidden @min-[15rem]/image-actions:inline" : "hidden @min-[9rem]/image-actions:inline";
+    const actionStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText };
     const primaryImageId = node.metadata?.primaryImageId || images[0]?.id;
     const primaryImage = images.find((image) => image.id === primaryImageId);
     const resolutionWarning = primaryImage ? primaryImage.resolutionWarning : node.metadata?.resolutionWarning;
@@ -836,34 +841,43 @@ function ImageContent({
                 )}
             </div>
             {primaryImage?.status === "error" ? <BatchImageFailureActions placement="left" onRetry={() => onRetryBatchImage?.(primaryImage.id)} onDelete={() => onDeleteBatchImage?.(primaryImage.id)} /> : null}
-            {primaryContent ? (
-                <div data-image-actions={primaryImage?.id || "primary"} className="pointer-events-none absolute left-2.5 top-2.5 z-30 flex gap-1 opacity-0 transition-opacity group-hover/node:pointer-events-auto group-hover/node:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100" onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
-                {primaryImage?.content && <button type="button" className="flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-medium backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownloadBatchImage?.(primaryImage.id))}>
-                    <Download className="size-3" />
-                    {t("common.download")}
-                </button>}
-                <button type="button" aria-label={t("canvas.imageTools.copyImage")} title={t("canvas.imageTools.copyImage")} disabled={copying} className="flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-medium backdrop-blur-md transition hover:scale-[1.02] disabled:opacity-60" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} onClick={event => { event.stopPropagation(); void copyImage(primaryImage?.content ? primaryImage : { content: primaryContent, storageKey: node.metadata?.storageKey }); }}>
-                    {copying ? <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" /> : <ClipboardCopy className="size-3" />}
-                    {t("common.copy")}
-                </button>
+            {primaryContent || isBatchRoot ? (
+                <div className="@container/image-actions pointer-events-none absolute inset-x-2.5 top-2.5 z-30 flex min-w-8 flex-wrap items-start gap-1">
+                    {primaryContent ? (
+                        <div data-image-actions={primaryImage?.id || "primary"} className={imageActionsClass} onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+                            {primaryImage?.content && (
+                                <button type="button" aria-label={t("common.download")} title={t("common.download")} className={imageActionButtonClass} style={actionStyle} onClick={(event) => (event.stopPropagation(), onDownloadBatchImage?.(primaryImage.id))}>
+                                    <Download aria-hidden="true" className="size-3 shrink-0" />
+                                    <span className={actionLabelClass}>{t("common.download")}</span>
+                                </button>
+                            )}
+                            <button type="button" aria-label={t("canvas.imageTools.copyImage")} title={t("canvas.imageTools.copyImage")} disabled={copying} className={imageActionButtonClass} style={actionStyle} onClick={event => { event.stopPropagation(); void copyImage(primaryImage?.content ? primaryImage : { content: primaryContent, storageKey: node.metadata?.storageKey }); }}>
+                                {copying ? <LoaderCircle aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" /> : <ClipboardCopy aria-hidden="true" className="size-3 shrink-0" />}
+                                <span className={actionLabelClass}>{t("common.copy")}</span>
+                            </button>
+                        </div>
+                    ) : null}
+                    {isBatchRoot ? (
+                        <button
+                            type="button"
+                            className="pointer-events-auto ml-auto inline-flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full border px-2 text-xs font-semibold backdrop-blur-md transition-[filter] hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-1"
+                            style={actionStyle}
+                            aria-label={batchExpanded ? t("canvas.node.batchExpanded") : t("canvas.node.batchCollapsed")}
+                            aria-expanded={batchExpanded}
+                            title={t("canvas.controls.images", { count: batchCount })}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onToggleBatch?.();
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                        >
+                            <span className="@min-[10rem]/image-actions:hidden">{batchCount}</span>
+                            <span className="hidden @min-[10rem]/image-actions:inline">{t("canvas.controls.images", { count: batchCount })}</span>
+                            <ChevronRight aria-hidden="true" className={`size-3.5 shrink-0 opacity-80 transition-transform ${batchExpanded ? "rotate-90" : ""}`} />
+                        </button>
+                    ) : null}
                 </div>
-            ) : null}
-            {isBatchRoot ? (
-                <button
-                    type="button"
-                    className="absolute right-2.5 top-2.5 z-30 flex h-8 items-center justify-center gap-1.5 rounded-full border px-3 text-xs font-semibold shadow-[0_6px_18px_rgba(28,25,23,.16)] backdrop-blur-md transition hover:scale-[1.02]"
-                    style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }}
-                    aria-label={batchExpanded ? t("canvas.node.batchExpanded") : t("canvas.node.batchCollapsed")}
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        onToggleBatch?.();
-                    }}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onPointerDown={(event) => event.stopPropagation()}
-                >
-                    <span className="leading-none">{t("canvas.controls.images", { count: batchCount })}</span>
-                    <ChevronRight className={`size-3.5 opacity-80 transition-transform ${batchExpanded ? "rotate-90" : ""}`} />
-                </button>
             ) : null}
         </BatchFrame>
     );
@@ -873,6 +887,8 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const { copyImage, copying } = useCopyImage();
+    const actionStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText };
+    const actionLabelClass = "hidden @min-[21rem]/image-actions:inline";
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const count = node.metadata?.images?.length || 0;
     const columns = Math.min(count, 4);
@@ -897,7 +913,7 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
 
     return (
         <div
-            className={`absolute z-20 overflow-hidden rounded-3xl ${image.content ? "" : "border shadow-[0_18px_50px_rgba(28,25,23,.18)]"}`}
+            className={`absolute z-20 rounded-3xl ${image.content ? "" : "overflow-hidden border shadow-[0_18px_50px_rgba(28,25,23,.18)]"}`}
             style={
                 {
                     left: x,
@@ -920,24 +936,24 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
                 onView();
             }}
         >
-            {image.content ? <img src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} />}
+            {image.content ? <img src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full rounded-[inherit] select-none object-contain" /> : <ImageSlotStatus image={image} />}
             {image.resolutionWarning && <div role="note" title={image.resolutionWarning} className="absolute inset-x-2 bottom-2 truncate rounded-md px-2 py-1 text-[10px]" style={{ background: theme.toolbar.panel, color: theme.node.text }}>尺寸与请求不一致 · {image.resolutionWarning}</div>}
             {image.content ? (
-                <div data-image-actions={image.id} className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/node:pointer-events-auto group-hover/node:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-                    <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownload())}>
-                        <Download className="size-3 shrink-0" />
-                        <span className="truncate">{t("common.download")}</span>
+                <div data-image-actions={image.id} className={`${imageActionsClass} @container/image-actions absolute inset-x-2 top-2 min-w-8`}>
+                    <button type="button" aria-label={t("common.download")} title={t("common.download")} className={imageActionButtonClass} style={actionStyle} onClick={(event) => (event.stopPropagation(), onDownload())}>
+                        <Download aria-hidden="true" className="size-3 shrink-0" />
+                        <span className={actionLabelClass}>{t("common.download")}</span>
                     </button>
-                    <button type="button" aria-label={t("canvas.imageTools.copyImage")} title={t("canvas.imageTools.copyImage")} disabled={copying} className="flex h-8 shrink-0 items-center justify-center rounded-lg border px-2 backdrop-blur-md transition hover:scale-[1.02] disabled:opacity-60" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} onClick={event => { event.stopPropagation(); void copyImage(image); }}>
-                        {copying ? <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" /> : <ClipboardCopy className="size-3" />}
+                    <button type="button" aria-label={t("canvas.imageTools.copyImage")} title={t("canvas.imageTools.copyImage")} disabled={copying} className={imageActionButtonClass} style={actionStyle} onClick={event => { event.stopPropagation(); void copyImage(image); }}>
+                        {copying ? <LoaderCircle aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" /> : <ClipboardCopy aria-hidden="true" className="size-3 shrink-0" />}
                     </button>
-                    <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("canvas.node.createCopy")} onClick={(event) => (event.stopPropagation(), onDuplicate())}>
-                        <Copy className="size-3 shrink-0" />
-                        <span className="truncate">{t("canvas.node.createCopy")}</span>
+                    <button type="button" aria-label={t("canvas.node.createCopy")} title={t("canvas.node.createCopy")} className={imageActionButtonClass} style={actionStyle} onClick={(event) => (event.stopPropagation(), onDuplicate())}>
+                        <Copy aria-hidden="true" className="size-3 shrink-0" />
+                        <span className={actionLabelClass}>{t("canvas.node.createCopy")}</span>
                     </button>
-                    <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("canvas.node.setPrimary")} onClick={(event) => (event.stopPropagation(), onSetPrimary())}>
-                        <Star className="size-3 shrink-0" style={{ color: selectionBlue }} />
-                        <span className="truncate">{t("canvas.node.setPrimary")}</span>
+                    <button type="button" aria-label={t("canvas.node.setPrimary")} title={t("canvas.node.setPrimary")} className={imageActionButtonClass} style={actionStyle} onClick={(event) => (event.stopPropagation(), onSetPrimary())}>
+                        <Star aria-hidden="true" className="size-3 shrink-0" style={{ color: selectionBlue }} />
+                        <span className={actionLabelClass}>{t("canvas.node.setPrimary")}</span>
                     </button>
                 </div>
             ) : null}

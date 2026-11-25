@@ -21,7 +21,10 @@ app.whenReady().then(async () => {
     const win = new BrowserWindow({ width: 1280, height: 900, show: false, webPreferences: { preload: join(__dirname, '../../desktop/preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
     ipcMain.handle('clipboard:writeImage', (event, bytes) => { assert.equal(event.sender, win.webContents); assert.equal(event.senderFrame, win.webContents.mainFrame); return writeClipboardImage(clipboard, bytes); });
     configurePermissions(win.webContents.session);
-    const js = code => win.webContents.executeJavaScript(code);
+    const js = async code => {
+        try { return await win.webContents.executeJavaScript(code); }
+        catch (error) { throw new Error('Image details renderer failed: ' + code, { cause: error }); }
+    };
     const wait = async code => { const end = Date.now() + 15000; while (!(typeof code === 'function' ? await code() : await js(code))) { if (Date.now() > end) throw Error('Image details wait failed: ' + code); await new Promise(resolve => setTimeout(resolve, 25)); } };
     const resize = async (width, height) => {
         const size = win.getSize();
@@ -76,6 +79,61 @@ app.whenReady().then(async () => {
             await copyAndPaste('second', 240, 480, 0);
             await js('imageDetailsTest.expanded(false)');
         }
+        const checkActionLayout = async (id, labelsVisible) => {
+            const layout = await js(`(() => {
+                const group = document.querySelector('[data-image-actions="${id}"]');
+                const isPrimary = ${id === 'first'};
+                const card = isPrimary ? group.closest('[data-node-id]') : group.parentElement;
+                const buttons = [...group.querySelectorAll('button')];
+                if (isPrimary) buttons.push(card.querySelector('[aria-expanded]'));
+                return {
+                    card: card.getBoundingClientRect().toJSON(),
+                    buttons: buttons.map(button => ({
+                        bounds: button.getBoundingClientRect().toJSON(),
+                        label: button.getAttribute('aria-label'),
+                        title: button.title,
+                        lines: [...button.querySelectorAll('span')].flatMap(span => [...span.getClientRects()]).length,
+                        iconWidth: button.querySelector('svg').getBoundingClientRect().width,
+                    })),
+                };
+            })()`);
+            assert.equal(layout.buttons.length, id === 'first' ? 3 : 4);
+            for (const [index, button] of layout.buttons.entries()) {
+                const { bounds, iconWidth } = button;
+                assert.ok(button.label && button.title, 'every icon-only action keeps its name and hover hint');
+                assert.ok(bounds.left >= layout.card.left && bounds.right <= layout.card.right + 1, 'actions stay within the node width');
+                assert.ok(bounds.top >= layout.card.top && bounds.bottom <= layout.card.bottom + 1, 'actions stay within the node height');
+                assert.ok(iconWidth >= 10, 'action icons keep their size');
+                const expectedLines = id === 'first' && index === 2 ? 1 : labelsVisible ? 1 : 0;
+                assert.equal(button.lines, expectedLines, 'labels fit one line or give way to icons');
+                for (const other of layout.buttons.slice(index + 1)) {
+                    assert.ok(bounds.right <= other.bounds.left + 1 || bounds.bottom <= other.bounds.top + 1, 'actions never overlap');
+                }
+            }
+        };
+        for (const locale of ['zh-CN', 'en-US']) {
+            await js(`imageDetailsTest.locale('${locale}')`);
+            await wait(`document.querySelector('[data-image-actions="first"] button').title === '${locale === 'zh-CN' ? '下载' : 'Download'}'`);
+            await checkActionLayout('first', true);
+            await js('imageDetailsTest.size(110, 1.75)');
+            await checkActionLayout('first', false);
+            await js('imageDetailsTest.size(400, 1)');
+        }
+        await js('imageDetailsTest.locale("zh-CN")');
+        await js('imageDetailsTest.size(110, 1.75)');
+        const dragsBeforeActions = await js('imageDetailsTest.drags()');
+        await click('[data-image-actions="first"] button[aria-label="下载"]');
+        await wait('imageDetailsTest.downloadedImageId() === "first"');
+        await copyAndPaste('first', 4096, 2048, 255);
+        await click('[data-node-id="detail-fixture"] button[aria-expanded=false]');
+        await wait('document.querySelector("[data-image-actions=second]")?.parentElement.getAnimations().every(animation=>animation.playState!=="running")');
+        await checkActionLayout('second', false);
+        await click('[data-image-actions="second"] button[aria-label="下载"]');
+        await wait('imageDetailsTest.downloadedImageId() === "second"');
+        assert.equal(await js('imageDetailsTest.drags()'), dragsBeforeActions);
+        await click('[data-node-id="detail-fixture"] button[aria-expanded=true]');
+        await js('imageDetailsTest.size(400, 1)');
+        console.log('IMAGE_NODE_ACTION_LAYOUT_OK: narrow zoomed and expanded nodes, single-line Chinese and English labels, intact icons, native download and copy clicks');
         await js('imageDetailsTest.plain()'); await copyAndPaste('primary', 4096, 2048, 255);
         await js('imageDetailsTest.missingCopy()'); await clipboard.writeText('preserve clipboard on failure');
         await click(copyButton('primary')); await wait('document.querySelector(".ant-message")?.textContent.includes("复制图片失败")');

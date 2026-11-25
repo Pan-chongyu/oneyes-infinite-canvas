@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { App, ConfigProvider } from 'antd';
-import '@/i18n';
+import { changeAppLocale, type AppLocale } from '@/i18n';
 import '@/styles/globals.css';
 import { CanvasImageDetails } from '@/components/canvas/canvas-image-details';
 import { CanvasNode } from '@/components/canvas/canvas-node';
@@ -25,10 +25,10 @@ async function main() {
             { id: 'second', status: 'success', content: second.url, storageKey: second.storageKey, naturalWidth: 240, naturalHeight: 480, bytes: second.bytes, mimeType: second.mimeType },
         ],
     } };
-    let pasted: { width: number; height: number; alpha: number } | null = null, drags = 0;
+    let pasted: { width: number; height: number; alpha: number } | null = null, drags = 0, downloadedImageId: string | null = null;
     function Fixture() {
         const [current, setCurrent] = useState(node), [open, setOpen] = useState(false), [imageId, setImageId] = useState<string | null>(null);
-        const [expanded, setExpanded] = useState(false);
+        const [expanded, setExpanded] = useState(false), [scale, setScale] = useState(1);
         const theme = useThemeStore(state => state.theme);
         Object.assign(window, { imageDetailsTest: {
             open: (id: string | null = null) => flushSync(() => { setImageId(id); setOpen(true); }),
@@ -40,6 +40,9 @@ async function main() {
             node: () => JSON.stringify(current),
             restore: () => flushSync(() => { setCurrent(node); setOpen(false); }),
             expanded: (value: boolean) => flushSync(() => { setExpanded(value); setCurrent(value ? { ...node, width: 240, height: 120 } : node); }),
+            size: (width: number, zoom: number) => flushSync(() => { setCurrent({ ...node, width }); setScale(zoom); }),
+            locale: async (value: AppLocale) => { await changeAppLocale(value); },
+            downloadedImageId: () => downloadedImageId,
             plain: () => flushSync(() => setCurrent({ ...node, metadata: { content: 'blob:expired-fixture', storageKey: first.storageKey } })),
             missingCopy: () => flushSync(() => setCurrent({ ...node, metadata: { content: 'blob:missing-fixture', storageKey: 'image:absent-copy' } })),
             pasted: () => pasted,
@@ -48,8 +51,11 @@ async function main() {
         } });
         return <ConfigProvider theme={getAntThemeConfig(theme === 'dark')}><App><div className="h-screen" style={{ background: theme === 'dark' ? '#181715' : '#f4f2ed' }}>
             <button id="open-details" onClick={() => { setImageId(null); setOpen(true); }}>查看图片详情</button>
-            <CanvasNode data={current} scale={1} batchExpanded={expanded} isSelected isRelated={false} isFocusRelated={false} isConnectionTarget={false} isConnecting={false} showPanel={false} showImageInfo={false}
-                onViewImage={(_node, id) => { setImageId(id || null); setOpen(true); }} onSelectCapture={() => {}} onMouseDown={() => { drags++; }} onResizeStart={() => {}} onResize={() => {}} onResizeEnd={() => {}} onHoverStart={() => {}} onHoverEnd={() => {}} onConnectStart={() => {}} onContentChange={() => {}} onTitleChange={() => {}} onContextMenu={() => {}} />
+            <div className="relative origin-top-left" style={{ transform: `scale(${scale})` }}>
+                <CanvasNode data={current} scale={scale} batchExpanded={expanded} isSelected isRelated={false} isFocusRelated={false} isConnectionTarget={false} isConnecting={false} showPanel={false} showImageInfo={false}
+                    onViewImage={(_node, id) => { setImageId(id || null); setOpen(true); }} onSelectCapture={() => {}} onMouseDown={() => { drags++; }} onResizeStart={() => {}} onResize={() => {}} onResizeEnd={() => {}} onHoverStart={() => {}} onHoverEnd={() => {}} onConnectStart={() => {}} onContentChange={() => {}} onTitleChange={() => {}} onContextMenu={() => {}}
+                    onToggleBatch={() => setExpanded(value => !value)} onDownloadBatchImage={(_node, id) => { downloadedImageId = id; }} />
+            </div>
             <textarea id="paste-image-target" aria-label="粘贴图片测试" className="absolute bottom-2 left-2" onPaste={event => {
                 const file = event.clipboardData.files[0]; event.preventDefault();
                 if (file) void createImageBitmap(file).then(bitmap => { const surface = new OffscreenCanvas(bitmap.width, bitmap.height), context = surface.getContext('2d')!; context.drawImage(bitmap, 0, 0); pasted = { width: bitmap.width, height: bitmap.height, alpha: context.getImageData(0, 0, 1, 1).data[3] }; bitmap.close(); });
