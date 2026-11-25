@@ -7,7 +7,6 @@ import { useTranslation } from "react-i18next";
 import { ModelPicker } from "@/components/model-picker";
 import { ConfigVideoDefaults } from './config-video-defaults';
 import styles from './config-preferences.module.css';
-import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
@@ -19,7 +18,9 @@ import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent }
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { selectImageSize, inferMediaRatio, inferMediaScale, mediaScaleOptions } from "@/lib/media-size";
-import { configureModelDefaults, useConfigStore, type AiConfig, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { useConfigStore, type ConfigTabKey, type ModelCapability } from "@/stores/use-config-store";
+
+type SettingsTabKey = Exclude<ConfigTabKey, "channels">;
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -52,13 +53,12 @@ function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProg
     );
 }
 
-export function AppConfigPanel({ showDoneButton = false, initialTab = "channels" }: { showDoneButton?: boolean; initialTab?: ConfigTabKey }) {
+export function AppConfigPanel({ initialTab = "preferences" }: { initialTab?: SettingsTabKey }) {
     const { message } = App.useApp();
     const { i18n, t } = useTranslation();
     const configInputRef = useRef<HTMLInputElement>(null);
-    const [activeTab, setActiveTab] = useState<ConfigTabKey>(initialTab);
+    const [activeTab, setActiveTab] = useState<SettingsTabKey>(initialTab);
     const [confirmStreaming, setConfirmStreaming] = useState(false);
-    const [editingChannelId, setEditingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
@@ -68,26 +68,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
-    const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
-    const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
-    const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const webdavReady = Boolean(webdav.url.trim());
-    const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
     const locale = i18n.resolvedLanguage as AppLocale;
     const imageResolutionOptions = mediaScaleOptions.map((value) => ({ value, label: value === "auto" ? t("settingsPanels.common.auto") : value.toUpperCase() }));
     useEffect(() => setActiveTab(initialTab), [initialTab]);
-
-    const saveConfig = (nextConfig: AiConfig) => {
-        useConfigStore.getState().replaceConfig(nextConfig);
-    };
-
-    const finishConfig = () => {
-        const ready = config.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
-        setConfigDialogOpen(false);
-        if (!ready) return;
-        message.success(t(shouldPromptContinue ? "config.savedContinue" : "config.saved"));
-        clearPromptContinue();
-    };
 
     const loadConfigFile = async (file: File) => {
         try {
@@ -99,13 +83,6 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         } finally {
             if (configInputRef.current) configInputRef.current.value = "";
         }
-    };
-
-    const updateChannels = (channels: ModelChannel[]) => saveConfig(withChannels(config, channels));
-
-    const saveChannel = (channel: ModelChannel) => {
-        updateChannels(config.channels.map((item) => (item.id === channel.id ? channel : item)));
-        useOneYesAccountStore.setState({ report: [] });
     };
 
     const testWebdav = async () => {
@@ -162,27 +139,13 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             <input ref={configInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => event.target.files?.[0] && void loadConfigFile(event.target.files[0])} />
             <Tabs
                 tabBarExtraContent={<Dropdown trigger={["click"]} menu={{ items: [
-                    { key: "guide", label: t("config.onboarding.guide"), disabled: accountBusy, onClick: () => useConfigStore.getState().openSetup() },
-                    { type: "divider" },
                     { key: "security", label: <span className="block max-w-64 whitespace-normal text-xs">{t("config.fileSecurity")}</span>, disabled: true },
                     { key: "import", icon: <Upload className="size-3.5" />, label: t("config.import"), disabled: accountBusy, onClick: () => configInputRef.current?.click() },
                     { key: "export", icon: <Download className="size-3.5" />, label: t("config.export"), onClick: exportAppConfig },
                 ] }}><Button type="text" icon={<MoreHorizontal className="size-4" />} aria-label={t("config.onboarding.more")} /></Dropdown>}
                 activeKey={activeTab}
-                onChange={(key) => setActiveTab(key as ConfigTabKey)}
+                onChange={(key) => setActiveTab(key as SettingsTabKey)}
                 items={[
-                    {
-                        key: "channels",
-                        label: t("config.tabs.channels"),
-                        children: (
-                            <OneYesAccountPanel onEdit={setEditingChannelId} />
-                        ),
-                    },
-                    {
-                        key: "local-proxy",
-                        label: t("config.tabs.localProxy"),
-                        children: <ConfigLocalProxy />,
-                    },
                     {
                         key: "preferences",
                         label: t("config.tabs.preferences"),
@@ -306,6 +269,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         ),
                     },
                     {
+                        key: "local-proxy",
+                        label: t("config.tabs.localProxy"),
+                        children: <ConfigLocalProxy />,
+                    },
+                    {
                         key: "prompt-sources",
                         label: t("config.tabs.promptSources"),
                         children: <ConfigPromptSources />,
@@ -361,14 +329,6 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     },
                 ]}
             />
-            {showDoneButton ? (
-                <div className="mt-4 flex justify-end">
-                    <Button type="primary" onClick={finishConfig}>
-                        {t("common.done")}
-                    </Button>
-                </div>
-            ) : null}
-            <ChannelEditorDrawer open={Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => setEditingChannelId("")} />
             <Modal open={confirmStreaming} destroyOnHidden title={t("config.preferences.streamingImageConfirmTitle")} okText={t("config.preferences.streamingImageConfirm")} cancelText={t("config.preferences.keepAsyncImages")} onCancel={() => setConfirmStreaming(false)} onOk={() => { updateConfig("asyncImageGeneration", false); setConfirmStreaming(false); }}>
                 <p className="leading-relaxed">{t("config.preferences.streamingImageRisk")}</p>
             </Modal>
@@ -377,38 +337,34 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
 }
 
 export function AppConfigModal() {
+    const { message } = App.useApp();
     const { t } = useTranslation();
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const configTab = useConfigStore((state) => state.configTab);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
+    const editingModels = configTab === "channels";
+    const finishConfig = () => {
+        const { config, shouldPromptContinue, clearPromptContinue } = useConfigStore.getState();
+        setConfigDialogOpen(false);
+        if (!config.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length)) return;
+        message.success(t(shouldPromptContinue ? "config.savedContinue" : "config.saved"));
+        clearPromptContinue();
+    };
+
     return (
         <Modal
-            title={
-                <div>
-                    <div className="text-lg font-semibold">{t("config.title")}</div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">{t("config.modalDescription")}</div>
-                </div>
-            }
+            title={<div className="text-lg font-semibold">{t(editingModels ? "config.tabs.channels" : "config.title")}</div>}
             open={isConfigOpen}
             width={980}
             centered
             onCancel={() => setConfigDialogOpen(false)}
+            destroyOnHidden={editingModels}
             styles={{ body: { maxHeight: "72vh", overflowY: "auto", paddingRight: 12 } }}
-            footer={null}
+            footer={<Button type="primary" onClick={finishConfig}>{t("common.done")}</Button>}
         >
-            <AppConfigPanel showDoneButton initialTab={configTab} />
+            {configTab === "channels" ? <OneYesAccountPanel /> : <AppConfigPanel initialTab={configTab} />}
         </Modal>
     );
-}
-
-function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
-    return configureModelDefaults({
-        ...config,
-        channels,
-        baseUrl: channels[0]?.baseUrl || config.baseUrl,
-        apiKey: channels[0]?.apiKey || config.apiKey,
-        apiFormat: channels[0]?.apiFormat || config.apiFormat,
-    });
 }
 
 function normalizeImageCount(value: string) {

@@ -16,6 +16,7 @@ ipcMain.handle('account:call', (_event, op, args) => {
     if (op === 'restore' || op === 'reuse') return { data: { user: signedIn ? user : null, source: 'desktop' } };
     if (op === 'login') return { data: { user: null, requires_2fa: true } };
     if (op === 'login_2fa') { signedIn = true; return { data: { user, source: 'login' } }; }
+    if (op === 'logout') { signedIn = false; return { data: {} }; }
     assert.equal(args.account_id, user.id);
     if (op === 'groups') return fail === 'groups' ? { error: '网络连接失败，请重试' } : { data: groups };
     if (op === 'keys') return { data: { items: keys, total: keys.length } };
@@ -124,6 +125,57 @@ app.whenReady().then(async () => {
         assert.equal(calls.filter(op => op === 'create_key').length, 0);
         await click(button('开始使用'));
         console.log('ONEYES_SETUP_OK: first launch choice, shared session, automatic keys/defaults, Expert explicit flow, 2FA, failure/retry, partial restart, no duplicate creation or paid generation');
+
+        await wait('!document.querySelector(".ant-modal")');
+        await js('setupTest.showPages()');
+        await click('document.querySelector(\'nav a[href="/config"]\')');
+        await wait('document.querySelector("h1")?.textContent === "配置与用户偏好" && document.querySelector("[data-testid=config-preferences]")');
+        assert.ok(await js('![...document.querySelectorAll("[role=tab]")].some(tab=>tab.textContent==="模型接入")'));
+        const beforeProfile = await js('setupTest.state().config');
+        await click('document.querySelector(\'nav a[href="/profile"]\')');
+        await wait('document.querySelector("h1")?.textContent === "个人中心" && document.querySelectorAll("[data-platform]").length === 4');
+        assert.ok(await js('document.querySelector("main").textContent.includes("创作者") && document.querySelector("main").textContent.includes("已复用 OneYes 客户端登录态")'));
+        assert.equal(await js('document.querySelector(\'nav a[href="/profile"]\').getAttribute("aria-current")'), 'page');
+        assert.deepEqual(await js('setupTest.state().config'), beforeProfile);
+        if (!process.env.CI) await writeFile('.secrets/qa-profile-desktop.png', (await win.webContents.capturePage()).toPNG());
+        await click('document.querySelector(\'[data-platform=grok] button\')');
+        const saveModels = '[...document.querySelectorAll(".ant-drawer-open button")].find(button=>button.textContent==="保存设置" && !button.disabled)';
+        await wait(`(${saveModels}) && document.querySelector(".ant-drawer-open")?.textContent.includes("grok-imagine-video")`);
+        await click(saveModels);
+        await wait('!document.querySelector(".ant-drawer-open")');
+        assert.equal(await js('setupTest.state().config.videoModel'), beforeProfile.videoModel);
+        await click('[...document.querySelectorAll("main button")].find(button=>button.textContent==="配置向导")');
+        await wait('document.querySelector(".ant-modal")?.textContent.includes("创作者")');
+        await click('document.querySelector(".ant-modal-close")');
+        await wait('!document.querySelector(".ant-modal")');
+
+        await click('document.querySelector(\'nav a[href="/config"]\')');
+        await wait('document.querySelector("main [data-testid=config-preferences]")');
+        await js('setupTest.requestModels()');
+        await wait('document.querySelector(".ant-modal [data-platform=grok]")');
+        assert.ok(await js('document.querySelector("main [data-testid=config-preferences]") && !document.querySelector(".ant-modal [role=tab]")'));
+        await click('document.querySelector(".ant-modal-footer button.ant-btn-primary")');
+        await wait('!document.querySelector(".ant-modal")');
+
+        await new Promise(resolve => { win.once('resize', resolve); win.setSize(460, 800); });
+        await click('document.querySelector(\'button[aria-label="打开导航菜单"]\')');
+        await click('document.querySelector(\'.ant-drawer-open a[href="/profile"]\')');
+        await wait('document.querySelector("h1")?.textContent === "个人中心" && !document.querySelector(".ant-drawer-open")');
+        if (!process.env.CI) await wait('![...document.querySelectorAll(".ant-drawer-mask, .ant-message-notice")].some(el=>el.getClientRects().length)');
+        for (const dark of [false, true]) {
+            await js(`setupTest.theme(${dark})`);
+            await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            assert.ok(await js('document.querySelector("main").scrollWidth <= document.querySelector("main").clientWidth + 1'), 'profile fits the narrow window');
+            if (!process.env.CI) {
+                await wait('[...document.getAnimations()].every(animation=>animation.playState!=="running")');
+                await writeFile(`.secrets/qa-profile-narrow-${dark ? 'dark' : 'light'}.png`, (await win.webContents.capturePage()).toPNG());
+            }
+        }
+        await click('[...document.querySelectorAll("main button")].find(button=>button.textContent==="退出连接")');
+        await wait('document.querySelector("main").textContent.includes("连接 OneYes") && !setupTest.state().busy');
+        assert.equal(calls.filter(op => op === 'logout').length, 1);
+        assert.equal(calls.filter(op => op === 'create_key').length, 0, 'opening the account page does not create keys');
+        console.log('ONEYES_PROFILE_OK: sidebar and narrow navigation, shared account, model editor, setup and contextual model access, sign-out');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
 });

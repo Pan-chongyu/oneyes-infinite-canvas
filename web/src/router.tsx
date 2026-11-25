@@ -9,6 +9,7 @@ import ConfigPage from "@/pages/config";
 import HomePage from "@/pages/home";
 import ImagePage from "@/pages/image";
 import NotFound from "@/pages/not-found";
+import ProfilePage from "@/pages/profile";
 import PromptsPage from "@/pages/prompts";
 import VideoPage from "@/pages/video";
 
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
             { path: "/prompts", element: <PromptsPage /> },
             { path: "/canvas", element: <CanvasPage /> },
             { path: "/canvas/:id", element: <CanvasProjectPage /> },
+            { path: "/profile", element: <ProfilePage /> },
             { path: "/config", element: <ConfigPage /> },
         ],
     },

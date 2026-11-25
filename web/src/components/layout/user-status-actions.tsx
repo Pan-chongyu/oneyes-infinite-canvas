@@ -46,7 +46,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                 <BookOpen className="size-4" />
             </a>
             {showConfig ? (
-                <button type="button" className={naturalIconClass} style={iconStyle} onClick={() => openConfigDialog(false)} aria-label={t("navigation.config")} title={t("navigation.config")}>
+                <button type="button" className={naturalIconClass} style={iconStyle} onClick={() => openConfigDialog(false, "preferences")} aria-label={t("navigation.config")} title={t("navigation.config")}>
                     <Settings2 className="size-4" />
                 </button>
             ) : null}

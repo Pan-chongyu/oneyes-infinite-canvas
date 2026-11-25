@@ -76,7 +76,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         setManual(""); setManualConfigured(true); setSearch(""); setFilter("all");
     };
 
-    return <Drawer open={open} width={600} onClose={onClose}
+    return <Drawer open={open} size="min(600px, 100vw)" onClose={onClose}
         title={t("config.channelEditor.manageTitle", { name })}
         styles={{ body: { padding: 20 }, footer: { padding: "12px 20px" } }}
         footer={<div className="flex flex-wrap items-center justify-between gap-3">
