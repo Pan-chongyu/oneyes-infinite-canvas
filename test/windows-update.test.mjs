@@ -180,8 +180,14 @@ if($Capture){[WindowProbe]::Capture([IntPtr]$Handle,$Capture)}
                 await run(require('electron'), [resolve('test/fixtures/windows-icons.cjs'), destination], { env, windowsHide: true });
                 assert.equal(JSON.parse(await readFile(join(destination, 'icons-verified.json'), 'utf8')).verified, true);
             } else {
-                await wait(() => exists(join(folder, 'install-error.txt')));
-                assert.equal((await readFile(join(folder, 'install-error.txt'), 'utf8')).trim(), 'windows-' + scenario);
+                const expectedFailure = 'windows-' + scenario;
+                await wait(async () => {
+                    const marker = await readFile(join(folder, 'install-error.txt'), 'utf8').catch(error => {
+                        if (error.code === 'ENOENT' || error.code === 'EBUSY') return '';
+                        throw error;
+                    });
+                    return marker.trim() === expectedFailure;
+                });
                 assert.deepEqual(await readFile(executable), await readFile(scenario === 'launch' ? next : old), 'failed installation must preserve the existing app');
                 ui = await probe(ready); assert.equal(ui.visible, true); assert.match(ui.title, /更新未完成/); assert.ok(ui.text.includes('返回应用重试'));
                 if (process.env.ONEYES_TEST_UPDATE_ARTIFACTS) await probe(ready, '', join(process.env.ONEYES_TEST_UPDATE_ARTIFACTS, `windows-failed-${scenario}.png`));

@@ -38,7 +38,7 @@ async function main() {
             remove: () => flushSync(() => setOpen(false)),
             bytes: async () => Array.from(new Uint8Array(await blob.arrayBuffer())),
             node: () => JSON.stringify(current),
-            restore: () => flushSync(() => { setCurrent(node); setOpen(false); }),
+            restore: () => flushSync(() => { setCurrent(node); setExpanded(false); setScale(1); setImageId(null); setOpen(false); }),
             expanded: (value: boolean) => flushSync(() => { setExpanded(value); setCurrent(value ? { ...node, width: 240, height: 120 } : node); }),
             size: (width: number, zoom: number) => flushSync(() => { setCurrent({ ...node, width }); setScale(zoom); }),
             locale: async (value: AppLocale) => { await changeAppLocale(value); },

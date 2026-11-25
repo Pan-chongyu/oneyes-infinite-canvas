@@ -132,6 +132,7 @@ app.whenReady().then(async () => {
         await wait('imageDetailsTest.downloadedImageId() === "second"');
         assert.equal(await js('imageDetailsTest.drags()'), dragsBeforeActions);
         await click('[data-node-id="detail-fixture"] button[aria-expanded=true]');
+        await wait('document.querySelector(\'[data-node-id="detail-fixture"] button[aria-expanded=false]\') && !document.querySelector("[data-image-actions=second]")');
         await js('imageDetailsTest.size(400, 1)');
         console.log('IMAGE_NODE_ACTION_LAYOUT_OK: narrow zoomed and expanded nodes, single-line Chinese and English labels, intact icons, native download and copy clicks');
         await js('imageDetailsTest.plain()'); await copyAndPaste('primary', 4096, 2048, 255);
@@ -142,6 +143,7 @@ app.whenReady().then(async () => {
         await assert.rejects(writeClipboardImage(clipboard, 'file:///private-image.png'));
         assert.equal(await clipboard.readText(), 'preserve clipboard on failure');
         await js('imageDetailsTest.restore()');
+        await wait('!document.querySelector("[aria-label=图片详情内容]")');
         console.log('IMAGE_NODE_COPY_OK: download adjacency, native clipboard, actual system paste, original JPEG pixels, PNG alpha, primary/batch/single, themes, no drag, missing/corrupt image preserves clipboard');
         await click('[data-node-id="detail-fixture"] > .relative', 2);
         await wait('document.querySelector("[aria-label=图片信息]")?.textContent.includes("4096 × 2048 px")');
