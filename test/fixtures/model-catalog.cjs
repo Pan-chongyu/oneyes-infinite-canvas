@@ -877,14 +877,17 @@ app.whenReady().then(async () => {
         assert.deepEqual(await readFile(savedPath), videoBytes);
         await choose('全部');
         await wait(`document.querySelectorAll('${rows}').length === 6`);
-        for (const [width, height] of [[1000, 780], [420, 480]]) for (const theme of ['light', 'dark']) {
+        for (const [width, height, viewport] of [[1000, 640, 'innerWidth >= 800 && innerHeight >= 540'], [420, 480, 'innerWidth < 500 && innerHeight < 540']]) {
             win.setContentSize(width, height);
-            await js(`setRecoveryTheme('${theme}')`);
-            await wait(`innerWidth === ${width} && innerHeight === ${height} && document.documentElement.classList.contains('dark') === ${theme === 'dark'}`);
-            await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-            const fit = await js(`(()=>{ const list = document.querySelector('${list}'), modal=list.closest('.ant-modal-container'), r=modal.getBoundingClientRect(); return r.top>=0 && r.bottom<=innerHeight && r.left>=0 && r.right<=innerWidth && list.scrollHeight>list.clientHeight && list.scrollWidth<=list.clientWidth+1; })()`);
-            assert.ok(fit, `${theme} recovery fits ${width}×${height} with internal vertical scrolling`);
-            if (!process.env.CI) await writeFile(`.secrets/qa-video-recovery-${width}-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            await wait(viewport);
+            for (const theme of ['light', 'dark']) {
+                await js(`setRecoveryTheme('${theme}')`);
+                await wait(`document.documentElement.classList.contains('dark') === ${theme === 'dark'}`);
+                await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+                const layout = await js(`(()=>{ const list = document.querySelector('${list}'), r=list.closest('.ant-modal-container').getBoundingClientRect(); return { x: innerWidth, y: innerHeight, fits: r.top>=0 && r.bottom<=innerHeight && r.left>=0 && r.right<=innerWidth && list.scrollHeight>list.clientHeight && list.scrollWidth<=list.clientWidth+1 }; })()`);
+                assert.ok(layout.fits, `${theme} recovery fits the actual ${layout.x}×${layout.y} viewport with internal vertical scrolling`);
+                if (!process.env.CI) await writeFile(`.secrets/qa-video-recovery-${width}-${theme}.png`, (await win.webContents.capturePage()).toPNG());
+            }
         }
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
         win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
