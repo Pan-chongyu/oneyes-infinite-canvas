@@ -72,17 +72,28 @@ app.whenReady().then(async () => {
     const js = code => win.webContents.executeJavaScript(code).catch(error => { throw new Error(`${error.message}: ${code}`, { cause: error }); });
     const wait = async condition => {
         const end = Date.now() + 20000;
-        while (!await js(condition)) { if (Date.now() > end) throw Error(`Timed out: ${condition}; model rows=${JSON.stringify(await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({id:option.getAttribute("data-model-id"),disabled:option.hasAttribute("data-disabled")}))'))}`); await new Promise(resolve => setTimeout(resolve, 25)); }
+        for (;;) {
+            const result = await js(condition);
+            if (result) return result;
+            if (Date.now() > end) throw Error(`Timed out: ${condition}; model rows=${JSON.stringify(await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({id:option.getAttribute("data-model-id"),disabled:option.hasAttribute("data-disabled")}))'))}`);
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
     };
     const clickVisible = async target => {
         win.focus();
         await wait('document.hasFocus()');
         await wait(`Boolean(${target})`);
         await wait('[...document.getAnimations()].every(animation=>animation.playState!=="running" || animation.effect?.getComputedTiming().endTime===Infinity)');
-        await js(`(${target}).scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'})`);
-        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-        const { x, y, visible } = await js(`(()=>{ const element = ${target}, r = element.getBoundingClientRect(); const x = Math.round(r.x + r.width/2), y = Math.round(r.y + r.height/2); return {x,y,visible:element.contains(document.elementFromPoint(x,y))}; })()`);
-        assert.ok(visible, `Unreachable control: ${target}`);
+        const buttonPoint = `(() => {
+            const element = (${target});
+            if (!element) return null;
+            element.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+            const rect = element.getBoundingClientRect();
+            const x = Math.round(rect.x + rect.width / 2);
+            const y = Math.round(rect.y + rect.height / 2);
+            return element.contains(document.elementFromPoint(x, y)) ? { x, y } : null;
+        })()`;
+        const { x, y } = await wait(buttonPoint);
         win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
         win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
         win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
