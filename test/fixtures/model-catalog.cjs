@@ -897,6 +897,84 @@ app.whenReady().then(async () => {
         await clickVisible('document.querySelector("button[aria-label=视频任务与恢复]")');
         await wait(`document.querySelector('${list}')?.innerText.includes('暂无视频任务')`);
         console.log('VIDEO_RECOVERY_UI_OK: native filtering, disclosure, retry original receipt, account confirmation, export, themes and short windows');
+
+        const grok = displayModels.find(model => model.id === 'grok-imagine-video').request_id;
+        const longName = 'grok-imagine-video-long-version-with-preview-generation-fixture';
+        const longModel = longName + ' [480p/720p/1080p 1-15s ¥0.088/秒起]';
+        const originalId = 'oneyes-minimax::' + grok;
+        const nextId = 'oneyes-minimax::' + longModel;
+        names = [grok, longModel];
+        await js('modelTest.video();modelTest.expire();modelTest.sync()');
+        await wait(`!modelTest.state().syncing && modelTest.state().config.models.includes(${JSON.stringify(nextId)})`);
+        await js(`modelTest.selectVideo(${JSON.stringify(originalId)});showVideoWorkbench()`);
+        const section = '[data-workbench-video-model]';
+        const trigger = `${section} [role=combobox]`;
+        win.setContentSize(950, 650);
+        await wait(`innerWidth >= 700 && innerWidth < 1024 && document.querySelector('${trigger}')`);
+        const originalConfig = await js('modelTest.state().config');
+        for (const dark of [true, false]) {
+            await js(`setRecoveryTheme('${dark ? 'dark' : 'light'}')`);
+            await wait(`document.documentElement.classList.contains('dark') === ${dark}`);
+            const layout = await js(`(() => {
+                const panel = document.querySelector('${section}'), picker = panel.querySelector('[role=combobox]');
+                const name = picker.querySelector('[data-model-name]'), info = picker.querySelector('[data-model-information]');
+                const status = picker.querySelector('[data-model-availability]');
+                return { fullWidth: Math.abs(picker.offsetWidth - panel.clientWidth) <= 2,
+                    name: name.innerText, info: info.innerText,
+                    separate: name.getBoundingClientRect().bottom <= info.getBoundingClientRect().top + 1,
+                    statusFits: status.getBoundingClientRect().right <= picker.getBoundingClientRect().right,
+                    duplicate: Boolean(panel.querySelector('[aria-label=当前视频模型]')), pricing: panel.innerText.includes('价格与计费') };
+            })()`);
+            assert.ok(layout.fullWidth && layout.separate && layout.statusFits && !layout.duplicate && layout.pricing, JSON.stringify(layout));
+            assert.equal(layout.name, 'grok-imagine-video');
+            assert.match(layout.info, /480.*720.*¥/);
+            if (!process.env.CI) {
+                await js(`document.querySelector('${trigger}').scrollIntoView({block:'center'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+                await wait('[...document.getAnimations()].every(animation=>animation.playState!=="running" || animation.effect?.getComputedTiming().endTime===Infinity)');
+                await writeFile(`.secrets/qa-workbench-video-model-${dark ? 'dark' : 'light'}.png`, (await win.webContents.capturePage()).toPNG());
+            }
+        }
+        win.setContentSize(420, 630);
+        await wait('innerWidth < 600');
+        await clickVisible(`document.querySelector('${trigger}')`);
+        const nextOption = `[...document.querySelectorAll('[role=option]:not([data-disabled])')].find(row=>row.getAttribute('data-model-id')===${JSON.stringify(nextId)})`;
+        await wait(`Boolean(${nextOption})`);
+        assert.deepEqual(await js('modelTest.state().config'), originalConfig, 'theme, resizing and opening the list preserve configuration');
+        await js('document.querySelector("[data-model-search] input").focus()');
+        await win.webContents.insertText('preview-generation-fixture');
+        await wait(`(${nextOption}) && [...document.querySelectorAll('[role=option]:not([data-disabled])')].every(row=>row.innerText.includes('preview-generation-fixture'))`);
+        await wait('document.querySelector("[role=listbox]").getAnimations().every(animation=>animation.playState!=="running")');
+        const menu = await js(`(() => {
+            const listbox = document.querySelector('[role=listbox]'), r = listbox.getBoundingClientRect();
+            const view = listbox.querySelector('[data-radix-select-viewport]'), name = (${nextOption}).querySelector('[data-model-name]');
+            return { inside: r.left >= 0 && r.right <= innerWidth + 1 && r.top >= 0 && r.bottom <= innerHeight + 1,
+                listFits: view.scrollWidth <= view.clientWidth + 1, nameFits: name.scrollWidth <= name.clientWidth + 1,
+                searchVisible: listbox.querySelector('[data-model-search]').getBoundingClientRect().bottom <= view.getBoundingClientRect().top + 1 };
+        })()`);
+        assert.ok(menu.inside && menu.listFits && menu.nameFits && menu.searchVisible, JSON.stringify(menu));
+        await js(`(${nextOption}).focus()`);
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        await wait(`!document.querySelector('[role=listbox]') && modelTest.state().config.videoModel === ${JSON.stringify(nextId)}`);
+        assert.equal((await js('modelTest.request()')).model, longModel);
+        const chosen = await js(`(() => {
+            const name = document.querySelector('${trigger} [data-model-name]');
+            return { text: name.innerText, fits: name.scrollWidth <= name.clientWidth + 1, wrap: getComputedStyle(name).whiteSpace === 'normal' };
+        })()`);
+        assert.deepEqual(chosen, { text: longName, fits: true, wrap: true });
+        const adjust = `[...document.querySelectorAll('${section} button')].find(button=>button.textContent.trim()==='调整')`;
+        await clickVisible(adjust);
+        const drawerModel = `document.querySelector('.ant-drawer-open ${trigger} [data-model-name]')`;
+        await wait(`(${drawerModel})?.getBoundingClientRect().width > 0`);
+        assert.equal(await js(`${drawerModel}.innerText`), longName);
+        await clickVisible(`document.querySelector('.ant-drawer-open ${trigger}')`);
+        const originalOption = `[...document.querySelectorAll('[role=option]:not([data-disabled])')].find(row=>row.getAttribute('data-model-id')===${JSON.stringify(originalId)})`;
+        await wait(`Boolean(${originalOption})`);
+        await js(`(${originalOption}).focus()`);
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+        await wait(`!document.querySelector('[role=listbox]') && modelTest.state().config.videoModel === ${JSON.stringify(originalId)}`);
+        console.log('VIDEO_WORKBENCH_MODEL_LAYOUT_OK: full width, concise summary, narrow menu, search, exact ID and parameter drawer');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
 });

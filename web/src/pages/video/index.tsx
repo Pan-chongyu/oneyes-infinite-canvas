@@ -20,7 +20,7 @@ import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUr
 import { createVideoGenerationTask, waitForVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, isModelUnavailable, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, isModelUnavailable, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useVideoCatalogStore } from '@/stores/use-video-catalog-store';
 import { videoErrorText } from "@/lib/video-display-text";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -387,8 +387,8 @@ export default function VideoPage() {
                     <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
                 </aside>
 
-                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
+                <section className="grid min-w-0 gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
+                    <div className="thin-scrollbar flex min-w-0 flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
                         <div className="flex items-start justify-between gap-3">
                             <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
                             <div className="flex shrink-0 gap-2 lg:hidden">
@@ -403,9 +403,9 @@ export default function VideoPage() {
 
                         <div className="mt-6 space-y-5">
                             <div>
-                                <div className="mb-2 flex items-center justify-between gap-3">
+                                <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                                     <span className="text-base font-semibold">{t("workbench.prompt")}</span>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-wrap gap-2">
                                         <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
                                             {t("workbench.viewPrompts")}
                                         </Button>
@@ -453,18 +453,8 @@ export default function VideoPage() {
                                 </div>
                             </div>
 
-                            <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
-                                <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {videoResolutionLabel(effectiveConfig.vquality)} · {videoSizeLabel(effectiveConfig.size)} · {getVideoModelInfo(effectiveConfig, model) ? effectiveConfig.videoSeconds : normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(effectiveConfig.videoMode)}
-                                </span>
-                                <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    {t("workbench.adjust")}
-                                </Button>
-                            </div>
-
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} inputs={inputs} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
-                            </div>
+                            <GenerationSettings config={effectiveConfig} inputs={inputs} model={model} updateConfig={updateConfig}
+                                openConfigDialog={openConfigDialog} onOpenParameters={() => setSettingsOpen(true)} />
                         </div>
 
                         <div className="mt-auto pt-6">
@@ -507,7 +497,7 @@ export default function VideoPage() {
                 <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
             </Drawer>
             <Drawer title={t("workbench.settings")} placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
-                <div className="grid grid-cols-2 gap-3 pb-4">
+                <div className="pb-4">
                     <GenerationSettings config={effectiveConfig} inputs={inputs} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
@@ -520,20 +510,36 @@ export default function VideoPage() {
     );
 }
 
-function GenerationSettings({ config, inputs, model, updateConfig, openConfigDialog }: { config: AiConfig; inputs: VideoReferenceSummary; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, inputs, model, updateConfig, openConfigDialog, onOpenParameters }: {
+    config: AiConfig;
+    inputs: VideoReferenceSummary;
+    model: string;
+    updateConfig: UpdateAiConfig;
+    openConfigDialog: (shouldPromptContinue?: boolean) => void;
+    onOpenParameters?: () => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
+    const seconds = getVideoModelInfo(config, model) ? config.videoSeconds : normalizeVideoSeconds(config.videoSeconds);
 
     return (
-        <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
-                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+        <div data-workbench-video-model className="min-w-0 space-y-3">
+            <label className="block">
+                <span className="mb-2 block text-base font-semibold">{t("workbench.model")}</span>
+                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)}
+                    capability="video" layout="detailed" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
-            <div className="col-span-2">
-                <VideoSettingsPanel config={{ ...config, model }} inputs={inputs} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+            {onOpenParameters && <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-lg border border-border px-3 py-1.5 text-xs sm:hidden">
+                <span className="min-w-0 flex-1 leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+                    {videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)} · {seconds}s · {videoModeLabel(config.videoMode)}
+                </span>
+                <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={onOpenParameters}>{t("workbench.adjust")}</Button>
+            </div>}
+            <div className={onOpenParameters ? "hidden sm:block" : undefined}>
+                <VideoSettingsPanel config={{ ...config, model }} inputs={inputs} onConfigChange={(key, value) => updateConfig(key, value)}
+                    theme={theme} showTitle={false} showModelSummary={false} className="space-y-4" />
             </div>
-        </>
+        </div>
     );
 }
 

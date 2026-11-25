@@ -26,13 +26,14 @@ type VideoSettingsPanelProps = {
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
+    showModelSummary?: boolean;
     showModelDetails?: boolean;
     validateReferences?: boolean;
     compact?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, model, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, showModelDetails = true, validateReferences = true, compact = false, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, model, inputs = emptyVideoReferences, onConfigChange, theme, showTitle = true, showModelSummary = true, showModelDetails = true, validateReferences = true, compact = false, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
     useVideoCatalogStore(state => state.catalog);
     const selectedModel = model || config.model || config.videoModel;
@@ -70,7 +71,7 @@ export function VideoSettingsPanel({ config, model, inputs = emptyVideoReference
         <ImageSettingsTheme theme={theme}>
             <div data-video-settings className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
-                {info && showModelDetails ? (
+                {info && showModelSummary && showModelDetails ? (
                     <div className="space-y-1 text-xs leading-relaxed" aria-label="当前视频模型">
                         <div className="font-medium break-words">{info.id}</div>
                         <div style={{ color: theme.node.muted }}>{info.summary}</div>

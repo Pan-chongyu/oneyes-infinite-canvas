@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { App, Button, ConfigProvider } from "antd";
+import { QueryClientProvider } from "@tanstack/react-query";
 import "antd/dist/reset.css";
 import "@/styles/globals.css";
 import "@/i18n";
@@ -62,7 +63,18 @@ function Probe() {
     const [preferences, setPreferences] = useState(false);
     const [clipboard, setClipboard] = useState<React.ReactNode>(null);
     const [recovery, setRecovery] = useState(false);
-    Object.assign(window, { showVideoRecovery: () => { useVideoRecoveryStore.setState({ open: true }); flushSync(() => setRecovery(true)); }, setRecoveryTheme: (theme: 'light' | 'dark') => flushSync(() => useThemeStore.getState().setTheme(theme)) });
+    const [workbench, setWorkbench] = useState<React.ReactNode>(null);
+    Object.assign(window, {
+        showVideoRecovery: () => { useVideoRecoveryStore.setState({ open: true }); flushSync(() => setRecovery(true)); },
+        setRecoveryTheme: (theme: 'light' | 'dark') => flushSync(() => useThemeStore.getState().setTheme(theme)),
+        showVideoWorkbench: async () => {
+            const { default: VideoPage } = await import("@/pages/video");
+            flushSync(() => setWorkbench(<QueryClientProvider client={queryClient}>
+                <div className="h-dvh w-full max-w-[430px]"><VideoPage /></div>
+            </QueryClientProvider>));
+        },
+    });
+    if (workbench) return workbench;
     if (recovery) return <MemoryRouter><div className="p-6"><UserStatusActions /><VideoRecovery /></div></MemoryRouter>;
     Object.assign(window, { showClipboardCanvas: async () => { const fixture = await import("./canvas-clipboard"); await fixture.prepareClipboardCanvas(); flushSync(() => setClipboard(<fixture.ClipboardCanvas />)); } });
     if (clipboard) return clipboard;
