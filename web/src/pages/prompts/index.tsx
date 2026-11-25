@@ -1,35 +1,42 @@
-import { FolderPlus, Search } from "lucide-react";
-import { type ReactNode, type UIEvent, useEffect, useState } from "react";
-import { App, Button, Empty, Input, Spin, Tag } from "antd";
+import { BookOpen, Layers3, Search, Tags } from "lucide-react";
+import { type UIEvent, useRef, useState } from "react";
+import { App, Button, Input, Select, Spin } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
 import { usePromptList } from "@/components/prompts/use-prompt-list";
 import { PromptDetailDialog } from "./components/prompt-detail-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 
 export default function PromptsPage() {
     const { message } = App.useApp();
-    const { t } = useTranslation();
-    const [titleKeyword, setTitleKeyword] = useState("");
+    const { i18n, t } = useTranslation();
+    const [keyword, setKeyword] = useState("");
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [selectedCategory, setSelectedCategory] = useState(ALL_PROMPTS_OPTION);
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
+    const list = useRef<HTMLDivElement>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
+    const sources = usePromptSourceStore((state) => state.sources);
     const copyText = useCopyText();
-    const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
+    const { query, items, tags, total } = usePromptList({ keyword, tags: selectedTags, category: selectedCategory });
+    const filtered = Boolean(keyword.trim() || selectedTags.length || selectedCategory !== ALL_PROMPTS_OPTION);
+    const sourceOptions = Array.from(new Set(sources.filter((source) => source.enabled).map((source) => source.name)));
+    if (selectedCategory !== ALL_PROMPTS_OPTION && !sourceOptions.includes(selectedCategory)) sourceOptions.push(selectedCategory);
 
-    useEffect(() => {
-        if (query.isError) message.error(query.error instanceof Error ? query.error.message : t("prompts.loadFailed"));
-    }, [message, query.error, query.isError, t]);
+    const scrollToStart = () => { if (list.current) list.current.scrollTop = 0; };
 
-    const toggleTag = (tag: string) => {
-        if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
-        setSelectedTags((items) => (items.includes(tag) ? items.filter((item) => item !== tag) : [...items, tag]));
+    const clearFilters = () => {
+        setKeyword("");
+        setSelectedCategory(ALL_PROMPTS_OPTION);
+        setSelectedTags([]);
+        scrollToStart();
     };
+
+    const copyPrompt = (prompt: string) => copyText(prompt, t("common.promptCopied"));
 
     const savePromptAsset = (item: Prompt) => {
         addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
@@ -38,50 +45,92 @@ export default function PromptsPage() {
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
         const target = event.currentTarget;
-        if (query.hasNextPage && !query.isFetchingNextPage && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) void query.fetchNextPage();
+        if (query.hasNextPage && !query.isFetching && !query.isFetchNextPageError && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) void query.fetchNextPage();
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-background text-stone-800 dark:text-stone-100">
-            <main className="min-h-0 flex-1 overflow-y-auto bg-background bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-4 py-6 [background-size:16px_16px] sm:px-6 lg:py-8 dark:bg-[radial-gradient(rgba(245,245,244,.16)_1px,transparent_1px)]" onScroll={handleListScroll}>
-                <div className="mx-auto max-w-7xl">
-                    <div className="text-center">
-                        <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">{t("prompts.title")}</h1>
-                        <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{t("prompts.total", { count: totalPrompts })}</p>
+        <main className="@container flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background text-foreground">
+            <header className="shrink-0 border-b border-border">
+                <div className="mx-auto w-full max-w-[1440px] px-4 @min-[720px]:px-7">
+                    <div className="flex flex-col gap-3 py-4 @min-[620px]:flex-row @min-[620px]:items-center @min-[620px]:justify-between @min-[620px]:gap-5">
+                        <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 @min-[620px]:justify-start">
+                            <h1 className="m-0! text-[25px] leading-8 font-semibold! tracking-tight">{t("prompts.title")}</h1>
+                            <span role="status" className="text-xs text-muted-foreground tabular-nums">
+                                {query.data ? t("prompts.resultCount", { number: total.toLocaleString(i18n.resolvedLanguage) }) : null}
+                            </span>
+                        </div>
+                        <Input
+                            size="large"
+                            allowClear
+                            aria-label={t("prompts.search")}
+                            prefix={<Search className="size-4 text-muted-foreground" aria-hidden />}
+                            className="w-full @min-[620px]:max-w-[min(52%,480px)]"
+                            classNames={{ input: "placeholder:text-muted-foreground!" }}
+                            value={keyword}
+                            placeholder={t("prompts.search")}
+                            onChange={(event) => { setKeyword(event.target.value); scrollToStart(); }}
+                        />
                     </div>
-                    <div className="mt-5 grid items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-6">
-                        <aside className="thin-scrollbar max-h-72 overflow-y-auto border-b border-stone-200 pb-5 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:border-b-0 lg:border-r lg:pb-8 lg:pr-5 dark:border-stone-800">
-                            <PromptFilter label={t("prompts.category")} options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
-                            <div className="mt-6">
-                                <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">{t("prompts.tags")}</div>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {promptTags.map((tag) => {
-                                        const active = tag === ALL_PROMPTS_OPTION ? selectedTags.length === 0 : selectedTags.includes(tag);
-                                        return <Tag.CheckableTag key={tag} checked={active} className={cn("prompt-filter-tag", active && "is-active")} onChange={() => toggleTag(tag)}>{tag === ALL_PROMPTS_OPTION ? t("common.all") : tag}</Tag.CheckableTag>;
-                                    })}
-                                </div>
-                            </div>
-                        </aside>
-                        <section className="min-w-0">
-                            <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder={t("prompts.search")} onChange={(event) => setTitleKeyword(event.target.value)} />
-                            {query.isLoading ? <div className="flex h-60 items-center justify-center"><Spin /></div> : null}
-                            {!query.isLoading ? <div className="mt-5"><PromptGrid items={promptItems} onOpen={setSelectedPrompt} renderActions={(item) => <Button type="text" size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(item)}>{t("common.addToAssets")}</Button>} onCopy={(item) => copyText(item.prompt, t("common.promptCopied"))} emptyText={t("prompts.empty")} /></div> : null}
-                            <div className="mt-6 text-center text-xs text-stone-500 dark:text-stone-400">{query.isFetchingNextPage ? t("prompts.loading") : query.hasNextPage ? t("prompts.loadMore") : promptItems.length > 0 ? t("prompts.end") : null}</div>
-                        </section>
+                    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pb-3">
+                        <div className="grid w-full min-w-0 grid-cols-2 gap-2 @min-[660px]:w-auto @min-[660px]:grid-cols-[210px_224px]">
+                            <Select<string>
+                                aria-label={t("prompts.source")}
+                                prefix={<Layers3 className="size-4 text-muted-foreground" aria-hidden />}
+                                className="min-w-0"
+                                showSearch={{ optionFilterProp: "label" }}
+                                value={selectedCategory}
+                                options={[{ value: ALL_PROMPTS_OPTION, label: t("prompts.allSources") }, ...sourceOptions.map((source) => ({ value: source, label: source }))]}
+                                onChange={(category) => { setSelectedCategory(category); scrollToStart(); }}
+                            />
+                            <Select<string[]>
+                                aria-label={t("prompts.tags")}
+                                prefix={<Tags className="size-4 text-muted-foreground" aria-hidden />}
+                                className="min-w-0"
+                                mode="multiple"
+                                classNames={{ placeholder: "text-muted-foreground!" }}
+                                showSearch={{ optionFilterProp: "label" }}
+                                placeholder={t("prompts.allTags")}
+                                maxTagCount="responsive"
+                                value={selectedTags}
+                                options={Array.from(new Set([...selectedTags, ...tags.slice(1)])).map((label) => ({ label, value: label }))}
+                                onChange={(next) => { setSelectedTags(next); scrollToStart(); }}
+                            />
+                        </div>
+                        {filtered && <Button type="text" size="small" className="ms-auto" onClick={clearFilters}>{t("prompts.clearFilters")}</Button>}
                     </div>
                 </div>
-            </main>
+            </header>
 
-            <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, t("common.promptCopied"))} onSaveAsset={savePromptAsset} />
-        </div>
+            <div ref={list} role="region" aria-label={t("prompts.results")} aria-busy={query.isFetching} tabIndex={0} onScroll={handleListScroll}
+                className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:-outline-offset-2">
+                <div className="mx-auto w-full max-w-[1440px] px-4 pt-4 pb-6 @min-[720px]:px-7 @min-[720px]:pt-5">
+                    {query.isLoading ? (
+                        <div className="grid min-h-44 place-items-center"><Spin /></div>
+                    ) : items.length > 0 ? (
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,220px),1fr))] gap-4 @min-[720px]:gap-5">
+                            {items.map((item) => (
+                                <PromptCard key={`${item.sourceId}:${item.id}`} item={item} onOpen={() => setSelectedPrompt(item)} onCopy={() => copyPrompt(item.prompt)} onSave={() => savePromptAsset(item)} />
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex min-h-52 flex-col items-center justify-center gap-3 py-8 text-center">
+                            <BookOpen className="size-7 text-muted-foreground" aria-hidden />
+                            <span className="text-sm font-medium">{t(query.isError ? "prompts.loadFailed" : filtered ? "prompts.empty" : "prompts.noPrompts")}</span>
+                            {query.isError ? <Button onClick={() => void query.refetch()}>{t("prompts.retry")}</Button>
+                                : filtered && <Button type="text" onClick={clearFilters}>{t("prompts.clearFilters")}</Button>}
+                        </div>
+                    )}
+                    {query.hasNextPage && (
+                        <div className="flex justify-center pt-5">
+                            <Button loading={query.isFetchingNextPage} disabled={query.isFetching && !query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+                                {t(query.isFetchNextPageError ? "prompts.retry" : "prompts.more")}
+                            </Button>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={copyPrompt} onSaveAsset={savePromptAsset} />
+        </main>
     );
-}
-
-function PromptFilter({ label, options, selected, onChange }: { label: string; options: string[]; selected: string; onChange: (value: string) => void }) {
-    const { t } = useTranslation();
-    return <div><div className="mb-2 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">{label}</div><div className="flex flex-wrap gap-1.5">{options.map((option) => <Tag.CheckableTag key={option} checked={selected === option} className={cn("prompt-filter-tag", selected === option && "is-active")} onChange={() => onChange(option)}>{option === ALL_PROMPTS_OPTION ? t("common.all") : option}</Tag.CheckableTag>)}</div></div>;
-}
-
-function PromptGrid({ items, onOpen, onCopy, renderActions, emptyText }: { items: Prompt[]; onOpen: (item: Prompt) => void; onCopy: (item: Prompt) => void; renderActions: (item: Prompt) => ReactNode; emptyText: string }) {
-    return <div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{items.map((item) => <PromptCard key={`${item.sourceId}:${item.id}`} item={item} onOpen={() => onOpen(item)} onCopy={() => onCopy(item)} extraAction={renderActions(item)} />)}</div>{items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} className="py-16" /> : null}</div>;
 }

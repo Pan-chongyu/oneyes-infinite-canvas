@@ -67,7 +67,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                         ) : null}
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                             {items.map((item) => (
-                                <PromptCard key={item.id} item={item} onOpen={() => selectPrompt(item.prompt)} onCopy={() => selectPrompt(item.prompt)} compact />
+                                <PromptCard key={`${item.sourceId}:${item.id}`} item={item} onOpen={() => selectPrompt(item.prompt)} compact />
                             ))}
                         </div>
                         {!query.isLoading && items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("prompts.empty")} className="py-8" /> : null}
