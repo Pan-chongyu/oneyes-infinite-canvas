@@ -854,7 +854,14 @@ app.whenReady().then(async () => {
         await clickVisible(button('确认原账号并恢复'));
         await wait('document.querySelector(".ant-modal-confirm")?.innerText.includes("确认原提交账号")');
         assert.deepEqual(recoveryRetries, ['original-task'], 'legacy receipt waits for account confirmation');
-        await clickVisible('document.querySelector(".ant-modal-confirm .ant-btn-primary")');
+        const confirm = 'document.querySelector(".ant-modal-confirm .ant-btn-primary")';
+        await wait(`Boolean(${confirm} && !${confirm}.disabled)`);
+        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        await wait('document.querySelector(".ant-modal-confirm").getAnimations({subtree:true}).every(animation=>animation.playState!=="running")');
+        await js(`${confirm}.focus()`);
+        await wait(`document.activeElement === ${confirm}`);
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
         await wait(`!document.querySelector('${list}')?.innerText.includes('待确认原账号')`);
         assert.deepEqual(recoveryRetries, ['original-task', 'legacy-task']);
         await choose('已保存');
