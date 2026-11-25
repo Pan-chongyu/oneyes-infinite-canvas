@@ -14,7 +14,7 @@ ipcMain.handle('clipboard:read', () => {
 });
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');
-const { mkdir, writeFile, unlink } = require('node:fs/promises');
+const { mkdir, readFile, writeFile, unlink } = require('node:fs/promises');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { createModelCatalog } = require('../../desktop/models.cjs');
@@ -39,15 +39,32 @@ ipcMain.handle('config:read', () => stored);
 ipcMain.handle('config:write', (_event, value) => { stored = value; });
 ipcMain.handle('diagnostics:report', () => null);
 ipcMain.handle('collaboration:call', () => ({ status: 'offline' }));
-let recoveryRetries = 0;
-const recoveryJobs = [{ key: '00000000-0000-0000-0000-000000000001', taskId: 'original-task', model: 'default::gemini-omni-flash-1.2', provider: 'openai', site: 'https://oneyes.ai', channelId: 'default', state: 'credentials', reason: '请恢复原 API Key 后继续查询', createdAt: Date.now(), parameters: { vquality: '1080p', videoSeconds: '5', size: '16:9' } },
-    { key: '00000000-0000-0000-0000-000000000002', model: 'default::wan3.0-video', provider: 'openai', site: 'https://oneyes.ai', channelId: 'default', state: 'unknown', reason: '未取得可靠回执，请先核对官网任务和用量', createdAt: Date.now(), parameters: { vquality: '720p', videoSeconds: '5', size: '16:9' } }];
-recoveryJobs[0].diagnosticId = '11111111-1111-1111-1111-111111111111';
-recoveryJobs[1].diagnosticId = '22222222-2222-2222-2222-222222222222';
+const recoveryRetries = [];
+const videoBytes = Buffer.from('recovered video bytes');
+let recoveryJobs = [
+    { taskId: 'original-task', model: 'gemini-omni-flash-1.2', state: 'credentials', reason: '请恢复原 API Key 后继续查询' },
+    { model: 'seedance-2.5-discount [720p 4-30s ¥5.478/条]', state: 'unknown', reason: '未取得可靠回执' },
+    { taskId: 'legacy-task', model: 'wan3.0-video', state: 'confirmation', reason: '需确认原账号' },
+    { taskId: 'completed-task', model: 'grok-imagine-video-1.5', state: 'saved', target: { projectId: 'removed', nodeId: 'removed' },
+        result: { url: 'data:video/mp4;base64,' + videoBytes.toString('base64'), mimeType: 'video/mp4' } },
+    { model: 'doubao-seedance-2.5', state: 'submitting' },
+    { model: 'seedance-2.5-discount2 【720p 4-30s ¥3.938/条】', state: 'failed', reason: '视频生成未完成，请检查素材或联系管理员核对原任务。' },
+].map((job, index) => ({
+    ...job,
+    key: '00000000-0000-0000-0000-00000000000' + (index + 1),
+    diagnosticId: [8, 4, 4, 4, 12].map(length => String(index + 1).repeat(length)).join('-'),
+    model: 'default::' + job.model,
+    provider: 'openai', site: 'https://oneyes.ai', channelId: 'default',
+    createdAt: Date.now() - (6 - index) * 1000000,
+    parameters: { vquality: index % 2 ? '720' : '1080p', videoSeconds: '5', size: index % 2 ? 'auto' : '16:9' },
+}));
 ipcMain.handle('video-tasks:call', (_event, operation, args) => {
     if (operation === 'list') return recoveryJobs;
-    assert.equal(operation, 'retry'); assert.equal(args, recoveryJobs[0].key); recoveryRetries++;
-    return recoveryJobs.map(job => job.taskId ? { ...job, state: 'download_error', reason: '下载未完成，已保留原任务' } : job);
+    assert.equal(operation, 'retry');
+    const selected = recoveryJobs.find(job => job.key === args);
+    assert.ok(selected?.taskId); recoveryRetries.push(selected.taskId);
+    recoveryJobs = recoveryJobs.map(job => job === selected ? { ...job, state: 'download_error', reason: '下载未完成，已保留原任务' } : job);
+    return recoveryJobs;
 });
 ipcMain.handle('models:list', async (_event, key) => { try { return { data: await catalog(key) }; } catch (error) { return { error: error.message }; } });
 app.whenReady().then(async () => {
@@ -56,6 +73,19 @@ app.whenReady().then(async () => {
     const wait = async condition => {
         const end = Date.now() + 20000;
         while (!await js(condition)) { if (Date.now() > end) throw Error(`Timed out: ${condition}; model rows=${JSON.stringify(await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>({id:option.getAttribute("data-model-id"),disabled:option.hasAttribute("data-disabled")}))'))}`); await new Promise(resolve => setTimeout(resolve, 25)); }
+    };
+    const clickVisible = async target => {
+        win.focus();
+        await wait('document.hasFocus()');
+        await wait(`Boolean(${target})`);
+        await wait('[...document.getAnimations()].every(animation=>animation.playState!=="running" || animation.effect?.getComputedTiming().endTime===Infinity)');
+        await js(`(${target}).scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'})`);
+        await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        const { x, y, visible } = await js(`(()=>{ const element = ${target}, r = element.getBoundingClientRect(); const x = Math.round(r.x + r.width/2), y = Math.round(r.y + r.height/2); return {x,y,visible:element.contains(document.elementFromPoint(x,y))}; })()`);
+        assert.ok(visible, `Unreachable control: ${target}`);
+        win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+        win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+        win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
     };
     try {
         await win.loadURL(process.argv[2]);
@@ -226,7 +256,7 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
             await wait('!document.querySelector("[role=listbox]")');
         }
-        assert.equal(recoveryRetries, 0);
+        assert.equal(recoveryRetries.length, 0);
         await js(`modelTest.replace(${JSON.stringify(beforeDisplay)})`); names = variantsNames;
         await js('modelTest.expire();modelTest.sync()'); await wait('!modelTest.state().syncing');
         console.log('NATIVE_MODEL_INFORMATION_26_CANONICAL_TWO_LINES_THEMES_TYPEAHEAD_EXACT_OLD_IDS_AND_TEXT_IMAGE_VISIBILITY_OK');
@@ -307,7 +337,7 @@ app.whenReady().then(async () => {
         names = beforeStatusNames;
         await js(`modelTest.replace(${JSON.stringify(beforeStatus)});modelTest.expire();modelTest.sync();modelTest.feedSync()`);
         await wait('!modelTest.state().syncing');
-        assert.equal(recoveryRetries, 0);
+        assert.equal(recoveryRetries.length, 0);
         console.log('NATIVE_DYNAMIC_VIDEO_STATUS_BADGES_PRIORITY_FAILURE_CACHE_EXPIRY_AND_NO_TASK_REPLAY_OK');
         const beforeRetirement = await js('modelTest.state().config'), originalNames = names;
         const legacyVideos = ['seedance-2.0', 'doubao-seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0 [720p ¥1/秒]'];
@@ -335,7 +365,7 @@ app.whenReady().then(async () => {
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
         await wait(`!document.querySelector("[role=listbox]") && modelTest.state().config.videoModel === ${JSON.stringify('oneyes-minimax::' + activeVideos[0])}`);
         assert.equal((await js('modelTest.request()')).model, activeVideos[0]);
-        assert.equal(recoveryRetries, 0, 'model refresh cannot retry or resubmit any previous task');
+        assert.equal(recoveryRetries.length, 0, 'model refresh cannot retry or resubmit any previous task');
         await js(`modelTest.replace(${JSON.stringify(beforeRetirement)})`); names = originalNames;
         await js('modelTest.expire();modelTest.sync()');
         await wait('!modelTest.state().syncing');
@@ -747,9 +777,7 @@ app.whenReady().then(async () => {
         const beforeArrangement = await js('clipboardTest.state()');
         const clickTool = async label => {
             await wait(`document.querySelector('[aria-label="${label}"]') && !document.querySelector('[aria-label="${label}"]').disabled`);
-            const point = await js(`(() => { const button = document.querySelector('[aria-label="${label}"]'); button.scrollIntoView({block:'nearest', inline:'nearest'}); const r=button.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
-            win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
-            win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+            await clickVisible(`document.querySelector('[aria-label="${label}"]')`);
         };
         await wait('!document.querySelector("[aria-label=一键整理]").disabled');
         await clickTool('一键整理');
@@ -799,24 +827,66 @@ app.whenReady().then(async () => {
         await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
         assert.equal((await js('clipboardTest.state()')).nodes.length, count, 'late clipboard result must not modify a closed canvas');
         console.log('NATIVE_CANVAS_RIGHT_CLICK_PASTE_IMAGE_TEXT_POSITION_THEMES_EMPTY_FAILURE_DISMISS_REOPEN_AND_UNMOUNT_OK');
-        await wait('document.querySelector(".ant-modal-body")?.textContent.includes("等待恢复凭据")');
-        const recovery = await js('document.querySelector(".ant-modal-body").textContent');
-        assert.match(recovery, /提交待核实/); assert.match(recovery, /不会重新生成、重复付费/); assert.match(recovery, /记录编号：11111111-1111-1111-1111-111111111111/);
+        const list = '[aria-label="视频任务列表"]', rows = list + ' > ul > li';
+        await wait(`document.querySelectorAll('${rows}').length === 6`);
+        const header = '[aria-label="按状态筛选视频任务"]';
+        const choose = label => clickVisible(`[...document.querySelectorAll('${header} button')].find(item=>item.innerText.startsWith(${JSON.stringify(label)}))`);
+        const button = text => `[...document.querySelectorAll('${list} button')].find(button=>button.textContent.trim()===${JSON.stringify(text)})`;
+        const recovery = await js('document.querySelector(".ant-modal-body").innerText');
+        assert.match(recovery, /提交待核实/);
+        assert.match(recovery, /重试仅查询或下载原任务/);
+        assert.match(recovery, /720p.*5 秒/s);
+        assert.doesNotMatch(recovery, /11111111-1111|¥|【720p/);
         for (const job of recoveryJobs) assert.ok(!recovery.includes(job.key), 'ordinary recovery must never display the full idempotency key');
-        assert.doesNotMatch(recovery, /original-task|https:\/\//, 'ordinary recovery details expose local records, never service task IDs or sites');
-        assert.equal(await js('[...document.querySelectorAll(".ant-modal-body button")].filter(button=>button.textContent.includes("重试查询")).length'), 1, 'an unknown submission cannot offer paid automatic regeneration');
-        await js('[...document.querySelectorAll(".ant-modal-body button")].find(button=>button.textContent.includes("重试查询")).click()');
-        await wait('document.querySelector(".ant-modal-body")?.textContent.includes("视频结果取回未完成")');
-        assert.equal(recoveryRetries, 1);
-        if (!process.env.CI) {
-            await mkdir('.secrets', { recursive: true });
-            for (const theme of ['light', 'dark']) {
-                await js(`setRecoveryTheme(${JSON.stringify(theme)})`);
-                await new Promise(resolve => setTimeout(resolve, 100));
-                await writeFile(`.secrets/qa-video-recovery-${theme}.png`, (await win.webContents.capturePage()).toPNG());
-            }
+        await choose('进行中');
+        await wait(`document.querySelectorAll('${rows}').length === 1 && document.querySelector('${rows}').innerText.includes('正在提交')`);
+        await choose('待处理');
+        await wait(`document.querySelectorAll('${rows}').length === 4`);
+        const uncertainActions = await js(`[...document.querySelectorAll('${rows}')].find(row=>row.innerText.includes('提交待核实')).innerText`);
+        assert.doesNotMatch(uncertainActions, /重试查询|确认原账号并恢复|重新生成/, 'uncertain submission offers no retry or regeneration');
+        await clickVisible(`document.querySelectorAll('${rows} summary').item(3)`);
+        await wait(`document.querySelector('${rows} details[open]')?.innerText.includes('11111111-1111-1111-1111-111111111111')`);
+        const expanded = await js(`document.querySelector('${rows} details[open]').innerText`);
+        assert.doesNotMatch(expanded, /00000000-0000|original-task|https:\/\//);
+        await clickVisible(button('重试查询／下载'));
+        await wait(`document.querySelector('${list}')?.innerText.includes('视频结果取回未完成')`);
+        assert.deepEqual(recoveryRetries, ['original-task']);
+        await clickVisible(button('确认原账号并恢复'));
+        await wait('document.querySelector(".ant-modal-confirm")?.innerText.includes("确认原提交账号")');
+        assert.deepEqual(recoveryRetries, ['original-task'], 'legacy receipt waits for account confirmation');
+        await clickVisible('document.querySelector(".ant-modal-confirm .ant-btn-primary")');
+        await wait(`!document.querySelector('${list}')?.innerText.includes('待确认原账号')`);
+        assert.deepEqual(recoveryRetries, ['original-task', 'legacy-task']);
+        await choose('已保存');
+        await wait(`document.querySelectorAll('${rows}').length === 1 && Boolean(${button('保存视频')})`);
+        const download = new Promise((resolve, reject) => win.webContents.session.once('will-download', (_event, item) => {
+            const path = join(app.getPath('userData'), item.getFilename());
+            item.setSavePath(path);
+            item.once('done', (_event, state) => state === 'completed' ? resolve(path) : reject(Error(state)));
+        }));
+        await clickVisible(button('保存视频'));
+        const savedPath = await Promise.race([download, new Promise((_, reject) => setTimeout(() => reject(Error('No saved video download')), 20000).unref())]);
+        assert.match(savedPath, /OneYes-Video-44444444-4444-4444-4444-444444444444\.mp4$/);
+        assert.deepEqual(await readFile(savedPath), videoBytes);
+        await choose('全部');
+        await wait(`document.querySelectorAll('${rows}').length === 6`);
+        for (const [width, height] of [[1000, 780], [420, 480]]) for (const theme of ['light', 'dark']) {
+            win.setContentSize(width, height);
+            await js(`setRecoveryTheme('${theme}')`);
+            await wait(`innerWidth === ${width} && innerHeight === ${height} && document.documentElement.classList.contains('dark') === ${theme === 'dark'}`);
+            await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            const fit = await js(`(()=>{ const list = document.querySelector('${list}'), modal=list.closest('.ant-modal-container'), r=modal.getBoundingClientRect(); return r.top>=0 && r.bottom<=innerHeight && r.left>=0 && r.right<=innerWidth && list.scrollHeight>list.clientHeight && list.scrollWidth<=list.clientWidth+1; })()`);
+            assert.ok(fit, `${theme} recovery fits ${width}×${height} with internal vertical scrolling`);
+            if (!process.env.CI) await writeFile(`.secrets/qa-video-recovery-${width}-${theme}.png`, (await win.webContents.capturePage()).toPNG());
         }
-        console.log('VIDEO_RECOVERY_UI_OK: real native IPC, original receipt, credentials and uncertain state, retry query, no new generation action');
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+        await wait(`!document.querySelector('${list}')`);
+        recoveryJobs = [];
+        win.webContents.send('video-tasks:state', recoveryJobs);
+        await clickVisible('document.querySelector("button[aria-label=视频任务与恢复]")');
+        await wait(`document.querySelector('${list}')?.innerText.includes('暂无视频任务')`);
+        console.log('VIDEO_RECOVERY_UI_OK: native filtering, disclosure, retry original receipt, account confirmation, export, themes and short windows');
         win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
 });

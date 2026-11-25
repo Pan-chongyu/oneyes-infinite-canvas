@@ -148,8 +148,11 @@ app.whenReady().then(async () => {
                     await js('document.querySelector("button[aria-label=查看原任务]").click()');
                 }
             }
-            await wait('Boolean(document.querySelector(".ant-modal-body")?.textContent.includes("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"))');
-            assert.ok(!await js('document.querySelector(".ant-modal-body").textContent.includes("unconfirmed-job")'), 'recovery displays the independent diagnostic ID, never the private submission key');
+            await wait('Boolean(document.querySelector("[aria-label=视频任务列表] summary"))');
+            assert.ok(!await js('document.querySelector("[aria-label=视频任务列表]").innerText.includes("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2")'));
+            await js('document.querySelector("[aria-label=视频任务列表] summary").click()');
+            await wait('Boolean(document.querySelector("[aria-label=视频任务列表] details[open]")?.innerText.includes("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"))');
+            assert.ok(!await js('document.querySelector("[aria-label=视频任务列表]").innerText.includes("unconfirmed-job")'), 'recovery details display the independent diagnostic ID, never the private submission key');
             assert.equal(await js('[...document.querySelectorAll(".ant-modal-body button")].some(button=>/重试查询|生成/.test(button.textContent))'), false, status);
             assert.ok(videoOperations.slice(before).length > 0);
             assert.ok(videoOperations.slice(before).every(operation => operation === 'list'), status + ': ordinary retry cannot prepare, adopt or submit');
