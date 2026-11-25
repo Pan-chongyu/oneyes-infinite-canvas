@@ -128,36 +128,49 @@ async function nativeResume() {
         console.log('NATIVE_OTA_RESUME_OK: unmodified v0.20.207 engine and API resolver, new signed feed, socket interruption, Range/If-Range, complete-file hash before installation');
     } finally { updater.close(); restarted.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
 }
-async function nativeBlockResume(platform,arch,format) {
+async function nativeBlockResume(platform, arch, format, fullPackage = false) {
     const { createServer } = require('node:http'), { gzipSync } = require('node:zlib');
     const { generateKeyPairSync, sign, createHash } = require('node:crypto');
-    const { mkdir, writeFile, readFile } = require('node:fs/promises');
-    const { createUpdater } = require('../../desktop/updater.cjs');
+    const { mkdir, writeFile, readFile, stat } = require('node:fs/promises');
+    const { createUpdater, FULL_DOWNLOAD_CHUNK_BYTES: chunkBytes } = require('../../desktop/updater.cjs');
     const { filename, RELEASE_ROOT } = require('../../desktop/update-policy.cjs');
     const { publicKey, privateKey } = generateKeyPairSync('ed25519'), hash = bytes => createHash('sha256').update(bytes).digest('hex');
-    const base = Buffer.concat([Buffer.alloc(64, 1), Buffer.alloc(64, 2)]), next = Buffer.concat([Buffer.alloc(64, 2), Buffer.alloc(64, 3)]);
+    const base = Buffer.concat([Buffer.alloc(64, 1), Buffer.alloc(64, 2)]);
+    const next = fullPackage
+        ? Buffer.concat([Buffer.alloc(chunkBytes, 2), Buffer.alloc(chunkBytes, 3), Buffer.from('final')])
+        : Buffer.concat([Buffer.alloc(64, 2), Buffer.alloc(64, 3)]);
+    const interruptStart = fullPackage ? chunkBytes : 64;
+    const interruptEnd = fullPackage ? chunkBytes * 2 - 1 : 127;
+    const prefix = fullPackage ? 1024 * 1024 : 7;
     const map = bytes => gzipSync(JSON.stringify({ version: '2', files: [{ name: 'file', offset: 0, sizes: [64, 64], checksums: [hash(bytes.subarray(0, 64)), hash(bytes.subarray(64))] }] }));
     const release = (version, bytes) => {
         const file = filename(version, platform, arch, format), url = `${RELEASE_ROOT}/download/v${version}/${file}`, blockmap = map(bytes);
-        const entry = { file, url, size: bytes.length, sha256: hash(bytes), blockmap: { file: file + '.blockmap', url: url + '.blockmap', size: blockmap.length, sha256: hash(blockmap) } };
-        const published = version === '1.0.0' ? entry : { ...entry, rangeBlockmap: entry.blockmap, blockmap: undefined };
+        const entry = { file, url, size: bytes.length, sha256: hash(bytes) };
+        const index = { file: file + '.blockmap', url: url + '.blockmap', size: blockmap.length, sha256: hash(blockmap) };
+        const published = fullPackage ? entry : { ...entry, [version === '1.0.0' ? 'blockmap' : 'rangeBlockmap']: index };
         const text = JSON.stringify({ schema: 1, version, notes: 'native blocks', platforms: { [`${platform}-${arch}-${format}`]: published } });
         return { entry, text, signature: sign(null, Buffer.from(text), privateKey).toString('base64'), blockmap };
     };
     const old = release('1.0.0', base), current = release('1.0.1', next), ranges = [];
-    let pending, first = true, installs = 0;
+    let pending, interrupted = false, installs = 0;
     const server = createServer((request, response) => {
         if (request.url === '/probe') { response.end(); return; }
         if (request.url.endsWith('.sig')) { response.end(current.signature); return; }
         if (request.url.endsWith('.json')) { response.end(current.text); return; }
         if (request.url.endsWith('.blockmap')) { response.end(request.url.includes('/v1.0.0/') ? old.blockmap : current.blockmap); return; }
-        ranges.push(request.headers.range);
-        if (first) {
-            first = false; pending = response;
-            response.writeHead(206, { ETag: '"native-blocks"', 'Content-Range': 'bytes 64-127/128', 'Content-Length': 64, 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }); response.write(next.subarray(64, 71));
+        const range = request.headers.range;
+        const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+        assert.ok(match, 'request must cover a bounded byte range');
+        assert.equal(request.headers['if-range'], ranges.length ? '"native-blocks"' : undefined);
+        ranges.push(range);
+        const start = Number(match[1]), end = Number(match[2]);
+        response.writeHead(206, { ETag: '"native-blocks"', 'Content-Range': `bytes ${start}-${end}/${next.length}`, 'Content-Length': end - start + 1, 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' });
+        if (!interrupted && start === interruptStart) {
+            interrupted = true;
+            pending = response;
+            response.write(next.subarray(start, start + prefix));
         } else {
-            assert.equal(request.headers.range, 'bytes=71-127'); assert.equal(request.headers['if-range'], '"native-blocks"');
-            response.writeHead(206, { ETag: '"native-blocks"', 'Content-Range': 'bytes 71-127/128', 'Content-Length': 57 }); response.end(next.subarray(71));
+            response.end(next.subarray(start, end + 1));
         }
     });
     for (;;) {
@@ -165,17 +178,35 @@ async function nativeBlockResume(platform,arch,format) {
         try { await (await fetch(`http://127.0.0.1:${server.address().port}/probe`)).arrayBuffer(); break; }
         catch (error) { await new Promise(resolve => server.close(resolve)); if (error.cause?.message !== 'bad port') throw error; }
     }
-    const directory = join(app.getPath('userData'), `native-blocks-${platform}-${arch}-${format}`), folder = join(directory, 'ota/base-1.0.0'); await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, old.entry.file), base); await writeFile(join(folder, 'canvas-latest.json'), old.text); await writeFile(join(folder, 'canvas-latest.json.sig'), old.signature);
+    const directory = join(app.getPath('userData'), `native-${fullPackage ? 'chunks' : 'blocks'}-${platform}-${arch}-${format}`);
+    if (!fullPackage) {
+        const folder = join(directory, 'ota/base-1.0.0');
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, old.entry.file), base);
+        await writeFile(join(folder, 'canvas-latest.json'), old.text);
+        await writeFile(join(folder, 'canvas-latest.json.sig'), old.signature);
+    }
     const origin = `http://127.0.0.1:${server.address().port}`;
     const options = { currentVersion: '1.0.0', directory, publicKey, target: async () => ({ platform, arch, format }), fetcher: (url, init) => net.fetch(origin + new URL(url).pathname, init),
-        install: async plan => { assert.deepEqual(await readFile(plan.file), next); installs++; }, changed: state => { if (state.downloaded === 7 && pending) { pending.destroy(); pending = null; } } };
+        install: async plan => { assert.deepEqual(await readFile(plan.file), next); installs++; },
+        changed: state => {
+            if (pending && state.downloaded > (fullPackage ? interruptStart : 0)) {
+                pending.destroy();
+                pending = null;
+            }
+        },
+    };
     const updater = createUpdater(options), restarted = createUpdater(options);
     try {
         await updater.check(); assert.equal(updater.state().status, 'error'); updater.close();
-        await restarted.check(); assert.equal(restarted.state().status, 'ready'); assert.equal(restarted.state().mode, 'delta');
-        await restarted.apply(); assert.equal(installs, 1); assert.deepEqual(ranges, ['bytes=64-127', 'bytes=71-127']);
-        console.log('NATIVE_BLOCK_OTA_OK: actual Electron socket interruption, copied blocks, range resume and signed full-file validation');
+        const { size: offset } = await stat(join(directory, 'ota/1.0.1', current.entry.file + (fullPackage ? '.part' : '.blocks.part')));
+        assert.ok(offset > interruptStart && offset <= interruptStart + prefix);
+        await restarted.check(); assert.equal(restarted.state().status, 'ready');
+        assert.equal(restarted.state().mode, fullPackage ? 'chunked' : 'delta');
+        await restarted.apply(); assert.equal(installs, 1);
+        const resumed = [`bytes=${interruptStart}-${interruptEnd}`, `bytes=${offset}-${interruptEnd}`];
+        assert.deepEqual(ranges, fullPackage ? [`bytes=0-${chunkBytes - 1}`, ...resumed, `bytes=${chunkBytes * 2}-${next.length - 1}`] : resumed);
+        console.log(fullPackage ? 'NATIVE_FULL_CHUNK_OTA_OK: no base, multiple byte ranges, socket interruption, exact resume and signed installer' : 'NATIVE_BLOCK_OTA_OK: actual Electron socket interruption, copied blocks, range resume and signed full-file validation');
     } finally { updater.close(); restarted.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
 app.whenReady().then(async () => {
@@ -186,6 +217,7 @@ app.whenReady().then(async () => {
     try {
         await nativeReleaseRedirect();
         await nativeResume();
+        await nativeBlockResume('darwin', 'arm64', 'zip', true);
         for(const platform of ['win32','darwin','linux'])for(const arch of ['x64','arm64'])for(const format of {win32:['nsis'],darwin:['zip'],linux:['AppImage','deb','rpm']}[platform])await nativeBlockResume(platform,arch,format);
         await win.loadURL(process.argv[2]);
         await wait('window.updateTest && document.querySelector("[aria-expanded]")');
@@ -229,8 +261,9 @@ app.whenReady().then(async () => {
         await wait('updateTest.state().operations.includes("install")');
         assert.equal((await js('updateTest.state().operations')).filter(op=>op==='install').length,1,'duplicate clicks share one installation');
         assert.equal(await js('updateTest.saved()'), 'OTA 未落盘画布');
-        await js('updateTest.status("downloading")');
+        await js('updateTest.status("downloading", true, "", "chunked")');
         await wait('document.querySelector("[role=progressbar]")');
+        assert.match(await js('document.querySelector("section").textContent'), /分块下载/);
         assert.equal(await js('document.querySelector("[role=progressbar]").getAttribute("aria-valuenow")'), '36');
         for (const [status, phase, title] of [['downloading', 'planning', '分析增量'], ['downloading', 'reconstructing', '合成更新包'], ['downloading', 'verifying', '校验更新包'], ['installing', 'saving', '保存剪辑'], ['installing', 'preparing', '准备安装'], ['installing', 'handoff', '转入安装窗口']]) {
             await js(`updateTest.status('${status}', true, '${phase}')`);

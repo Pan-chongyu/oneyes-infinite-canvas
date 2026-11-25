@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const require = createRequire(import.meta.url);
-const { createUpdater } = require('../desktop/updater.cjs');
+const { createUpdater, FULL_DOWNLOAD_CHUNK_BYTES } = require('../desktop/updater.cjs');
 const { updateTarget } = require('../desktop/update-platform.cjs');
 const { prepareInstall } = require('../desktop/update-install.cjs');
 const { readManifest, filename, RELEASE_ROOT, newer } = require('../desktop/update-policy.cjs');
@@ -209,6 +209,92 @@ test('resume handles ignored, invalid and stale ranges without mixing releases o
         }
         assert.equal(updater.state().status, 'ready'); assert.deepEqual(await readFile(file), r.payload);
         assert.equal(ranges[0], scenario === 'different-release' ? undefined : 'bytes=5-');
+    });
+});
+
+test('a signed full package resumes within its second chunk and stays ready offline', async t => {
+    const chunk = FULL_DOWNLOAD_CHUNK_BYTES;
+    const bytes = Buffer.alloc(chunk * 2 + 41);
+    bytes.fill(1, 0, chunk); bytes.fill(2, chunk, chunk * 2); bytes.fill(3, chunk * 2);
+    const r = release('0.21.0', bytes), requests = [], progress = [];
+    const f = await fixture(t, {
+        changed: state => { if (state.status === 'downloading' && state.mode === 'chunked') progress.push(state.downloaded); },
+        fetcher: async (url, init) => {
+            if (url.endsWith('.sig')) return new Response(r.signature);
+            if (url.endsWith('.json')) return new Response(r.text);
+            assert.equal(url, r.entry.url);
+            const { Range, 'If-Range': validator } = init.headers;
+            requests.push({ range: Range, validator });
+            const match = /^bytes=(\d+)-(\d+)$/.exec(Range);
+            assert.ok(match, 'large packages always start with a bounded request');
+            const start = Number(match[1]), end = Number(match[2]);
+            const body = bytes.subarray(start, start === chunk ? start + 37 : end + 1);
+            return new Response(body, { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${bytes.length}`, ETag: '"immutable"' } });
+        },
+    });
+    await f.updater.check();
+    assert.equal(f.updater.state().status, 'error');
+    assert.match(f.updater.state().error, /重试后将继续下载/);
+    const file = join(f.directory, 'ota/0.21.0', r.entry.file);
+    assert.deepEqual(await readFile(file + '.part'), bytes.subarray(0, chunk + 37));
+    await f.updater.apply(); assert.equal(f.installs.length, 0);
+    f.updater.close();
+    const restarted = createUpdater(f.options); t.after(() => restarted.close());
+    await restarted.check();
+    assert.deepEqual(requests, [
+        { range: `bytes=0-${chunk - 1}`, validator: undefined },
+        { range: `bytes=${chunk}-${chunk * 2 - 1}`, validator: '"immutable"' },
+        { range: `bytes=${chunk + 37}-${chunk * 2 - 1}`, validator: '"immutable"' },
+        { range: `bytes=${chunk * 2}-${bytes.length - 1}`, validator: '"immutable"' },
+    ]);
+    assert.ok(progress.every((value, index) => index === 0 || value >= progress[index - 1]), 'resuming preserves displayed bytes');
+    assert.equal(restarted.state().status, 'ready');
+    assert.equal(restarted.state().mode, 'chunked');
+    assert.equal(restarted.state().downloaded, bytes.length);
+    assert.equal(restarted.state().reused, 0);
+    await assert.rejects(access(file + '.part')); await assert.rejects(access(file + '.part.json'));
+    await assert.rejects(access(file + '.part.json.tmp'));
+    const offline = createUpdater({ ...f.options, fetcher: async () => { throw Error('offline'); } }); t.after(() => offline.close());
+    await offline.check(); assert.equal(offline.state().mode, 'chunked');
+    await offline.apply(); assert.equal(f.installs.length, 1);
+    assert.deepEqual(await readFile(f.installs[0].file), bytes);
+});
+
+test('full chunk downloads fall back safely when a server or proxy rejects a range', async t => {
+    const chunk = FULL_DOWNLOAD_CHUNK_BYTES;
+    const r = release('0.21.0', Buffer.alloc(chunk + 29, 7));
+    for (const scenario of ['ignored', 'bad-range', 'unsatisfiable', 'changed-etag', 'corrupt-body', 'overlong-body']) await t.test(scenario, async t => {
+        const requests = [];
+        const f = await fixture(t, { fetcher: async (url, init) => {
+            if (url.endsWith('.sig')) return new Response(r.signature);
+            if (url.endsWith('.json')) return new Response(r.text);
+            const range = init.headers?.Range;
+            requests.push(range);
+            if (!range || scenario === 'ignored' && requests.length === 2) return new Response(r.payload);
+            if (scenario === 'unsatisfiable') return new Response(null, { status: 416 });
+            const [, startText, endText] = /^bytes=(\d+)-(\d+)$/.exec(range);
+            const start = Number(startText), end = Number(endText);
+            const headers = { 'Content-Range': scenario === 'bad-range' ? `bytes 1-${end}/${r.payload.length}` : `bytes ${start}-${end}/${r.payload.length}`,
+                ETag: scenario === 'changed-etag' && start > 0 ? '"changed"' : '"original"' };
+            const body = scenario === 'corrupt-body' && start > 0 ? Buffer.alloc(end - start + 1) :
+                r.payload.subarray(start, scenario === 'overlong-body' ? end + 2 : end + 1);
+            return new Response(body, { status: 206, headers });
+        } });
+        await f.updater.check();
+        const file = join(f.directory, 'ota/0.21.0', r.entry.file);
+        await assert.rejects(access(file + '.part'));
+        await f.updater.apply();
+        if (scenario === 'corrupt-body' || scenario === 'overlong-body') {
+            assert.equal(f.updater.state().status, 'error');
+            assert.equal(f.installs.length, 0);
+            await assert.rejects(access(file));
+            return;
+        }
+        const first = `bytes=0-${chunk - 1}`, second = `bytes=${chunk}-${r.payload.length - 1}`;
+        assert.deepEqual(requests, scenario === 'ignored' ? [first, second] : scenario === 'changed-etag' ? [first, second, undefined] : [first, undefined]);
+        assert.equal(f.updater.state().mode, 'full');
+        assert.equal(f.installs.length, 1);
+        assert.deepEqual(await readFile(file), r.payload);
     });
 });
 

@@ -6,6 +6,9 @@ const { FEED, RELEASE_ROOT, CHECK_INTERVAL, readManifest, newer } = require('./u
 const { applyDelta } = require('./update-delta.cjs');
 const { downloadBlocks } = require('./update-blockmap.cjs');
 
+const FULL_DOWNLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
+const strongETag = value => typeof value === 'string' && /^"[^"\r\n]*"$/.test(value) ? value : undefined;
+
 async function fileHash(file, progress) {
     const hash = createHash('sha256');
     let bytes = 0;
@@ -104,7 +107,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
                 let transfer = { total: entry.size, reused: 0, mode: 'full' };
                 try {
                     const info = JSON.parse(await fs.readFile(path.join(folder, 'download-info.json'), 'utf8'));
-                    if (info.sha256 === entry.sha256 && ['full', 'delta'].includes(info.mode) && Number.isSafeInteger(info.total) && info.total >= 0 && Number.isSafeInteger(info.reused) && info.reused >= 0 && info.total + info.reused === entry.size) transfer = info;
+                    if (info.sha256 === entry.sha256 && ['full', 'chunked', 'delta'].includes(info.mode) && Number.isSafeInteger(info.total) && info.total >= 0 && Number.isSafeInteger(info.reused) && info.reused >= 0 && info.total + info.reused === entry.size && (info.mode === 'delta' || info.reused === 0)) transfer = info;
                 } catch {}
                 emit({ status: 'ready', version: entry.version, notes: entry.notes, progress: 100, downloaded: transfer.total, total: transfer.total, reused: transfer.reused, mode: transfer.mode });
                 return true;
@@ -118,56 +121,104 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         if (!result.ok) { await result.body?.cancel(); throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status }); }
         return result;
     }
-    async function downloadBytes(url, file, size, sha256, notify = true) {
-        const partial = file + '.part', receipt = partial + '.json';
-        const discard = async () => { await fs.rm(partial, { force: true }); await fs.rm(receipt, { force: true }); };
+    async function downloadBytes(url, file, size, sha256, { notify = true, split = false } = {}) {
+        const partial = file + '.part', receipt = partial + '.json', receiptTemp = receipt + '.tmp';
+        const discard = async () => {
+            for (const item of [partial, receipt, receiptTemp]) await fs.rm(item, { force: true });
+        };
         try { await validateFile(file, { size, sha256 }); return; } catch {}
-        let offset = 0, validator, invalid = false, resumable = true;
+        let offset = 0, savedReceipt, invalid = false, resumable = true;
         try {
             const info = await fs.lstat(partial), saved = JSON.parse(await fs.readFile(receipt, 'utf8'));
             if (info.isFile() && info.size <= size && saved.url === url && saved.size === size && saved.sha256 === sha256) {
-                offset = info.size; validator = saved.validator;
+                offset = info.size;
+                savedReceipt = saved;
             } else await discard();
         } catch { await discard(); }
+        let hash = createHash('sha256');
+        let chunked = split && size > FULL_DOWNLOAD_CHUNK_BYTES;
+        const report = () => {
+            if (!notify) return;
+            const progress = Math.floor(offset / size * 100);
+            const mode = split ? (chunked ? 'chunked' : 'full') : state.mode;
+            if (progress !== state.progress || mode !== state.mode) emit({ mode, downloaded: offset, progress });
+        };
+        const signal = controller.signal;
         try {
-            if (offset === size) {
-                await validateFile(partial, { size, sha256 });
-                await fs.rename(partial, file); await fs.rm(receipt, { force: true }); return;
-            }
-            let result = await fetcher(url, { signal: controller.signal, cache: 'no-store', headers: offset ? { Range: `bytes=${offset}-`, ...(validator ? { 'If-Range': validator } : {}) } : {} });
-            const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(result.headers.get('content-range') || '');
-            const validRange = result.status === 206 && range && Number(range[1]) === offset && Number(range[2]) >= offset && Number(range[2]) < size && Number(range[3]) === size;
-            if (offset && (result.status === 416 || result.status === 206 && !validRange)) {
-                await result.body?.cancel(); await discard(); offset = 0;
-                result = await fetcher(url, { signal: controller.signal, cache: 'no-store' });
-            } else if (result.status === 200) offset = 0;
-            if (!result.ok) { resumable = false; await result.body?.cancel(); throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status }); }
-            if (result.status !== 200 && !(validRange && offset)) { invalid = true; await result.body?.cancel(); throw new Error('更新包续传响应无效，请重试'); }
-            if (!result.body) throw new Error('更新包下载失败，请重试');
-            const etag = result.headers.get('etag');
-            await fs.writeFile(receipt, JSON.stringify({ url, size, sha256, ...(etag && !etag.startsWith('W/') ? { validator: etag } : {}) }), { mode: 0o600 });
-            const hash = createHash('sha256');
-            if (offset) for await (const chunk of createReadStream(partial)) hash.update(chunk);
-            const handle = await fs.open(partial, offset ? 'a' : 'w', 0o600);
-            let bytes = offset;
-            if (notify) emit({ downloaded: bytes, progress: Math.floor(bytes / size * 100) });
-            try {
-                for await (const chunk of result.body) {
-                    bytes += chunk.length;
-                    if (bytes > size) { invalid = true; throw new Error('更新包长度无效，请重试'); }
-                    hash.update(chunk); await handle.writeFile(chunk);
-                    const progress = Math.floor(bytes / size * 100);
-                    if (notify && progress !== state.progress) emit({ downloaded: bytes, progress });
+            report();
+            if (offset) for await (const chunk of createReadStream(partial, { signal })) hash.update(chunk);
+            while (offset < size) {
+                signal.throwIfAborted();
+                const end = chunked ? offset + Math.min(size - offset, FULL_DOWNLOAD_CHUNK_BYTES - offset % FULL_DOWNLOAD_CHUNK_BYTES) - 1 : size - 1;
+                const range = chunked ? `bytes=${offset}-${end}` : offset ? `bytes=${offset}-` : '';
+                const validator = strongETag(savedReceipt?.validator);
+                const headers = range ? { Range: range, ...(validator ? { 'If-Range': validator } : {}) } : {};
+                const result = await fetcher(url, { signal, cache: 'no-store', headers });
+                const etag = result.headers.get('etag');
+                const validRange = range && result.status === 206 &&
+                    result.headers.get('content-range')?.toLowerCase() === `bytes ${offset}-${end}/${size}` &&
+                    (!validator || !etag || validator === etag);
+                const rejectedRange = range && (result.status === 416 || (result.status === 206 && !validRange));
+                try {
+                    if (rejectedRange || (result.status === 200 && range)) {
+                        await discard();
+                        offset = 0;
+                        savedReceipt = undefined;
+                        hash = createHash('sha256');
+                        chunked = false;
+                        report();
+                        if (rejectedRange) continue;
+                    }
+                    if (!result.ok) {
+                        resumable = false;
+                        throw Object.assign(new Error('连接更新服务失败，请检查网络或代理后重试'), { status: result.status });
+                    }
+                    if (result.status !== 200 && !validRange) {
+                        invalid = true;
+                        throw new Error('更新包续传响应无效，请重试');
+                    }
+                    if (!result.body) throw new Error('更新包下载失败，请重试');
+
+                    const limit = result.status === 206 ? end + 1 : size;
+                    const nextValidator = strongETag(etag) || (validRange ? validator : undefined);
+                    const handle = await fs.open(partial, offset ? 'a' : 'w', 0o600);
+                    try {
+                        if (!savedReceipt || nextValidator !== savedReceipt.validator) {
+                            savedReceipt = { url, size, sha256, validator: nextValidator };
+                            await fs.writeFile(receiptTemp, JSON.stringify(savedReceipt), { mode: 0o600 });
+                            await fs.rename(receiptTemp, receipt);
+                        }
+                        for await (const chunk of result.body) {
+                            signal.throwIfAborted();
+                            if (chunk.length > limit - offset) {
+                                invalid = true;
+                                throw new Error('更新包长度无效，请重试');
+                            }
+                            await handle.writeFile(chunk);
+                            hash.update(chunk);
+                            offset += chunk.length;
+                            report();
+                        }
+                    } finally {
+                        try { await handle.sync(); } finally { await handle.close(); }
+                    }
+                    if (offset < limit) throw new Error('更新包下载中断，重试后将继续下载');
+                } finally {
+                    await result.body?.cancel().catch(() => {});
                 }
-            } finally { try { await handle.sync(); } finally { await handle.close(); } }
-            if (bytes < size) throw new Error('更新包下载中断，重试后将继续下载');
+            }
+            signal.throwIfAborted();
             if (notify) emit({ phase: 'verifying' });
-            if (hash.digest('hex') !== sha256) { await discard(); throw new Error('更新包校验失败，请重新下载'); }
+            if (hash.digest('hex') !== sha256) {
+                invalid = true;
+                throw new Error('更新包校验失败，请重新下载');
+            }
             await fs.rename(partial, file);
             await fs.rm(receipt, { force: true });
+            await fs.rm(receiptTemp, { force: true });
         } catch (error) {
-            if (invalid || offset === size) await discard();
-            error.resumableDownload = resumable && !invalid && !/更新包(校验失败|长度无效)/.test(error.message);
+            if (invalid) await discard();
+            error.resumableDownload = resumable && !invalid;
             throw error;
         }
     }
@@ -185,7 +236,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
     }
     async function downloadFull() {
         emit({ status: 'downloading', mode: 'full', phase: '', error: '', progress: 0, downloaded: 0, total: entry.size, reused: 0 });
-        await downloadBytes(entry.url, path.join(saved.folder, entry.file), entry.size, entry.sha256);
+        await downloadBytes(entry.url, path.join(saved.folder, entry.file), entry.size, entry.sha256, { split: true });
     }
     async function download() {
         await cleanup(entry.version);
@@ -200,8 +251,8 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             try {
                 const oldMap = blockBase.entry.blockmap, newMap = entry.blockmap;
                 const oldMapFile = path.join(blockBase.folder, oldMap.file), newMapFile = path.join(saved.folder, newMap.file);
-                await downloadBytes(oldMap.url, oldMapFile, oldMap.size, oldMap.sha256, false);
-                await downloadBytes(newMap.url, newMapFile, newMap.size, newMap.sha256, false);
+                await downloadBytes(oldMap.url, oldMapFile, oldMap.size, oldMap.sha256, { notify: false });
+                await downloadBytes(newMap.url, newMapFile, newMap.size, newMap.sha256, { notify: false });
                 await downloadBlocks({ baseFile: blockBase.file, oldMapFile, newMapFile, base: blockBase.entry, entry, outputFile: output, fetcher, signal: controller.signal, changed: emit });
                 emit({ phase: 'reconstructing' });
                 await validateFile(output, entry);
@@ -226,7 +277,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
             } catch (error) {
                 if (closed || error.resumableDownload) throw error;
                 await fs.rm(path.join(saved.folder, entry.file + '.delta.part'), { force: true });
-                for (const suffix of ['', '.part', '.part.json']) await fs.rm(path.join(saved.folder, entry.delta.file + suffix), { force: true });
+                for (const suffix of ['', '.part', '.part.json', '.part.json.tmp']) await fs.rm(path.join(saved.folder, entry.delta.file + suffix), { force: true });
                 // A missing/corrupt base or patch must never block an update.
                 // Re-fetching the signed full installer is the safe fallback.
                 await downloadFull();
@@ -240,7 +291,7 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         // even when the old release's network resource is unavailable.
         if (entry.blockmap) {
             const map = entry.blockmap;
-            try { await downloadBytes(map.url, path.join(saved.folder, map.file), map.size, map.sha256, false); }
+            try { await downloadBytes(map.url, path.join(saved.folder, map.file), map.size, map.sha256, { notify: false }); }
             catch (error) { if (closed) throw error; }
         }
         await fs.writeFile(path.join(saved.folder, 'download-info.json'), JSON.stringify({ sha256: entry.sha256, mode: state.mode, total: state.total, reused: state.mode === 'delta' ? entry.size - state.total : 0 }), { mode: 0o600 });
@@ -318,4 +369,4 @@ function createUpdater({ currentVersion, directory, target, fetcher, install, ch
         close() { closed = true; controller.abort(); clearInterval(timer); },
     };
 }
-module.exports = { createUpdater, validateFile, fileHash };
+module.exports = { createUpdater, validateFile, fileHash, FULL_DOWNLOAD_CHUNK_BYTES };
