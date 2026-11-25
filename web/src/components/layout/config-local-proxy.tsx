@@ -44,7 +44,7 @@ export function ConfigLocalProxy() {
                 <div className="mb-4 flex items-start justify-between gap-4">
                     <div>
                         <div className="flex items-center gap-2 text-sm font-semibold"><Network className="size-4" />{t("config.proxy.title")}</div>
-                        <p className="mt-1 text-xs text-muted-foreground">{t(desktop ? "config.proxy.desktopDescription" : "config.proxy.description")}</p>
+                        {!desktop && <p className="mt-1 text-xs text-muted-foreground">{t("config.proxy.description")}</p>}
                     </div>
                     <Switch aria-label={t("config.proxy.title")} checked={config.proxyEnabled} loading={busy === "save"} disabled={busy !== null} onChange={enabled => void save(enabled)} />
                 </div>
@@ -79,7 +79,6 @@ export function ConfigLocalProxy() {
                     <Button type="primary" htmlType="submit" loading={busy === "save"} disabled={busy !== null}>{t("config.proxy.saveEnable")}</Button>
                     <Button icon={<Wifi className="size-4" />} loading={busy === "test"} disabled={busy !== null} onClick={() => void test()}>{t("config.proxy.test")}</Button>
                 </div>
-                <p className="mt-3 text-xs text-muted-foreground">{t("config.proxy.channelHint")}</p>
             </section>
         </Form>
     );

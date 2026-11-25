@@ -433,7 +433,6 @@ export default {
         },
         proxy: {
             title: "本地代理",
-            desktopDescription: "内置 HTTP / HTTPS / SOCKS 代理支持，填写后保存即可使用，无需安装 Node.js 或运行命令。",
             mode: "连接方式",
             upstream: "HTTP / SOCKS 代理（推荐）",
             forwarder: "本机转发服务",
@@ -452,7 +451,6 @@ export default {
             startHint: "先在终端运行下面的命令，并在使用画布期间保持运行：",
             address: "代理地址",
             addressDescription: "需要和上面命令启动后打印的地址一致。",
-            channelHint: "模型调用、媒体下载和 WebDAV 使用此代理；桌面独立登录也使用 HTTP / SOCKS 代理。渠道仍填写真实接口地址。代理不可用时会报错，不会自动绕过代理重试；Codex / MCP 的独立进程不受此设置影响。",
             test: "测试连接",
             available: "本地代理连接正常（{{proxy}}）",
             missingUrl: "请先填写本地代理地址。",

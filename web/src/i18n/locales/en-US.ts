@@ -434,7 +434,6 @@ Write a detailed, ready-to-use overall prompt in connected paragraphs, then self
         },
         proxy: {
             title: "Local proxy",
-            desktopDescription: "Built-in HTTP / HTTPS / SOCKS support. Save your proxy address to connect; no Node.js or terminal command required.",
             mode: "Connection method",
             upstream: "HTTP / SOCKS proxy (recommended)",
             forwarder: "Local forwarding service",
@@ -453,7 +452,6 @@ Write a detailed, ready-to-use overall prompt in connected paragraphs, then self
             startHint: "Run this in a terminal first, and keep it running while you use the canvas:",
             address: "Proxy address",
             addressDescription: "Must match the address printed by the command above.",
-            channelHint: "Routes model calls, media downloads and WebDAV; desktop account login also uses the HTTP / SOCKS proxy. Keep real provider endpoints. Failed proxies never silently fall back to direct access or replay requests. Separate Codex / MCP processes are unaffected.",
             test: "Test connection",
             available: "Local proxy is reachable ({{proxy}})",
             missingUrl: "Enter the local proxy address first.",
