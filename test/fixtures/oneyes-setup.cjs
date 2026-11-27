@@ -7,10 +7,13 @@ const root = process.env.CANVAS_SETUP_TEST_ROOT;
 app.setPath('userData', join(root, 'profile'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'oneyes-canvas', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const user = { id: 7, username: '创作者', email: 'fixture@example.test' };
-const groups = [{ id: 1, name: 'SVIP', platform: 'openai' }, { id: 2, name: 'DeepSeek', platform: 'deepseek' }, { id: 3, name: 'Video', platform: 'grok' }, { id: 4, name: 'JEV', platform: 'typesafe' }];
+const groups = [{ id: 1, name: 'SVIP', platform: 'openai' }, { id: 2, name: 'DeepSeek', platform: 'deepseek' }, { id: 3, name: 'Video', platform: 'grok' }, { id: 4, name: 'JEV', platform: 'typesafe' }, { id: 5, name: 'Gemini', platform: 'gemini' }];
+const geminiReads = [];
+const geminiCalls = [];
 let stored = null, signedIn = true, fail = '', keys = [], calls = [];
 ipcMain.handle('config:read', () => stored);
 ipcMain.handle('config:write', (_event, value) => { stored = value; });
+ipcMain.handle('diagnostics:report', () => null);
 ipcMain.handle('account:call', (_event, op, args) => {
     calls.push(op);
     if (op === 'restore' || op === 'reuse') return { data: { user: signedIn ? user : null, source: 'desktop' } };
@@ -30,11 +33,48 @@ ipcMain.handle('account:call', (_event, op, args) => {
     throw Error('Unexpected account operation: ' + op);
 });
 ipcMain.handle('models:list', (_event, key) => {
+    assert.notEqual(key, 'fixture-gemini', 'Gemini discovers models through its native API');
     if (fail === 'grok' && key === 'fixture-grok') return { error: '模型连接失败' };
     return { data: key === 'fixture-openai' ? ['gpt-image-2', 'gpt-5.5', 'gpt-4o-mini-tts'] : key === 'fixture-grok' ? ['grok-imagine-video'] : key === 'fixture-deepseek' ? ['deepseek-chat'] : ['jev'] };
 });
 app.whenReady().then(async () => {
-    protocol.handle('oneyes-canvas', request => net.fetch(route(request.url, root).file));
+    protocol.handle('oneyes-canvas', async request => {
+        const target = route(request.url, root);
+        if (target.file) return net.fetch(target.file);
+        const url = new URL(target.apis[0]);
+        assert.equal(url.origin, 'https://oneyes.ai');
+        assert.equal(request.headers.get('x-goog-api-key'), 'fixture-gemini');
+        assert.equal(request.headers.get('Authorization'), null);
+        if (url.pathname === '/v1beta/models') {
+            assert.equal(request.method, 'GET');
+            const cursor = url.searchParams.get('pageToken');
+            geminiReads.push(cursor);
+            if (cursor) {
+                assert.equal(cursor, 'next/page+1');
+                return Response.json({ models: [
+                    { name: 'models/gemini-3-flash-preview', supportedGenerationMethods: ['generateContent'] },
+                    { name: 'models/gemini-embedding-001', supportedGenerationMethods: ['embedContent'] },
+                    { name: 'models/veo-3.1-generate-preview', supportedGenerationMethods: ['predictLongRunning'] },
+                ] });
+            }
+            return Response.json({ models: [
+                { name: 'models/gemini-3.1-flash-image-preview', supportedGenerationMethods: ['generateContent'] },
+                { name: 'models/gemini-2.5-flash-preview-tts', supportedGenerationMethods: ['generateContent'] },
+            ], nextPageToken: 'next/page+1' });
+        }
+        assert.equal(request.method, 'POST');
+        const payload = await request.json();
+        geminiCalls.push(url.pathname);
+        if (url.pathname === '/v1beta/models/gemini-3.1-flash-image-preview:generateContent') {
+            assert.deepEqual(payload.generationConfig, { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '16:9', imageSize: '2K' } });
+            return Response.json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] } }] });
+        }
+        assert.equal(url.pathname, '/v1beta/models/gemini-3-flash-preview:streamGenerateContent');
+        assert.equal(url.searchParams.get('alt'), 'sse');
+        assert.equal(payload.contents[0].parts[0].text, 'fixture text');
+        const answer = { candidates: [{ content: { parts: [{ text: 'Gemini response' }] } }] };
+        return new Response('data: ' + JSON.stringify(answer) + '\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+    });
     const win = new BrowserWindow({ width: 1000, height: 860, show: false, webPreferences: { preload: join(__dirname, '../../desktop/preload.cjs'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
     const js = code => win.webContents.executeJavaScript(code);
     const wait = async code => { const end = Date.now() + 20000; while (!await js(`Boolean(${code})`)) { if (Date.now() > end) throw Error('Setup wait failed: ' + code + '; ' + await js('document.body.innerText') + '; ' + await js('JSON.stringify(window.setupTrace)')); await new Promise(resolve => setTimeout(resolve, 25)); } };
@@ -49,7 +89,7 @@ app.whenReady().then(async () => {
         win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
     };
     const button = text => `[...document.querySelectorAll('.ant-modal button')].find(button=>button.textContent===${JSON.stringify(text)})`;
-    const ready = () => wait('setupTest.state().report.length === 4 && !setupTest.state().busy');
+    const ready = () => wait('setupTest.state().report.length === 5 && !setupTest.state().busy');
     const reset = async (mode = null, configured = false) => { calls = []; await js(`setupTest.reset(${JSON.stringify(mode)},${configured})`); };
     try {
         await win.loadURL(process.argv[2]); win.show(); win.focus();
@@ -69,10 +109,18 @@ app.whenReady().then(async () => {
         await new Promise(resolve => { win.once('resize', resolve); win.setSize(1000, 860); });
         await click('document.querySelector("[data-setup-mode=beginner]")'); await ready();
         assert.equal(calls.filter(op => op === 'groups').length, 1, 'StrictMode must not duplicate automatic setup');
-        assert.equal(calls.filter(op => op === 'create_key').length, 4);
+        assert.equal(calls.filter(op => op === 'create_key').length, 5);
         const state = await js('setupTest.state()');
         for (const key of ['imageModel', 'textModel', 'videoModel', 'audioModel']) assert.ok(state.config[key], key);
         assert.ok(state.report.every(item => item.code === 'ok'));
+        assert.deepEqual(geminiReads.slice(0, 2), [null, 'next/page+1']);
+        assert.equal(geminiCalls.length, 0, 'setup must only discover models');
+        const gemini = state.config.channels.find(channel => channel.id === 'oneyes-gemini');
+        assert.deepEqual(gemini.models.map(({ name, capability }) => [name, capability]), [
+            ['gemini-3-flash-preview', 'text'], ['gemini-3.1-flash-image-preview', 'image'],
+        ].sort(([a], [b]) => a.localeCompare(b)));
+        assert.deepEqual(await js('setupTest.callGemini()'), { images: 1, answer: 'Gemini response' });
+        assert.equal(geminiCalls.length, 2);
         await click(button('开始使用')); await wait('!document.querySelector(".ant-modal")');
         assert.equal(JSON.parse(stored).state.setupMode, 'beginner');
         assert.equal(JSON.parse(stored).state.setupStatus, 'completed');
@@ -120,7 +168,7 @@ app.whenReady().then(async () => {
         assert.ok((await js('setupTest.state().report')).some(item => item.code !== 'ok'));
         assert.ok(await js('document.body.textContent.includes("其余平台可重试")'));
         fail = ''; calls = []; await win.loadURL(process.argv[2]);
-        await wait('window.setupTest && setupTest.state().report.length === 4 && setupTest.state().report.every(item=>item.code === "ok") && !setupTest.state().busy');
+        await wait('window.setupTest && setupTest.state().report.length === 5 && setupTest.state().report.every(item=>item.code === "ok") && !setupTest.state().busy');
         assert.equal(calls.filter(op => op === 'groups').length, 1, 'unfinished Beginner setup resumes even with partially saved models');
         assert.equal(calls.filter(op => op === 'create_key').length, 0);
         await click(button('开始使用'));
@@ -133,7 +181,8 @@ app.whenReady().then(async () => {
         assert.ok(await js('![...document.querySelectorAll("[role=tab]")].some(tab=>tab.textContent==="模型接入")'));
         const beforeProfile = await js('setupTest.state().config');
         await click('document.querySelector(\'nav a[href="/profile"]\')');
-        await wait('document.querySelector("h1")?.textContent === "个人中心" && document.querySelectorAll("[data-platform]").length === 4');
+        await wait('document.querySelector("h1")?.textContent === "个人中心" && document.querySelectorAll("[data-platform]").length === 5');
+        assert.ok(await js('document.querySelector("[data-platform=gemini]")?.textContent.includes("生图与文本")'));
         assert.ok(await js('document.querySelector("main").textContent.includes("创作者") && document.querySelector("main").textContent.includes("已复用 OneYes 客户端登录态")'));
         assert.equal(await js('document.querySelector(\'nav a[href="/profile"]\').getAttribute("aria-current")'), 'page');
         assert.deepEqual(await js('setupTest.state().config'), beforeProfile);

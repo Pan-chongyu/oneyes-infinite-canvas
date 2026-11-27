@@ -1,10 +1,10 @@
 import { Alert, Button, Modal, Steps, theme } from "antd";
-import { CheckCircle2, CircleAlert, CircleDashed, GitBranch, Image, LoaderCircle, MessageSquare, SlidersHorizontal, Video, WandSparkles } from "lucide-react";
+import { CheckCircle2, CircleAlert, CircleDashed, GitBranch, Image, LoaderCircle, MessageSquare, SlidersHorizontal, Sparkles, Video, WandSparkles } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { GROK_VIDEO_CHANNEL_ID, hasConfiguredModels, useConfigStore } from "@/stores/use-config-store";
+import { GEMINI_CHANNEL_ID, GROK_VIDEO_CHANNEL_ID, hasConfiguredModels, useConfigStore } from "@/stores/use-config-store";
 import { useOneYesAccountStore } from "@/stores/use-oneyes-account-store";
 import { getVerifiedSetupIds, shouldOpenSetup } from "@/stores/oneyes-setup";
 import { OneYesLoginForm, OneYesManualForm } from "./oneyes-connection-forms";
@@ -46,6 +46,7 @@ function SetupContent() {
         { id: "oneyes-deepseek", name: "DeepSeek", purpose: "text", group: "DeepSeek", icon: MessageSquare },
         { id: GROK_VIDEO_CHANNEL_ID, name: "Grok", purpose: "video", group: "Video", icon: Video },
         { id: "oneyes-typesafe", name: "TypeSafe / Jev", purpose: "decision", group: "JEV", icon: GitBranch },
+        { id: GEMINI_CHANNEL_ID, name: "Gemini", purpose: "imageText", group: "Gemini", icon: Sparkles },
     ];
     const close = () => { if (!busy) useConfigStore.getState().closeSetup(); };
     const configure = useCallback(async () => {

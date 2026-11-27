@@ -23,8 +23,11 @@ test('vault survives restart, serializes writes, detects tampering without repla
 test('protocol confines API credentials to OneYes and files to packaged assets', () => {
     const root = resolve('web/dist');
     assert.deepEqual(route('oneyes-canvas://app/oneyes-api/v1/images/generations', root), {apis:['https://oneyes.ai/v1/images/generations', 'https://api.oneyes.ai/v1/images/generations']});
+    for (const path of ['/v1beta/models?pageToken=next%2Fpage', '/v1beta/models/gemini-3.1-flash-image-preview:generateContent', '/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse']) {
+        assert.deepEqual(route('oneyes-canvas://app/oneyes-api' + path, root).apis, ['https://oneyes.ai' + path, 'https://api.oneyes.ai' + path]);
+    }
     assert.ok(route('oneyes-canvas://app/canvas/example', root).file.endsWith('/index.html'));
-    for(const input of ['https://api.oneyes.ai/v1/models','oneyes-canvas://evil/','oneyes-canvas://app/oneyes-api/admin','oneyes-canvas://app/%2e%2e%2f%2e%2e%2fsecrets.key']) assert.throws(() => route(input, root));
+    for(const input of ['https://api.oneyes.ai/v1/models','oneyes-canvas://evil/','oneyes-canvas://app/oneyes-api/admin','oneyes-canvas://app/oneyes-api/v1beta/cachedContents','oneyes-canvas://app/%2e%2e%2f%2e%2e%2fsecrets.key']) assert.throws(() => route(input, root));
 });
 
 test('desktop proxy route accepts only HTTP(S) targets and preserves signed URLs', () => {

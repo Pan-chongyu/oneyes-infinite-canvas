@@ -4,7 +4,7 @@ import { requestDurableImage, type AsyncImageOptions, type GeneratedImageResult 
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, modelCapabilityOf, resolveModelRequestConfig, resolveModelScript, useConfigStore, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, guessCapability, modelCapabilityOf, resolveModelRequestConfig, resolveModelScript, useConfigStore, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { readFileAsDataUrl } from "@/lib/image-utils";
@@ -96,7 +96,8 @@ type GeminiPart = {
 type GeminiContent = { role?: "user" | "model"; parts: GeminiPart[] };
 type GeminiPayload = {
     candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string }>;
-    models?: Array<{ name?: string }>;
+    models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
+    nextPageToken?: string;
     error?: { message?: string };
     promptFeedback?: { blockReason?: string };
 };
@@ -253,9 +254,8 @@ function geminiModelName(model: string) {
     return model.trim().replace(/^models\//, "");
 }
 
-function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "generateContent" | "streamGenerateContent") {
+function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action: "generateContent" | "streamGenerateContent") {
     const baseUrl = geminiBaseUrl(config);
-    if (!action) return withLocalProxy(`${baseUrl}/models`);
     return withLocalProxy(`${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`);
 }
 
@@ -806,6 +806,38 @@ function modelEntries(values: (string | { id?: string; reference_file_max_bytes?
     return values.map(value => ({ id: (typeof value === 'string' ? value : value.id!).trim(), referenceFileMaxBytes: typeof value === 'string' ? undefined : referenceFileMaxBytes(value.reference_file_max_bytes) }))
         .sort((a, b) => a.id.localeCompare(b.id));
 }
+
+async function fetchGeminiModelEntries(config: Pick<AiConfig, "baseUrl" | "apiKey">) {
+    const url = new URL(`${geminiBaseUrl(config)}/models`);
+    const names = new Set<string>();
+    const seen = new Set<string>();
+    for (;;) {
+        const { data } = await axios.get<GeminiPayload>(withLocalProxy(url.href), { headers: geminiHeaders(config) });
+        validateGeminiPayload(data);
+        if (!Array.isArray(data.models)) throw new Error(apiText("modelReadFailed"));
+        for (const item of data.models) {
+            const name = typeof item?.name === "string" ? geminiModelName(item.name) : "";
+            if (!name) throw new Error(apiText("modelReadFailed"));
+            if (isOneYes(config.baseUrl)) {
+                // The Gemini group uses native generateContent for images and text.
+                // The catalog can also advertise embedding, live, speech and prediction models.
+                const capability = guessCapability(name);
+                if (capability !== "image" && capability !== "text") continue;
+                const methods = item.supportedGenerationMethods;
+                if (methods !== undefined && (!Array.isArray(methods) || !methods.includes("generateContent"))) continue;
+                if (/(?:^|[-_])(?:embedding|embed|live|bidi|imagen)(?:[-_.]|$)/i.test(name)) continue;
+            }
+            names.add(name);
+        }
+        const token = data.nextPageToken;
+        if (!token) break;
+        if (typeof token !== "string" || seen.has(token)) throw new Error(apiText("modelReadFailed"));
+        seen.add(token);
+        url.searchParams.set("pageToken", token);
+    }
+    return modelEntries([...names]);
+}
+
 async function fetchImageModelEntries(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">): Promise<ModelCatalogEntry[]> {
     if (window.oneYesDesktop && config.apiFormat !== "gemini" && isOneYes(config.baseUrl)) {
         const result = await window.oneYesDesktop.models.list(config.apiKey, true);
@@ -814,14 +846,7 @@ async function fetchImageModelEntries(config: Pick<AiConfig, "baseUrl" | "apiKey
         return modelEntries(result.data);
     }
     try {
-        if (config.apiFormat === "gemini") {
-            const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
-            validateGeminiPayload(response.data);
-            return modelEntries((response.data.models || [])
-                .map((model) => model.name?.replace(/^models\//, ""))
-                .filter((id): id is string => Boolean(id))
-                .sort((a, b) => a.localeCompare(b)));
-        }
+        if (config.apiFormat === "gemini") return await fetchGeminiModelEntries(config);
         const response = await axios.get<{ data?: Array<{ id?: string; reference_file_max_bytes?: unknown }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
             headers: {
                 Authorization: `Bearer ${config.apiKey}`,
@@ -840,11 +865,3 @@ export async function fetchChannelModelEntries(channel: ModelChannel) { return f
 export async function fetchChannelModels(channel: ModelChannel) {
     return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
 }
-
-const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "model" | "systemPrompt"> = {
-    baseUrl: "https://generativelanguage.googleapis.com",
-    apiKey: "",
-    apiFormat: "gemini",
-    model: "",
-    systemPrompt: "",
-};

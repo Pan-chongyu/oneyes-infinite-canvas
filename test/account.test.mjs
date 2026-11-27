@@ -81,7 +81,7 @@ test('account redirects fail closed and corrupt sessions are preserved', async (
     const account = createAccount({ vault: memory(), fetcher: async () => new Response(null, { status: 302 }) });
     await assert.rejects(account.call('login', {}), /重定向/);
 });
-test('Canvas key creation accepts only the Grok Video group for video access', async () => {
+test('Canvas key creation uses exact platform and group pairs including Grok Video, JEV and Gemini', async () => {
     const vault = memory(), created = [];
     const fetcher = async (url, options) => {
         if (url.endsWith('/settings/public')) return ok({});
@@ -92,6 +92,9 @@ test('Canvas key creation accepts only the Grok Video group for video access', a
             { id: 18, name: 'JEV', platform: 'TypeSafe' },
             { id: 19, name: 'JEV', platform: 'OpenAI' },
             { id: 20, name: 'JEV-test', platform: 'TypeSafe' },
+            { id: 21, name: 'Gemini', platform: 'Gemini' },
+            { id: 22, name: 'Gemini', platform: 'OpenAI' },
+            { id: 23, name: 'Gemini-test', platform: 'Gemini' },
         ]);
         if (url.endsWith('/keys') && options.method === 'POST') {
             const payload = JSON.parse(options.body);
@@ -110,7 +113,9 @@ test('Canvas key creation accepts only the Grok Video group for video access', a
     assert.equal((await account.call('create_key', { account_id: 7, group_id: 18 })).group_id, 18);
     await assert.rejects(account.call('create_key', { account_id: 7, group_id: 19 }), /不能用于 Canvas/);
     await assert.rejects(account.call('create_key', { account_id: 7, group_id: 20 }), /不能用于 Canvas/);
-    assert.equal(created.length, 2);
+    assert.equal((await account.call('create_key', { account_id: 7, group_id: 21 })).group_id, 21);
+    for (const id of [22, 23]) await assert.rejects(account.call('create_key', { account_id: 7, group_id: id }), /不能用于 Canvas/);
+    assert.deepEqual(created.map(item => item.group_id), [4, 18, 21]);
 });
 test('native broker uses OS-local IPC and a capability instead of passing credentials in URLs', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-broker-'));

@@ -1,5 +1,5 @@
 import { Alert, Button, Dropdown, Modal, theme } from "antd";
-import { CheckCircle2, ChevronRight, CircleAlert, CircleDashed, GitBranch, Image, LockKeyhole, MessageSquare, MoreHorizontal, Pencil, RefreshCw, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
+import { CheckCircle2, ChevronRight, CircleAlert, CircleDashed, GitBranch, Image, LockKeyhole, MessageSquare, MoreHorizontal, Pencil, RefreshCw, Sparkles, Stethoscope, UserRound, Video, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChannelEditorDrawer } from "./channel-editor-drawer";
@@ -14,6 +14,7 @@ const services = [
     { platform: "deepseek", name: "DeepSeek", purpose: "text", group: "DeepSeek", icon: MessageSquare },
     { platform: "grok", name: "Grok", purpose: "video", group: "Video", icon: Video },
     { platform: "typesafe", name: "TypeSafe / Jev", purpose: "decision", group: "JEV", icon: GitBranch },
+    { platform: "gemini", name: "Gemini", purpose: "imageText", group: "Gemini", icon: Sparkles },
 ] as const;
 
 export function OneYesAccountPanel() {

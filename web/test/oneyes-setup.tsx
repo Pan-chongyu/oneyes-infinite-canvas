@@ -12,10 +12,13 @@ import { AppTopNav } from '@/components/layout/app-top-nav';
 import ConfigPage from '@/pages/config';
 import ProfilePage from '@/pages/profile';
 import { getAntThemeConfig } from '@/lib/app-theme';
-import { defaultConfig, useConfigStore } from '@/stores/use-config-store';
+import { defaultConfig, GEMINI_CHANNEL_ID, selectableModelsByCapability, useConfigStore } from '@/stores/use-config-store';
 import { useOneYesAccountStore } from '@/stores/use-oneyes-account-store';
 import { queryClient } from '@/lib/query-client';
+import { initializeDesktopTransport } from '@/services/api/desktop-transport';
+import { requestGeneration, requestImageQuestion } from '@/services/api/image';
 
+initializeDesktopTransport();
 await useConfigStore.persist.rehydrate();
 await useOneYesAccountStore.getState().restore();
 const trace: unknown[] = [];
@@ -34,6 +37,14 @@ function Fixture() {
         }),
         showPages: () => flushSync(() => setShowPages(true)),
         requestModels: () => useConfigStore.getState().openConfigDialog(true),
+        callGemini: async () => {
+            const config = useConfigStore.getState().config;
+            const image = selectableModelsByCapability(config, "image").find(model => model.startsWith(GEMINI_CHANNEL_ID + "::"))!;
+            const text = selectableModelsByCapability(config, "text").find(model => model.startsWith(GEMINI_CHANNEL_ID + "::"))!;
+            const pictures = await requestGeneration({ ...config, model: image, count: '1', size: '2k@16:9' }, 'fixture image');
+            const answer = await requestImageQuestion({ ...config, model: text }, [{ role: 'user', content: 'fixture text' }], () => {});
+            return { images: pictures.length, answer };
+        },
         reset: async (mode: 'beginner' | 'expert' | null = null, configured = false) => {
             flushSync(() => setMounted(false));
             queryClient.clear();

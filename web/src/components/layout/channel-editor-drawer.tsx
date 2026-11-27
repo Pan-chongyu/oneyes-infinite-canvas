@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchModelCatalog } from "@/services/api/model-catalog";
-import { GROK_VIDEO_CHANNEL_ID, guessCapability, normalizeChannelModels, syncChannelModels, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { GEMINI_CHANNEL_ID, GROK_VIDEO_CHANNEL_ID, guessCapability, normalizeChannelModels, syncChannelModels, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
@@ -49,8 +49,8 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     if (!draft) return null;
 
-    const platform = draft.id === GROK_VIDEO_CHANNEL_ID ? "grok" : draft.oneYes?.platform || (draft.id === "oneyes-deepseek" ? "deepseek" : draft.id === "oneyes-typesafe" ? "typesafe" : "openai");
-    const name = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", minimax: "MiniMax", typesafe: "TypeSafe / Jev" }[platform];
+    const platform = draft.id === GROK_VIDEO_CHANNEL_ID ? "grok" : draft.id === GEMINI_CHANNEL_ID ? "gemini" : draft.oneYes?.platform || (draft.id === "oneyes-deepseek" ? "deepseek" : draft.id === "oneyes-typesafe" ? "typesafe" : "openai");
+    const name = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", minimax: "MiniMax", typesafe: "TypeSafe / Jev", gemini: "Gemini" }[platform];
     const selected = new Set(draft.models.map(model => model.name));
     const missing = draft.models.filter(model => model.unavailable);
     const keyword = search.trim().toLowerCase();

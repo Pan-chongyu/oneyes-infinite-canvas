@@ -20,7 +20,7 @@ function route(input, root) {
     }
     if (url.pathname.startsWith('/oneyes-api/')) {
         const path = url.pathname.slice('/oneyes-api'.length);
-        if (!/^\/v1\//.test(path)) throw new Error('无效接口');
+        if (!/^\/v1\//.test(path) && !/^\/v1beta\/models(?:\/[^/]+:(?:generateContent|streamGenerateContent))?$/.test(path)) throw new Error('无效接口');
         return { apis: ['https://oneyes.ai', 'https://api.oneyes.ai'].map(base => base + path + url.search) };
     }
     const path = resolve(root, '.' + decodeURIComponent(url.pathname));

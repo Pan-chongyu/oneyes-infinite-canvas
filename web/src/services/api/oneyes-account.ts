@@ -9,8 +9,9 @@ type Key = { id: number; name: string; key?: string; status: string; group_id: n
 export type Diagnosis = { id: string; name: string; status: "ok" | "error" | "warning"; code: string; detail?: string };
 type AccountCall = <T>(operation: string, args?: Record<string, unknown>) => Promise<T>;
 export const CANVAS_KEY_NAME = "Canvas_无限画布";
-export const platforms = ["openai", "deepseek", "grok", "typesafe"] as const;
-const platformNames = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", typesafe: "JEV" };
+export const platforms = ["openai", "deepseek", "grok", "typesafe", "gemini"] as const;
+const platformNames = { openai: "OpenAI", deepseek: "DeepSeek", grok: "Grok", typesafe: "JEV", gemini: "Gemini" };
+const groupNames = { openai: ["svip", "vip"], deepseek: ["deepseek"], grok: ["video"], typesafe: ["jev"], gemini: ["gemini"] };
 export type Platform = typeof platforms[number];
 export function channelIdForPlatform(platform: Platform, openAiChannelId = "default") {
     if (platform === "openai") return openAiChannelId;
@@ -23,9 +24,9 @@ export async function accountCall<T>(operation: string, args?: Record<string, un
     return result.data as T;
 }
 export function selectGroup(groups: Group[], platform: Platform) {
-    const names = platform === "openai" ? ["svip", "vip"] : [platform === "grok" ? "video" : platform === "typesafe" ? "jev" : "deepseek"];
+    const names = groupNames[platform];
     for (const name of names) {
-        const matches = groups.filter(group => group.platform?.trim().toLowerCase() === platform && group.name.trim().toLowerCase() === name);
+        const matches = groups.filter(group => group.platform?.trim().toLowerCase() === platform && group.name?.trim().toLowerCase() === name);
         if (matches.length > 1) throw new Error(`${platform} / ${name} 存在多个同名分组，请在官网确认`);
         if (matches.length === 1) return matches[0];
     }
@@ -55,7 +56,7 @@ export async function configureManual(config: AiConfig, credentials: Partial<Rec
         const old = config.channels.find(channel => channel.id === id);
         const apiKey = credentials[platform]?.trim() || "";
         if (!apiKey && !old) continue;
-        let channel: ModelChannel = { ...old, id, name: platform === "openai" ? "OneYes" : `OneYes ${platformNames[platform]}`, apiKey, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", models: old?.models.filter(model => old.apiKey.trim() || model.manual || model.script) || [], oneYes: apiKey === old?.apiKey ? old?.oneYes : undefined };
+        let channel: ModelChannel = { ...old, id, name: platform === "openai" ? "OneYes" : `OneYes ${platformNames[platform]}`, apiKey, baseUrl: OPENAI_BASE_URL, apiFormat: platform === "gemini" ? "gemini" : "openai", models: old?.models.filter(model => old.apiKey.trim() || model.manual || model.script) || [], oneYes: apiKey === old?.apiKey ? old?.oneYes : undefined };
         if (apiKey && apiKey !== old?.apiKey) {
             channel = syncChannelModels(channel, await fetchModels(channel));
             if (!channel.models.some(model => !model.unavailable)) throw new Error(`${channel.name} 未返回匹配的模型，请检查 Key 分组或在下方编辑模型`);
@@ -84,16 +85,20 @@ export async function configureOneYes(config: AiConfig, user: OneYesUser, call: 
             const key = existing
                 ? await call<Key>("key", { account_id: user.id, id: existing.id })
                 : await call<Key>("create_key", { account_id: user.id, group_id: group.id });
-            if (!Number.isSafeInteger(key.id) || key.id <= 0 || key.name !== CANVAS_KEY_NAME || !usable(key) || key.group_id !== group.id || !key.key || (key.group?.platform && key.group.platform.toLowerCase() !== platform)) throw new Error("Key 的状态或所属分组已变化，请重新操作");
+            if (!Number.isSafeInteger(key.id) || key.id <= 0 || key.name !== CANVAS_KEY_NAME || !usable(key) || key.group_id !== group.id || !key.key || (key.group?.platform && key.group.platform.trim().toLowerCase() !== platform)) throw new Error("Key 的状态或所属分组已变化，请重新操作");
             const old = config.channels.find(channel => channel.id === id);
-            let channel: ModelChannel = { ...old, id, name: `OneYes ${platformNames[platform]}`, baseUrl: OPENAI_BASE_URL, apiFormat: "openai", apiKey: key.key,
+            let channel: ModelChannel = { ...old, id, name: `OneYes ${platformNames[platform]}`, baseUrl: OPENAI_BASE_URL, apiFormat: platform === "gemini" ? "gemini" : "openai", apiKey: key.key,
                 models: old?.models.filter(model => old.apiKey.trim() || model.manual || model.script) || [], oneYes: { platform, groupId: group.id, groupName: group.name, keyId: key.id, accountId: user.id } };
             const available = await fetchModels(channel);
             channel = syncChannelModels(channel, available);
             if (!channel.models.some(model => !model.unavailable)) throw new Error("该分组未返回匹配的可用模型，请检查分组或手动配置模型");
             channels.push(channel);
         } catch (error) {
-            issues.push({ id, name: platform, status: "error", code: "setupFailed", detail: error instanceof Error ? error.message : "配置失败" });
+            const message = error instanceof Error ? error.message : "配置失败";
+            const detail = platform === "gemini" && message.startsWith("只能为 Canvas 创建指定平台")
+                ? "请先更新 OneYes 主客户端，再重新配置 Gemini，也可以在 Canvas 独立登录或填写 Gemini Key"
+                : message;
+            issues.push({ id, name: platform, status: "error", code: "setupFailed", detail });
         }
     }
     const merged = config.channels.map(old => channels.find(channel => channel.id === old.id) || old);
@@ -117,7 +122,7 @@ export async function diagnoseOneYes(config: AiConfig, user: OneYesUser | null, 
             const remote = keys?.find(key => key.id === meta.keyId);
             if (!remote) { report.push({ ...base, status: "error", code: "deleted" }); continue; }
             if (!usable(remote)) { report.push({ ...base, status: "error", code: "inactive" }); continue; }
-            if (remote.group_id !== meta.groupId || (remote.group?.platform && remote.group.platform.toLowerCase() !== meta.platform)) { report.push({ ...base, status: "error", code: "groupChanged" }); continue; }
+            if (remote.group_id !== meta.groupId || (remote.group?.platform && remote.group.platform.trim().toLowerCase() !== meta.platform)) { report.push({ ...base, status: "error", code: "groupChanged" }); continue; }
             if (meta.platform === "minimax") { report.push({ ...base, status: "warning", code: "legacyPlatform", detail: "此 Key 仍属于旧 MiniMax 分组，请重新配置以接入 Grok 视频分组" }); continue; }
         }
         try {
