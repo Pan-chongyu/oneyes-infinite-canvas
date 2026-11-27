@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Select as SelectPrimitive } from "radix-ui"
+import { ScrollArea, Select as SelectPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
@@ -63,10 +63,14 @@ function SelectContent({
   className,
   children,
   header,
+  scrollbar = false,
   position = "item-aligned",
   align = "center",
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content> & { header?: React.ReactNode }) {
+}: React.ComponentProps<typeof SelectPrimitive.Content> & {
+  header?: React.ReactNode
+  scrollbar?: boolean
+}) {
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
@@ -78,17 +82,36 @@ function SelectContent({
         {...props}
       >
         {header}
-        <SelectScrollUpButton />
-        <SelectPrimitive.Viewport
-          data-position={position}
-          className={cn(
-            "data-[position=popper]:h-(--radix-select-trigger-height) data-[position=popper]:w-full data-[position=popper]:min-w-(--radix-select-trigger-width)",
-            position === "popper" && ""
-          )}
-        >
-          {children}
-        </SelectPrimitive.Viewport>
-        <SelectScrollDownButton />
+        {scrollbar ? (
+          <ScrollArea.Root type="auto" className="flex min-h-0 min-w-0 flex-auto">
+            <SelectPrimitive.Viewport asChild>
+              <ScrollArea.Viewport className="me-3 min-h-0 min-w-0 [&>div]:block!">
+                {children}
+              </ScrollArea.Viewport>
+            </SelectPrimitive.Viewport>
+            <ScrollArea.Scrollbar
+              orientation="vertical"
+              data-slot="select-scrollbar"
+              className="group flex w-3 touch-none select-none rounded-full bg-foreground/5 p-0.5"
+            >
+              <ScrollArea.Thumb
+                data-slot="select-scrollbar-thumb"
+                className="flex-1 rounded-full bg-foreground/50 group-hover:bg-foreground/65"
+              />
+            </ScrollArea.Scrollbar>
+          </ScrollArea.Root>
+        ) : (
+          <>
+            <SelectScrollUpButton />
+            <SelectPrimitive.Viewport
+              data-position={position}
+              className="data-[position=popper]:h-(--radix-select-trigger-height) data-[position=popper]:w-full data-[position=popper]:min-w-(--radix-select-trigger-width)"
+            >
+              {children}
+            </SelectPrimitive.Viewport>
+            <SelectScrollDownButton />
+          </>
+        )}
       </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
   )

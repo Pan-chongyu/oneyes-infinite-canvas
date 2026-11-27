@@ -144,9 +144,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
+                scrollbar
                 className={cn(
-                    "z-[1200] flex max-h-[min(var(--radix-select-content-available-height),24rem)] w-96 max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border/70 bg-popover p-1.5 shadow-xl motion-reduce:animate-none [&_[data-radix-select-viewport]]:!h-auto [&_[data-radix-select-viewport]]:min-h-0 [&_[data-radix-select-viewport]]:min-w-0 [&_[data-radix-select-viewport]]:flex-1 [&_[data-slot=select-scroll-up-button]]:shrink-0 [&_[data-slot=select-scroll-down-button]]:shrink-0",
-                    detailed && "w-[clamp(22rem,var(--radix-select-trigger-width),34rem)] [&_[data-radix-select-viewport]]:min-w-0!",
+                    "z-[1200] flex max-h-[min(var(--radix-select-content-available-height),24rem)] w-96 max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border/70 bg-popover p-1.5 shadow-xl motion-reduce:animate-none",
+                    detailed && "w-[clamp(22rem,var(--radix-select-trigger-width),34rem)]",
                 )}
                 header={capability === 'video' && <div className="mb-1.5 flex shrink-0 items-center gap-2 border-b border-border/70 px-2 pb-2 pt-1" data-model-search>
                     <Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />

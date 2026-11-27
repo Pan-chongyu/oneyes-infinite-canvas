@@ -238,6 +238,9 @@ app.whenReady().then(async () => {
                 assert.ok((await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent)')).every(label => label.includes(query)));
             }
             await js('document.querySelector("input[type=search]").select()');
+            await win.webContents.insertText('not-a-model');
+            await wait('document.querySelector("[role=option][data-disabled]")?.textContent.includes("没有匹配的模型") && !document.querySelector("[data-slot=select-scrollbar]")');
+            await js('document.querySelector("input[type=search]").select()');
             await win.webContents.insertText('Seedance');
             await wait('document.querySelectorAll("[role=group]").length === 1 && document.querySelector("[data-slot=select-label]")?.textContent === "Seedance"');
             assert.ok(await js('Array.from(document.querySelectorAll("[role=option] [data-model-name]")).some(name => name.textContent === "SD-特价")'));
@@ -427,7 +430,7 @@ app.whenReady().then(async () => {
         assert.deepEqual(await js('modelTest.state().config'), compactConfig, 'layout changes must preserve model and generation defaults');
         console.log('NATIVE_COMPACT_CONFIG_MODEL_FULL_WIDTH_NAME_VERSION_STATUS_SETTINGS_AND_MODES_OK');
         const videoOnlyNames = names;
-        const imageNames = ['gpt-image-2', 'gpt-image-2.6-sunburst', 'custom-image'];
+        const imageNames = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'custom-image'];
         const geminiNames = ['gemini-3-pro-image', 'gemini-3.1-flash-image', 'nano-banana-2'];
         names = [...names, ...imageNames];
         const imageOptions = models => models.map(name => ({ name, capability: 'image' }));
@@ -453,8 +456,9 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
             await wait('document.activeElement?.getAttribute("data-model-id")===' + JSON.stringify(fromImage));
+            await wait('Boolean(document.querySelector("[data-slot=select-scrollbar-thumb]"))');
             assert.deepEqual(await js('(' + readGroups.toString() + ')()'), [
-                { title: 'OpenAI', ids: imageNames.slice(0, 2).map(name => 'default::' + name), positioned: true },
+                { title: 'OpenAI', ids: imageNames.slice(0, -1).map(name => 'default::' + name), positioned: true },
                 { title: 'Gemini', ids: geminiNames.map(name => 'oneyes-gemini::' + name), positioned: true },
                 { title: '其他模型', ids: ['default::custom-image'], positioned: true },
             ]);
@@ -483,15 +487,15 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
             await wait('Boolean(document.querySelector("[role=listbox]"))');
             await wait('document.querySelector("[role=listbox]").getAnimations().every(animation=>animation.playState==="finished")');
+            await wait('Boolean(document.querySelector("[data-slot=select-scrollbar-thumb]"))');
             const bounds = await js(`(()=>{const popup=document.querySelector('[role=listbox]'),viewport=popup.querySelector('[data-radix-select-viewport]'),rect=popup.getBoundingClientRect(),inside=viewport.getBoundingClientRect();return {popup:rect.toJSON(),viewport:inside.toJSON(),width:innerWidth,height:innerHeight,z:getComputedStyle(popup).zIndex};})()`);
             assert.ok(bounds.popup.left >= 0 && bounds.popup.right <= bounds.width && bounds.popup.top >= 0 && bounds.popup.bottom <= bounds.height, 'model list must stay inside the window');
             assert.ok(bounds.viewport.right <= bounds.popup.right && bounds.viewport.left >= bounds.popup.left, 'scaled model trigger must not force the list viewport outside its popup');
             const textBounds = await js('Array.from(document.querySelectorAll("[role=option] [data-model-name], [role=option] [data-model-information]")).map(text=>({text:text.textContent,right:text.getBoundingClientRect().left+text.scrollWidth,height:text.clientHeight,scrollHeight:text.scrollHeight}))');
             assert.ok(textBounds.every(text=>text.right<=bounds.viewport.right && text.scrollHeight<=text.height), 'full model versions must wrap without hidden text: '+JSON.stringify(textBounds));
             const wheel = { x: Math.round(bounds.viewport.x + bounds.viewport.width / 2), y: Math.round(bounds.viewport.y + bounds.viewport.height / 2) };
-            for (const selector of ['[role=option]:not([data-disabled])', 'input[type=search]', '[data-slot=select-scroll-down-button]']) {
-                const point = await js(`(()=>{const popup=document.querySelector('[role=listbox]'),viewport=popup.querySelector('[data-radix-select-viewport]');viewport.scrollTop=0;const element=popup.querySelector(${JSON.stringify(selector)}),r=element?.getBoundingClientRect();return r&&{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
-                if (!point) continue;
+            for (const selector of ['[role=option]:not([data-disabled])', 'input[type=search]', '[data-slot=select-scrollbar]']) {
+                const point = await js(`(()=>{const popup=document.querySelector('[role=listbox]'),viewport=popup.querySelector('[data-radix-select-viewport]');viewport.scrollTop=0;const element=popup.querySelector(${JSON.stringify(selector)}),r=element.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
                 await js('window.modelScrollDone=false;document.querySelector("[data-radix-select-viewport]").addEventListener("scrollend",()=>window.modelScrollDone=true,{once:true})');
                 win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
                 win.webContents.sendInputEvent({ type: 'mouseWheel', deltaX: 0, deltaY: -80, ...point });
@@ -510,6 +514,30 @@ app.whenReady().then(async () => {
                 await mkdir(process.env.ONEYES_MODEL_SCREENSHOTS, { recursive: true });
                 await writeFile(join(process.env.ONEYES_MODEL_SCREENSHOTS, `config-model-${scale}-${dark ? 'dark' : 'light'}.png`), (await win.capturePage()).toPNG());
             }
+            await js('document.querySelector("[data-radix-select-viewport]").scrollTop=0');
+            const scrollbarPosition = `(() => {
+                const track = document.querySelector('[data-slot=select-scrollbar]').getBoundingClientRect();
+                const thumb = document.querySelector('[data-slot=select-scrollbar-thumb]');
+                const thumbRect = thumb.getBoundingClientRect();
+                const x = Math.round(thumbRect.x + thumbRect.width / 2);
+                const y = Math.round(thumbRect.y + thumbRect.height / 2);
+                const destination = Math.round(track.bottom - thumbRect.height / 2);
+                return { x, y, destination, hit: document.elementFromPoint(x, y) === thumb,
+                    atTop: thumbRect.top - track.top <= 3, outsideOptions: track.left >= ${bounds.viewport.right} };
+            })()`;
+            await wait(`(() => { const position = ${scrollbarPosition}; return position.hit && position.atTop; })()`);
+            const { x: barX, y: thumbY, destination, outsideOptions } = await js(scrollbarPosition);
+            assert.ok(outsideOptions, 'the scrollbar must sit beside the option labels');
+            const beforeDrag = (await js('modelNodeTest.state()')).metadata.model;
+            win.webContents.sendInputEvent({ type: 'mouseMove', x: barX, y: thumbY });
+            win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: barX, y: thumbY });
+            win.webContents.sendInputEvent({ type: 'mouseMove', modifiers: ['leftbuttondown'], x: barX, y: destination });
+            await wait(`(() => {
+                const viewport = document.querySelector('[data-radix-select-viewport]');
+                return viewport && viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 2;
+            })()`);
+            win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: barX, y: destination });
+            assert.equal((await js('modelNodeTest.state()')).metadata.model, beforeDrag, 'dragging the scrollbar must not select a model');
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'End' });
             win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'End' });
             await wait('document.activeElement === Array.from(document.querySelectorAll("[role=option]:not([data-disabled])")).at(-1)');
