@@ -237,6 +237,10 @@ app.whenReady().then(async () => {
                 await wait(`document.querySelectorAll("[role=option]").length === ${query === 'SD-特价' ? 2 : 4}`);
                 assert.ok((await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.textContent)')).every(label => label.includes(query)));
             }
+            await js('document.querySelector("input[type=search]").select()');
+            await win.webContents.insertText('Seedance');
+            await wait('document.querySelectorAll("[role=group]").length === 1 && document.querySelector("[data-slot=select-label]")?.textContent === "Seedance"');
+            assert.ok(await js('Array.from(document.querySelectorAll("[role=option] [data-model-name]")).some(name => name.textContent === "SD-特价")'));
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
             await wait('!document.querySelector("[role=listbox]")');
         }
@@ -422,6 +426,56 @@ app.whenReady().then(async () => {
         }
         assert.deepEqual(await js('modelTest.state().config'), compactConfig, 'layout changes must preserve model and generation defaults');
         console.log('NATIVE_COMPACT_CONFIG_MODEL_FULL_WIDTH_NAME_VERSION_STATUS_SETTINGS_AND_MODES_OK');
+        const videoOnlyNames = names;
+        const imageNames = ['gpt-image-2', 'gpt-image-2.6-sunburst', 'custom-image'];
+        const geminiNames = ['gemini-3-pro-image', 'gemini-3.1-flash-image', 'nano-banana-2'];
+        names = [...names, ...imageNames];
+        const imageOptions = models => models.map(name => ({ name, capability: 'image' }));
+        const grouped = { ...compactConfig, channels: [
+            { ...compactConfig.channels[0], models: [...compactConfig.channels[0].models, ...imageOptions(imageNames)] },
+            ...compactConfig.channels.slice(1),
+            { id: 'oneyes-gemini', name: 'OneYes Gemini', baseUrl: 'https://oneyes.ai', apiKey: 'fixture-gemini-key', apiFormat: 'gemini',
+                models: imageOptions(geminiNames), oneYes: { platform: 'gemini', groupId: 5, keyId: 1, accountId: 7, groupName: 'Gemini' } },
+        ] };
+        await js('modelTest.replace(' + JSON.stringify(grouped) + ');modelTest.expire();modelTest.sync()');
+        await wait('!modelTest.state().syncing');
+        const imageTrigger = 'document.querySelector("[data-node-id=config] [role=combobox]")';
+        const fromImage = 'default::gpt-image-2.6-sunburst';
+        const toImage = 'oneyes-gemini::gemini-3-pro-image';
+        const readGroups = () => Array.from(document.querySelectorAll('[role=listbox] [role=group]'), group => {
+            const label = document.getElementById(group.getAttribute('aria-labelledby'));
+            const options = Array.from(group.querySelectorAll('[role=option]'));
+            return { title: label?.textContent, ids: options.map(option => option.getAttribute('data-model-id')),
+                positioned: label?.getBoundingClientRect().bottom <= options[0].getBoundingClientRect().top };
+        });
+        for (const [scale, dark] of [[1, true], [0.65, false]]) {
+            await js('modelNodeTest.compact(' + scale + ',' + dark + ',"image",' + JSON.stringify(fromImage) + ');' + imageTrigger + '.focus()');
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+            await wait('document.activeElement?.getAttribute("data-model-id")===' + JSON.stringify(fromImage));
+            assert.deepEqual(await js('(' + readGroups.toString() + ')()'), [
+                { title: 'OpenAI', ids: imageNames.slice(0, 2).map(name => 'default::' + name), positioned: true },
+                { title: 'Gemini', ids: geminiNames.map(name => 'oneyes-gemini::' + name), positioned: true },
+                { title: '其他模型', ids: ['default::custom-image'], positioned: true },
+            ]);
+            if (process.env.ONEYES_MODEL_SCREENSHOTS) {
+                await wait('document.querySelector("[role=listbox]").getAnimations().every(animation=>animation.playState!=="running")');
+                await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+                await mkdir(process.env.ONEYES_MODEL_SCREENSHOTS, { recursive: true });
+                await writeFile(join(process.env.ONEYES_MODEL_SCREENSHOTS, 'model-families-' + (dark ? 'dark' : 'light') + '.png'), (await win.capturePage()).toPNG());
+            }
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Down' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Down' });
+            await wait('document.activeElement?.getAttribute("data-model-id")===' + JSON.stringify(toImage));
+            assert.equal(await js('modelNodeTest.state().metadata.model'), fromImage);
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+            await wait('!document.querySelector("[role=listbox]") && modelNodeTest.state().metadata.model===' + JSON.stringify(toImage));
+        }
+        names = videoOnlyNames;
+        await js('modelTest.replace(' + JSON.stringify(compactConfig) + ');modelTest.expire();modelTest.sync()');
+        await wait('!modelTest.state().syncing');
+        console.log('NATIVE_MODEL_FAMILIES_GROUP_LABELS_AND_EXACT_SELECTION_OK');
         await wait('window.modelNodeTest && document.querySelector("[data-node-id=config] [role=combobox]")');
         for (const [scale, x, y, dark] of [[1, 40, 40, false], [0.5, 650, 580, true], [1.8, 10, 20, false], [1, 650, 40, true]]) {
             await js(`modelNodeTest.configure(${scale},${x},${y},${dark});document.querySelector("[data-node-id=config] [role=combobox]").focus()`);

@@ -3,7 +3,7 @@ import { Cpu, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { isModelUnavailable, modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useModelCatalogStore } from "@/stores/use-model-catalog-store";
@@ -24,6 +24,34 @@ type ModelPickerProps = {
     placeholder?: string;
     onMissingConfig?: () => void;
 };
+
+type ModelOption = ReturnType<typeof modelPickerOptions>[number];
+type ModelFamily = { name: string; pattern: RegExp; icon?: string };
+
+// These are public model families. Labels never come from channels or group metadata.
+const modelFamilies: ModelFamily[] = [
+    { name: "OpenAI", pattern: /^(?:gpt|chatgpt|openai|codex|dall[-_ ]?e|sora|whisper|o[134])(?:[-_.\s(（]|$)/i, icon: "/icons/openai.svg" },
+    { name: "Gemini", pattern: /^(?:gemini|imagen|nano[-_ ]banana)(?:[-_.\s(（]|$)/i, icon: "/icons/gemini.svg" },
+    { name: "Claude", pattern: /^(?:claude|anthropic)(?:[-_.\s(（]|$)/i, icon: "/icons/claude.svg" },
+    { name: "DeepSeek", pattern: /^deepseek(?:[-_.\s(（]|$)/i, icon: "/icons/deepseek.svg" },
+    { name: "Grok", pattern: /^grok(?:[-_.\s(（]|$)/i, icon: "/icons/grok.svg" },
+    { name: "GLM", pattern: /^glm(?:[-_.\d]|$)/i, icon: "/icons/glm.svg" },
+    { name: "Seedance", pattern: /^(?:doubao-)?seedance(?:[-_.\s]|$)|^sd(?:[-_ ]?2(?:[.\-_ ]|$)|-特价$)/i },
+    { name: "Seedream", pattern: /^(?:doubao-)?seedream(?:[-_.\s]|$)/i },
+    { name: "Veo", pattern: /^veo(?:[-_.\d]|$)/i },
+    { name: "Kling", pattern: /^(?:kling(?:[-_.\d]|$)|可灵)/i },
+    { name: "Wan", pattern: /^(?:wan(?:[-_.\d]|$)|通义万相)/i },
+    { name: "MiniMax", pattern: /^(?:minimax|hailuo)(?:[-_.\d]|$)/i },
+    { name: "Qwen", pattern: /^qwen(?:[-_.\d]|$)/i },
+    { name: "FLUX", pattern: /^flux(?:[-_.\d]|$)/i },
+    { name: "Stable Diffusion", pattern: /^(?:stable-diffusion|sdxl)(?:[-_.\s]|$)/i },
+    { name: "JEV", pattern: /^jev(?:[-_.\s]|$)/i },
+];
+
+function modelFamily(name: string) {
+    const id = splitModelInformation(name).name.split("/").at(-1)?.trim() || "";
+    return modelFamilies.find(family => family.pattern.test(id));
+}
 
 export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, layout = "compact", placeholder, onMissingConfig }: ModelPickerProps) {
     const { t } = useTranslation();
@@ -47,7 +75,26 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     };
     const currentLabel = current ? selected.label + (unavailable ? ' · 暂不可用，请重新选择' : '') : '';
     const pickerPlaceholder = placeholder || t("settingsPanels.model.select");
-    const visibleOptions = options.filter(option => !query || option.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+    const otherLabel = t("settingsPanels.model.otherModels");
+    const groups = useMemo(() => {
+        const keyword = query.trim().toLocaleLowerCase();
+        const classified = new Map<string, ModelOption[]>();
+        const other: ModelOption[] = [];
+        for (const option of options) {
+            const family = modelFamily(option.name);
+            const label = family?.name ?? otherLabel;
+            if (keyword && !option.label.toLocaleLowerCase().includes(keyword) && !label.toLocaleLowerCase().includes(keyword)) continue;
+            if (!family) {
+                other.push(option);
+                continue;
+            }
+            const entries = classified.get(label);
+            if (entries) entries.push(option);
+            else classified.set(label, [option]);
+        }
+        if (other.length) classified.set(otherLabel, other);
+        return [...classified];
+    }, [options, otherLabel, query]);
     const hasDetails = Boolean(selected.information || (current && capability === "video"));
 
     useEffect(() => {
@@ -118,13 +165,18 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                     event.stopPropagation();
                 }}
             >
-                {visibleOptions.length ? (
-                    visibleOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value} disabled={isModelUnavailable(config, option.value)} data-model-id={option.value} textValue={option.label} className="my-0.5 cursor-pointer rounded-lg py-2.5 pl-2.5 pr-8 transition-colors data-[state=checked]:bg-accent/60 data-disabled:cursor-default data-disabled:opacity-75 motion-reduce:transition-none [&>span:last-child]:min-w-0 [&>span:last-child]:w-full" title={option.label}
-                            onPointerUp={() => { if (!isModelUnavailable(config, option.value) && option.value === selected.value && current !== option.value) onChange(option.value); }}
-                            onKeyDown={event => { if (!isModelUnavailable(config, option.value) && ['Enter', ' '].includes(event.key) && option.value === selected.value && current !== option.value) onChange(option.value); }}>
-                            <ModelLabel option={option} config={config} video={capability === 'video'} />
-                        </SelectItem>
+                {groups.length ? (
+                    groups.map(([label, entries]) => (
+                        <SelectGroup key={label} className="mt-1.5 min-w-0 border-t border-border/60 px-0 pb-0 pt-1 first:mt-0 first:border-t-0 first:pt-0">
+                            <SelectLabel className="cursor-default select-none px-2.5 py-1 text-xs font-semibold leading-4">{label}</SelectLabel>
+                            {entries.map(option => (
+                                <SelectItem key={option.value} value={option.value} disabled={isModelUnavailable(config, option.value)} data-model-id={option.value} textValue={option.label} className="my-0.5 cursor-pointer rounded-lg py-2.5 pl-2.5 pr-8 transition-colors data-[state=checked]:bg-accent/60 data-disabled:cursor-default data-disabled:opacity-75 motion-reduce:transition-none [&>span:last-child]:min-w-0 [&>span:last-child]:w-full" title={option.label}
+                                    onPointerUp={() => { if (!isModelUnavailable(config, option.value) && option.value === selected.value && current !== option.value) onChange(option.value); }}
+                                    onKeyDown={event => { if (!isModelUnavailable(config, option.value) && ['Enter', ' '].includes(event.key) && option.value === selected.value && current !== option.value) onChange(option.value); }}>
+                                    <ModelLabel option={option} config={config} video={capability === 'video'} />
+                                </SelectItem>
+                            ))}
+                        </SelectGroup>
                     ))
                 ) : (
                     <SelectItem value="__empty__" disabled>
@@ -142,7 +194,7 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     return config.models.length ? i18n.t("settingsPanels.model.noMatch", { capability: label }) : i18n.t("settingsPanels.model.addFirst");
 }
 
-function ModelLabel({ option, config, video }: { option: ReturnType<typeof modelPickerOptions>[number]; config: AiConfig; video: boolean }) {
+function ModelLabel({ option, config, video }: { option: ModelOption; config: AiConfig; video: boolean }) {
     return (
         <span className="grid w-full min-w-0 grid-cols-[20px_minmax(0,1fr)_auto] gap-x-2 whitespace-normal text-left">
             <span className="col-start-1 row-span-2 row-start-1 pt-0.5"><ModelIcon model={option.value} /></span>
@@ -154,17 +206,6 @@ function ModelLabel({ option, config, video }: { option: ReturnType<typeof model
 }
 
 function ModelIcon({ model }: { model: string }) {
-    const icon = resolveModelIcon(modelOptionName(model));
+    const icon = modelFamily(modelOptionName(model))?.icon;
     return icon ? <img src={icon} alt="" className="size-4 shrink-0 dark:invert" /> : <Cpu className="size-4 shrink-0 opacity-70" />;
-}
-
-function resolveModelIcon(model: string) {
-    const name = model.toLowerCase();
-    if (name.includes("claude") || name.includes("anthropic")) return "/icons/claude.svg";
-    if (name.includes("gemini") || name.includes("google")) return "/icons/gemini.svg";
-    if (name.includes("gpt") || name.includes("openai")) return "/icons/openai.svg";
-    if (name.includes("grok") || name.includes("grok")) return "/icons/grok.svg";
-    if (name.includes("deepseek") || name.includes("deepseek")) return "/icons/deepseek.svg";
-    if (name.includes("glm") || name.includes("glm")) return "/icons/glm.svg";
-    return "";
 }
