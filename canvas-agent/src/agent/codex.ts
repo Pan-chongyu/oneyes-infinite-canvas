@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -503,7 +504,13 @@ function assertThreadWorkspace(thread: unknown, cwd?: string) {
 /** 判断线程工作目录是否与当前工作空间一致。 */
 function threadInWorkspace(thread: unknown, cwd: string) {
     const threadCwd = String(field(thread, "cwd") || "");
-    return Boolean(threadCwd && samePath(threadCwd, cwd));
+    if (!threadCwd) return false;
+    if (samePath(threadCwd, cwd)) return true;
+    try {
+        return samePath(realpathSync.native(threadCwd), realpathSync.native(cwd));
+    } catch {
+        return false;
+    }
 }
 
 /** 比较跨平台绝对路径；Windows 路径不区分大小写。 */

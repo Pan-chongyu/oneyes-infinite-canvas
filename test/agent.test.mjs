@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -133,10 +133,16 @@ test('one click starts authenticated MCP and restores paginated and legacy Codex
             sqlite_home: options.codexHome, check_for_update_on_startup: false,
             model_providers: { oneyes: { name: 'OneYes', base_url: 'http://127.0.0.1:1/v1', wire_api: 'responses' } },
         }));
-        const workspacePath = join(dir, 'workspace');
-        await mkdir(workspacePath);
-        const paginated = await saveCodexHistory(options.codexHome, workspacePath, 'paginated');
-        const legacy = await saveCodexHistory(options.codexHome, workspacePath, 'legacy');
+        const workspaceDirectory = join(dir, 'workspace');
+        await mkdir(workspaceDirectory);
+        const canonicalWorkspace = await realpath(workspaceDirectory);
+        const workspacePath = join(dir, 'workspace-alias');
+        await symlink(canonicalWorkspace, workspacePath, process.platform === 'win32' ? 'junction' : 'dir');
+        const paginated = await saveCodexHistory(options.codexHome, canonicalWorkspace, 'paginated');
+        const legacy = await saveCodexHistory(options.codexHome, canonicalWorkspace, 'legacy');
+        const otherWorkspace = join(dir, 'other-workspace');
+        await mkdir(otherWorkspace);
+        const other = await saveCodexHistory(options.codexHome, await realpath(otherWorkspace), 'legacy');
         const workspace = { workspacePath, activeThreadId: paginated.threadId, pinnedThreadIds: [paginated.threadId] };
         await writeFile(join(options.agentHome, 'canvas-agent.json'), JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}`, origins: ['oneyes-canvas://app', 'https://bound.example'], workspace }));
         const [connection, duplicate] = await Promise.all([agent.setup(), agent.setup()]);
@@ -200,6 +206,9 @@ test('one click starts authenticated MCP and restores paginated and legacy Codex
             assert.deepEqual(loaded.settledTurnIds, [history.turnId]);
             assert.deepEqual(loaded.messages.map(({ role, text }) => ({ role, text })), savedMessages);
         }
+        const rejected = await fetch(`${connection.url}/agent/codex/threads/${other.threadId}`, { headers: { ...headers, accept: 'application/json' } });
+        assert.equal(rejected.ok, false);
+        assert.match((await rejected.json()).error, /不属于当前画布工作空间/);
     } finally { agent.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
