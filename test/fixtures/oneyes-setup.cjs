@@ -58,14 +58,15 @@ app.whenReady().then(async () => {
                 ] });
             }
             return Response.json({ models: [
-                { name: 'models/gemini-3.1-flash-image-preview', supportedGenerationMethods: ['generateContent'] },
+                { name: 'models/gemini-3.1-flash-image', supportedGenerationMethods: ['generateContent', 'streamGenerateContent'] },
+                { name: 'models/gemini-nano-banana-2.1', supportedGenerationMethods: ['generateContent', 'streamGenerateContent'] },
                 { name: 'models/gemini-2.5-flash-preview-tts', supportedGenerationMethods: ['generateContent'] },
             ], nextPageToken: 'next/page+1' });
         }
         assert.equal(request.method, 'POST');
         const payload = await request.json();
         geminiCalls.push(url.pathname);
-        if (url.pathname === '/v1beta/models/gemini-3.1-flash-image-preview:generateContent') {
+        if (url.pathname === '/v1beta/models/gemini-nano-banana-2.1:generateContent') {
             assert.deepEqual(payload.generationConfig, { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '16:9', imageSize: '2K' } });
             return Response.json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] } }] });
         }
@@ -116,9 +117,9 @@ app.whenReady().then(async () => {
         assert.deepEqual(geminiReads.slice(0, 2), [null, 'next/page+1']);
         assert.equal(geminiCalls.length, 0, 'setup must only discover models');
         const gemini = state.config.channels.find(channel => channel.id === 'oneyes-gemini');
-        assert.deepEqual(gemini.models.map(({ name, capability }) => [name, capability]), [
-            ['gemini-3-flash-preview', 'text'], ['gemini-3.1-flash-image-preview', 'image'],
-        ].sort(([a], [b]) => a.localeCompare(b)));
+        assert.deepEqual(Object.fromEntries(gemini.models.map(({ name, capability }) => [name, capability])), {
+            'gemini-3-flash-preview': 'text', 'gemini-3.1-flash-image': 'image', 'gemini-nano-banana-2.1': 'image',
+        });
         assert.deepEqual(await js('setupTest.callGemini()'), { images: 1, answer: 'Gemini response' });
         assert.equal(geminiCalls.length, 2);
         await click(button('开始使用')); await wait('!document.querySelector(".ant-modal")');

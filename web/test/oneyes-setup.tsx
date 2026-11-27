@@ -39,7 +39,7 @@ function Fixture() {
         requestModels: () => useConfigStore.getState().openConfigDialog(true),
         callGemini: async () => {
             const config = useConfigStore.getState().config;
-            const image = selectableModelsByCapability(config, "image").find(model => model.startsWith(GEMINI_CHANNEL_ID + "::"))!;
+            const image = selectableModelsByCapability(config, "image").find(model => model === GEMINI_CHANNEL_ID + "::gemini-nano-banana-2.1")!;
             const text = selectableModelsByCapability(config, "text").find(model => model.startsWith(GEMINI_CHANNEL_ID + "::"))!;
             const pictures = await requestGeneration({ ...config, model: image, count: '1', size: '2k@16:9' }, 'fixture image');
             const answer = await requestImageQuestion({ ...config, model: text }, [{ role: 'user', content: 'fixture text' }], () => {});

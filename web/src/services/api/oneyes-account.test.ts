@@ -28,7 +28,7 @@ const models = async (channel: { apiKey: string }) => {
         case "test-2": return ["gpt-image-2", "gpt-5.5", "gpt-4o-mini-tts"];
         case "test-3": return ["deepseek-chat", "deepseek-reasoner"];
         case "test-18": return ["jev-latest", "unrelated-text"];
-        case "test-21": return ["gemini-3.1-flash-image-preview", "nano-banana-2", "gemini-3-flash-preview", "veo-3.1", "gemini-2.5-flash-preview-tts"];
+        case "test-21": return ["gemini-3.1-flash-image", "gemini-nano-banana-2.1", "gemini-3-flash-preview", "veo-3.1", "gemini-2.5-flash-preview-tts"];
         default: return ["grok-imagine-video", "unrelated-text"];
     }
 };
@@ -72,7 +72,7 @@ test("Gemini imports native image and text models with its dedicated key and pre
     const f = fixture();
     const { config } = await configureOneYes(defaultConfig, user, f.call, models);
     const saved = normalizeOneYesConfig(JSON.parse(JSON.stringify(config)));
-    const images = ["gemini-3.1-flash-image-preview", "nano-banana-2"].map(model => `${GEMINI_CHANNEL_ID}::${model}`);
+    const images = ["gemini-3.1-flash-image", "gemini-nano-banana-2.1"].map(model => `${GEMINI_CHANNEL_ID}::${model}`);
     const text = `${GEMINI_CHANNEL_ID}::gemini-3-flash-preview`;
     const channel = saved.channels.find(item => item.id === GEMINI_CHANNEL_ID)!;
     assert.deepEqual(channel.models.map(item => item.capability), ["image", "image", "text"]);

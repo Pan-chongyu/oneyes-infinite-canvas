@@ -208,7 +208,7 @@ export function guessCapability(name: string): ModelCapability {
     if (/^jev(?:-|$)/.test(value)) return "decision";
     if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword)) || /^sd-特价(?:\s*[\[【]|$)/.test(value) || /^sd[\s_-]*\d+(?:\.\d+)?$/.test(value) || /^sd[\s_-]*2(?:\.\d+)?[-_\s[(（]/.test(value)) return "video";
     if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
-    if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword)) || /^nano[-_ ]banana(?:[-_.\s]|$)/.test(value)) return "image";
+    if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword)) || /^(?:gemini-)?nano[-_ ]banana(?:[-_.\s]|$)/.test(value)) return "image";
     return "text";
 }
 

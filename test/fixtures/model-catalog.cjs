@@ -259,11 +259,13 @@ app.whenReady().then(async () => {
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
         await wait('!document.querySelector("[role=listbox]")');
         for (const kind of ['text', 'image']) {
-            await js(`document.querySelector('[data-testid=${kind}-picker] [role=combobox]').focus()`);
+            const trigger = `document.querySelector('[data-testid=${kind}-picker] [role=combobox]')`;
+            await js(`${trigger}.focus()`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
-            await wait('Boolean(document.querySelector("[role=listbox]"))');
-            const ids = await js('Array.from(document.querySelectorAll("[role=option]")).map(option=>option.getAttribute("data-model-id"))');
-            assert.ok(ids.includes(kind === 'text' ? 'default::gpt-5.5' : 'default::gpt-image-2'), 'price filtering cannot hide text/image models');
+            const expected = kind === 'text' ? 'default::gpt-5.5' : 'default::gpt-image-2';
+            const option = `[role="option"][data-model-id="${expected}"]:not([data-disabled])`;
+            // Radix can mount the listbox before positioning its selectable rows.
+            await wait(`Boolean(document.getElementById(${trigger}.getAttribute('aria-controls'))?.querySelector(${JSON.stringify(option)}))`);
             win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
             await wait('!document.querySelector("[role=listbox]")');
         }
