@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { PassThrough, Writable } from "node:stream";
 
 import { CodexAppClient, canRecoverWindowsMcp, codexRequestError } from "./codex-client.js";
-import { assertDraftHasNoSensitiveValues, canvasSkillSource } from "./codex.js";
+import { assertDraftHasNoSensitiveValues, canvasSkillSource, isRecoverableThreadError } from "./codex.js";
 
 type TestClient = {
     currentThreadId: string;
@@ -33,6 +33,19 @@ test('RPC errors preserve method classification and upstream status without reta
     const result = client.listModels();
     (client as unknown as TestClient).handle({ id: writes[0].id, error: { code: -32601, message: 'method unavailable' } });
     await assert.rejects(result, (value: Error) => 'code' in value && value.code === 'ERR_AGENT_RPC_METHOD' && 'diagnosticOperation' in value && value.diagnosticOperation === 'agent-models');
+});
+
+test('unreadable Codex history provides a recovery hint and preserves the existing thread', () => {
+    const message = 'failed to deserialize stored thread item private-item: unknown variant `future`';
+    for (const method of ['thread/resume', 'thread/read', 'thread/turns/list']) {
+        const error = codexRequestError({ code: -32603, message }, method);
+        assert.equal(error.code, 'ERR_AGENT_THREAD_HISTORY_FORMAT');
+        assert.equal(error.diagnosticOperation, 'agent-thread');
+        assert.match(error.message, /更新 OneYes Canvas 后重试初始化/);
+        assert.doesNotMatch(error.message, /private-item|future/);
+        assert.equal(isRecoverableThreadError(error), false);
+    }
+    assert.equal(codexRequestError({ code: -32603, message }, 'turn/start').message, message);
 });
 
 test("model discovery follows every cursor and rejects incomplete repeated-cursor results", async () => {

@@ -24,7 +24,7 @@
   "dependencies": {
     "@iarna/toml": "2.2.5",
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@openai/codex": "0.146.0",
+    "@openai/codex": "0.172.0",
     "express": "^5.1.0",
     "gray-matter": "^4.0.3",
     "strip-ansi": "7.2.0",

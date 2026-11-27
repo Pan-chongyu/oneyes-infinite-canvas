@@ -34,12 +34,18 @@ export class CodexReportedError extends Error {
 
 /** Preserve only stable RPC classification, never RPC data or request parameters. */
 export function codexRequestError(value: unknown, method = "") {
+    const message = String(field(value, 'message') || 'Codex request failed');
+    if (method.startsWith('thread/') && /^failed to deserialize stored thread item\b/i.test(message.trimStart())) {
+        return Object.assign(new Error('当前 Codex 无法读取这条对话的历史格式。请更新 OneYes Canvas 后重试初始化，或先切换到其他对话。'), {
+            code: 'ERR_AGENT_THREAD_HISTORY_FORMAT', status: 500, diagnosticOperation: 'agent-thread',
+        });
+    }
     const rpcCode = Number(field(value, "code"));
     const code = ({ [-32700]: 'ERR_AGENT_RPC_PARSE', [-32600]: 'ERR_AGENT_RPC_PARAMS', [-32601]: 'ERR_AGENT_RPC_METHOD', [-32602]: 'ERR_AGENT_RPC_PARAMS' } as Record<number, string>)[rpcCode] || 'ERR_AGENT_RPC';
     const upstream = Number(field(field(value, 'data'), 'httpStatusCode'));
     const status = upstream >= 400 && upstream <= 599 ? upstream : code === 'ERR_AGENT_RPC' ? 500 : 400;
     const diagnosticOperation = method === 'initialize' ? 'agent-initialize' : method.startsWith('model/') ? 'agent-models' : method.startsWith('thread/') ? 'agent-thread' : method.startsWith('turn/') ? 'agent-turn' : method.startsWith('skills/') ? 'agent-skills' : /mcp/i.test(method) ? 'agent-mcp' : undefined;
-    return Object.assign(new Error(String(field(value, 'message') || 'Codex request failed')), { code, status, diagnosticOperation });
+    return Object.assign(new Error(message), { code, status, diagnosticOperation });
 }
 
 /** 封装 Codex app-server 的 JSON-RPC 通信与事件转换。 */

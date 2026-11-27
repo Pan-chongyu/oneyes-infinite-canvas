@@ -5,10 +5,45 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 const require = createRequire(import.meta.url);
 const { configureCodex, createAgent } = require('../desktop/agent.cjs');
 const toml = require('@iarna/toml');
 const settings = { url: 'http://127.0.0.1:17371', token: 'local-test-token-0123456789012345' };
+const savedMessages = [
+    { role: 'user', text: '保存的创作需求' },
+    { role: 'assistant', text: '已恢复原画布对话' },
+];
+
+async function saveCodexHistory(codexHome, cwd, historyMode) {
+    const threadId = randomUUID(), turnId = randomUUID();
+    const timestamp = new Date().toISOString();
+    const day = timestamp.slice(0, 10);
+    const directory = join(codexHome, 'sessions', ...day.split('-'));
+    const event = payload => ({ type: 'event_msg', payload });
+    const completedItem = item => event({ type: 'item_completed', thread_id: threadId, turn_id: turnId, item, completed_at_ms: Date.parse(timestamp) });
+    const entries = [
+        { type: 'session_meta', payload: { id: threadId, timestamp, cwd, originator: 'codex', cli_version: historyMode === 'paginated' ? '0.172.0' : '0.146.0', source: 'cli', model_provider: 'oneyes', history_mode: historyMode } },
+        event({ type: 'task_started', turn_id: turnId }),
+        event({ type: 'user_message', message: savedMessages[0].text, kind: 'plain' }),
+    ];
+    if (historyMode === 'paginated') {
+        entries.push(
+            completedItem({ type: 'UserMessage', id: 'user-message', content: [{ type: 'text', text: savedMessages[0].text, text_elements: [] }] }),
+            completedItem({ type: 'SubAgentActivity', id: `subagent-completed-${randomUUID()}`, kind: 'completed', agent_thread_id: randomUUID(), agent_path: '/root/worker' }),
+            completedItem({ type: 'AgentMessage', id: 'agent-message', content: [{ type: 'Text', text: savedMessages[1].text }], phase: 'final_answer' }),
+        );
+    }
+    entries.push(
+        event({ type: 'agent_message', message: savedMessages[1].text, phase: 'final_answer' }),
+        event({ type: 'task_complete', turn_id: turnId, last_agent_message: savedMessages[1].text }),
+    );
+    await mkdir(directory, { recursive: true });
+    const filename = `rollout-${timestamp.slice(0, 19).replaceAll(':', '-')}-${threadId}.jsonl`;
+    const lines = entries.map((entry, ordinal) => JSON.stringify({ timestamp, ...(historyMode === 'paginated' ? { ordinal } : {}), ...entry }));
+    await writeFile(join(directory, filename), `${lines.join('\n')}\n`);
+    return { threadId, turnId };
+}
 
 test('persistent Codex setup preserves account/models/other MCP, backs up once, rejects corrupt files', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-codex-'));
@@ -83,7 +118,7 @@ test('corrupt Agent config and an occupied port never replace Codex settings', a
     } finally { agent.stop(); await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
-test('one click starts an authenticated MCP, persists across restart, and restores only after opt-in', async () => {
+test('one click starts authenticated MCP and restores paginated and legacy Codex history after restart', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'canvas-agent-integration-'));
     const port = await new Promise(resolve => { const server = createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
     const options = { directory: dir, agentHome: join(dir, 'agent'), codexHome: join(dir, 'codex'), runtime: resolve('canvas-agent') };
@@ -95,9 +130,14 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         await mkdir(options.codexHome);
         await writeFile(join(options.codexHome, 'config.toml'), toml.stringify({
             model: 'OneYes-中文模型', model_provider: 'oneyes', model_reasoning_effort: 'high',
+            sqlite_home: options.codexHome, check_for_update_on_startup: false,
             model_providers: { oneyes: { name: 'OneYes', base_url: 'http://127.0.0.1:1/v1', wire_api: 'responses' } },
         }));
-        const workspace = { workspacePath: join(dir, 'workspace'), pinnedThreadIds: ['fixture-pinned'] };
+        const workspacePath = join(dir, 'workspace');
+        await mkdir(workspacePath);
+        const paginated = await saveCodexHistory(options.codexHome, workspacePath, 'paginated');
+        const legacy = await saveCodexHistory(options.codexHome, workspacePath, 'legacy');
+        const workspace = { workspacePath, activeThreadId: paginated.threadId, pinnedThreadIds: [paginated.threadId] };
         await writeFile(join(options.agentHome, 'canvas-agent.json'), JSON.stringify({ ...settings, url: `http://127.0.0.1:${port}`, origins: ['oneyes-canvas://app', 'https://bound.example'], workspace }));
         const [connection, duplicate] = await Promise.all([agent.setup(), agent.setup()]);
         assert.deepEqual(connection, duplicate);
@@ -136,6 +176,30 @@ test('one click starts an authenticated MCP, persists across restart, and restor
         const proxy = 'http://127.0.0.1:1';
         const started = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, CODEX_HOME: options.codexHome, ONEYES_CANVAS_AGENT_HOME: options.agentHome, ONEYES_DESKTOP_AGENT: '1', HTTP_PROXY: proxy, HTTPS_PROXY: proxy, ALL_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, all_proxy: proxy, NO_PROXY: '', no_proxy: '' }, timeout: 20_000 });
         assert.ok(started.stdout.includes('CODEX_APP_SERVER_READY'));
+
+        const codexRequest = async (path, method = 'POST') => {
+            const response = await fetch(`${connection.url}/agent/codex/${path}`, { method, headers: { ...headers, accept: 'application/json' }, ...(method === 'POST' ? { body: '{}' } : {}) });
+            const result = await response.json();
+            assert.equal(response.status, 200, result.error);
+            return result;
+        };
+        const initialized = await codexRequest('initialize');
+        assert.equal(initialized.conversation.status, 'ready');
+        assert.equal(initialized.conversation.threadId, paginated.threadId);
+        assert.deepEqual(initialized.workspace, workspace);
+        for (const history of [paginated, legacy]) {
+            const path = `threads/${history.threadId}`;
+            const restored = await codexRequest(`${path}/resume`);
+            assert.equal(restored.thread.id, history.threadId);
+            assert.equal(restored.conversation.status, 'ready');
+            if (history === paginated) {
+                assert.ok(restored.thread.turns.some(turn => turn.items.some(item => item.type === 'subAgentActivity' && item.kind === 'completed')));
+            }
+            const loaded = await codexRequest(path, 'GET');
+            assert.equal(loaded.historyReady, true);
+            assert.deepEqual(loaded.settledTurnIds, [history.turnId]);
+            assert.deepEqual(loaded.messages.map(({ role, text }) => ({ role, text })), savedMessages);
+        }
     } finally { agent.stop(); await new Promise(resolve => setTimeout(resolve, 300)); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 

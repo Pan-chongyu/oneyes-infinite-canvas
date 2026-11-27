@@ -5,13 +5,13 @@ const reasons = ['unknown', 'network', 'timeout', 'authentication', 'permission'
 const operations = ['agent-initialize', 'agent-models', 'agent-thread', 'agent-turn', 'agent-skills', 'agent-mcp', 'video-openai', 'video-grok', 'video-gemini', 'video-reference', 'video-content', 'media-analyze', 'media-render', 'media-process', 'update-feed', 'update-package', 'update-delta', 'update-installer'];
 const errorTypes = ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'DOMException', 'AgentApiError', 'ImageTaskHttpError', 'AxiosError', 'AbortError', 'TimeoutError', 'CodexReportedError', 'VideoTaskFailed'];
 const codes = ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOSPC', 'EACCES', 'EPERM', 'ENOENT', 'EADDRINUSE', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_AGENT_CONFIG', 'ERR_AGENT_STARTUP', 'ERR_AGENT_EXIT', 'ERR_NETWORK', 'ERR_CANCELED', 'ERR_CONNECTION_CLOSED', 'ERR_FAILED', 'ERR_INTERNET_DISCONNECTED'];
-codes.push('ERR_AGENT_RPC', 'ERR_AGENT_RPC_PARSE', 'ERR_AGENT_RPC_PARAMS', 'ERR_AGENT_RPC_METHOD', 'ERR_MEDIA_PROCESS');
+codes.push('ERR_AGENT_RPC', 'ERR_AGENT_RPC_PARSE', 'ERR_AGENT_RPC_PARAMS', 'ERR_AGENT_RPC_METHOD', 'ERR_AGENT_THREAD_HISTORY_FORMAT', 'ERR_MEDIA_PROCESS');
 function classify(text, status, code) {
     if (/TimeoutError|timeout|timed out|超时/i.test(text) || code === 'ETIMEDOUT') return 'timeout';
     if (/abort|cancel|取消/i.test(text) || code === 'ERR_CANCELED') return 'cancelled';
     if (['ERR_AGENT_CONFIG', 'EADDRINUSE'].includes(code)) return 'configuration';
     if (['ERR_AGENT_RPC_PARSE', 'ERR_AGENT_RPC_PARAMS', 'ERR_AGENT_RPC_METHOD'].includes(code)) return 'configuration';
-    if (code === 'ERR_MEDIA_PROCESS') return 'invalid-data';
+    if (code === 'ERR_MEDIA_PROCESS' || code === 'ERR_AGENT_THREAD_HISTORY_FORMAT') return 'invalid-data';
     if (['ERR_AGENT_STARTUP', 'ERR_AGENT_EXIT', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND'].includes(code)) return 'runtime';
     if (['EACCES', 'EPERM'].includes(code)) return 'permission';
     if (status === 401 || /unauthor|api.?key.*(?:invalid|无效)|认证/i.test(text)) return 'authentication';
